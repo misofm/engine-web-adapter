@@ -31,9 +31,11 @@ features.
 
 ## Decision record
 
-- npm CLI 11.19.0 reports the `createPackage` permission for the trusted-publisher
-  configuration. Use that capability instead of publishing an inert bootstrap
-  version.
+- npm CLI 11.19.0's dry run reported `createPackage`, but the live trust endpoint
+  returned `404` because the package did not yet exist. npm's documented
+  existing-package requirement was satisfied with an inert
+  `0.0.0-bootstrap.0` prerelease under a non-default `bootstrap` tag. After the
+  OIDC release, that version was deprecated and the tag was removed.
 - This is a bounded release operation. The implementation passed its separate
   adversarial qualification in issues #1 and #2, so no additional product review
   cycle is required here.
@@ -44,7 +46,17 @@ features.
   policy gates).
 - Isolated-cache `npm publish --dry-run --json`: PASS (100 files, 66,373-byte
   archive, 308,062 bytes unpacked).
-- npm CLI 11.19.0 trusted-publisher dry run: `createPackage` for
-  `misofm/engine-web-adapter` / `npm-publish.yml` with publish permission.
-- Registry publication, fresh-consumer import, and provenance: pending workflow
-  dispatch.
+- Trusted publisher created for `misofm/engine-web-adapter` /
+  `npm-publish.yml`; no npm token is present in the release workflow.
+- OIDC publish step: PASS in GitHub Actions run 33876527800. npm published a
+  signed SLSA v1 provenance statement to transparency-log index 2711613053.
+- Registry: `latest` is `0.1.0`, access is public, the runtime dependency is
+  exactly `@misofm/engine@0.1.0`, and the 100-file archive has SHA-512 integrity
+  `TtmXwR9+Lhl4LCSsPe6GWuIe1Bd1eq31cX/dSSFZ6u6o2OcoJliUXhEgUSAC6eVPsqt1JeoOyxJHV10lkLY0mg==`.
+- Fresh registry consumer: PASS importing the root, `stems`, and `assets` entry
+  points. `npm audit signatures --include-attestations` verified registry
+  signatures and attestations for both installed packages.
+- The initial workflow's post-publish check timed out after 60 seconds while npm
+  was still processing the accepted release. Add a verify-only recovery mode and
+  allow five minutes for future registry propagation; never retry an immutable
+  publish after this class of failure.
