@@ -12,5 +12,7 @@ export const ADAPTER_PROVENANCE = Object.freeze({
     "hosts/host-web/web/stem-store/incremental-sha256.js (adapted to TypeScript)",
     "hosts/host-web/web/stem-store/opfs-store.js (store invariants independently adapted behind an injectable backend)",
     "hosts/host-web/web/stem-store/session-gate.js (adapted to the adapter lease vocabulary)",
+    "hosts/host-web/web/stem-store/pcm-pump.js (adapted to TypeScript with fair scheduling and bounded windows)",
+    "misofm/app src/lib/mixer/engine/sab-ring.ts at 7485693e9bbcf2f65a91a4e5950e22d678d99062 (MSB1 reader/allocation contract adapted)",
   ] as const),
 });
