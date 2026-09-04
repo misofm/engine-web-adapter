@@ -242,6 +242,34 @@ test("cancellation rejects every pending request once with one authoritative rea
   assert.equal(settlements, 2, "late replies after cancellation are inert");
 });
 
+test("constructor abort after initialized reply cannot return a closed client", async () => {
+  const shared = ring("constructor-race", 1, 4, 2);
+  const controller = new AbortController();
+  const reason = new DOMException("abort after initialized", "AbortError");
+  const worker = new FakePumpWorker(false, (message, self) => {
+    if (message.type !== "initialize") return;
+    queueMicrotask(() => {
+      self.emit("message", { data: {
+        type: "initialized", requestId: message.requestId,
+        bounds: { windowBytes: 8, ringBytes: message.sources[0]!.ring.byteLength },
+      } satisfies PumpWorkerResponse });
+      controller.abort(reason);
+    });
+  });
+  let escaped = false;
+  const opening = PcmPumpWorkerClient.create({
+    lease: { read: async () => new Blob([new Uint8Array(8)]) },
+    sources: [{ sourceId: "constructor-race", identity: IDENTITY, channels: 1, bitDepth: 16, frames: 4, ring: shared }],
+    worker, signal: controller.signal, requestDeadlineMs: 100,
+  }).then(
+    (client) => { escaped = true; return client; },
+    (error: unknown) => { assert.equal(worker.terminated, true); throw error; },
+  );
+  await assert.rejects(opening, (error: unknown) => error === reason);
+  assert.equal(escaped, false, "create must not expose the already terminated client");
+  assert.equal(worker.terminateCount, 1);
+});
+
 test("successful Worker seek and close remain unchanged", async () => {
   const shared = ring("success-client", 1, 4, 2);
   const worker = new FakePumpWorker(true, (message, self) => {

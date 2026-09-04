@@ -76,8 +76,17 @@ Deterministic tests cover termination-before-timeout rejection, a delayed seek
 that cannot apply after termination, forced late replies through a retained
 listener callback, two in-flight seeks rejected exactly once by constructor
 signal cancellation with the identical abort reason, and successful seek plus
-concurrent idempotent close. `npm run check` passes 32 tests and package policy
+concurrent idempotent close. `npm run check` passes 33 tests and package policy
 over 100 files. The packed Chromium gate passes cold/warm reuse with 32 accepted
 submissions, one applied unaligned seek, and zero refused, torn, or feed errors.
 Offline `npm publish --dry-run` passes with a 66.2 kB/100-file tarball (SHA-1
 `7a8d0888c3cb82bc28c3c72e9cdca610f4b182cc`), and `git diff --check` passes.
+
+Attempt 1 (`cc94e66`) failed review on one constructor boundary race: an
+`initialized` reply followed by signal abort in the same task could resolve
+`create()` from its already-queued continuation and expose the terminated
+client. Attempt 2 rechecks both the client's preserved terminal cause and the
+constructor signal after initialization settles but before returning. A
+deterministic same-task reply-then-abort regression proves `create()` rejects
+with the identical abort reason, after Worker termination, and no client
+escapes.

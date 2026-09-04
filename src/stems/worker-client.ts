@@ -71,6 +71,10 @@ export class PcmPumpWorkerClient {
         idleMs: options.idleMs ?? 4,
         generation: options.generation ?? 1n,
       });
+      // A Worker may resolve initialize and the constructor signal may abort
+      // later in that same task, before this async continuation runs.
+      client.#throwIfTerminated();
+      options.signal?.throwIfAborted();
       return client;
     } catch (error) {
       client.#terminate(error);
@@ -106,6 +110,11 @@ export class PcmPumpWorkerClient {
   }
 
   #next(): number { return this.#requestId++; }
+  #throwIfTerminated(): void {
+    if (this.#closed) {
+      throw this.#failureReason ?? new EngineWebAdapterError("session.closed", "PCM pump Worker is closed");
+    }
+  }
   #request(message: PumpWorkerRequest): Promise<PumpWorkerResponse> {
     if (this.#closed) return Promise.reject(this.#failureReason ?? new EngineWebAdapterError("session.closed", "PCM pump Worker is closed"));
     return new Promise((resolve, reject) => {
