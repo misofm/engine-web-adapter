@@ -18,7 +18,7 @@ test("foundation is pinned to the exact public Engine release", () => {
     ADAPTER_PROVENANCE.engine.commit,
     "5360874854f47e3dbfa2279ec6c57174e5ca018e",
   );
-  assert.deepEqual(ADAPTER_PROVENANCE.copiedSources, []);
+  assert.equal(ADAPTER_PROVENANCE.safeBaselines.stemStore, "bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c");
 });
 
 test("canonical byte accounting accepts launch PCM and rejects 32f", () => {
