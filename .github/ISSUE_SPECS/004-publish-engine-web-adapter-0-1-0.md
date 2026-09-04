@@ -60,3 +60,9 @@ features.
   was still processing the accepted release. Add a verify-only recovery mode and
   allow five minutes for future registry propagation; never retry an immutable
   publish after this class of failure.
+- Verify-only GitHub Actions run 33877328789: PASS in 28 seconds. Qualification,
+  live-registry fresh installation, all public imports, registry signatures, and
+  provenance attestations passed; both publication steps were skipped.
+- Package publishing access was set to `mfa=publish`, requiring proof of presence
+  for manual changes and disallowing token-based automation while preserving the
+  trusted OIDC publisher.
