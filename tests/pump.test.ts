@@ -3,19 +3,20 @@ import test from "node:test";
 import { Worker } from "node:worker_threads";
 
 import { EngineWebAdapterError } from "../src/errors.js";
+import { CanonicalPcmPump, SelfDrivingPcmPump } from "../src/stems/pump.js";
 import {
-  CanonicalPcmPump,
   MSB1_CONTROL,
   MSB1_CONTROL_BYTES,
   MSB1_HEADER_OFFSET,
   MSB1_SLOT_HEADER_BYTES,
   Msb1RingReader,
-  PcmPumpWorkerClient,
-  SelfDrivingPcmPump,
   createMsb1Ring,
-} from "../src/stems/index.js";
-import type { EngineSourceSink, PumpWorkerRequest, StemIdentity } from "../src/stems/index.js";
-import type { PumpWorkerLike, PumpWorkerResponse } from "../src/stems/index.js";
+} from "../src/stems/ring.js";
+import { PcmPumpWorkerClient } from "../src/stems/worker-client.js";
+import type { EngineSourceSink } from "../src/stems/ring.js";
+import type { StemIdentity } from "../src/stems/types.js";
+import type { PumpWorkerRequest, PumpWorkerResponse } from "../src/stems/worker-protocol.js";
+import type { PumpWorkerLike } from "../src/stems/worker-client.js";
 
 const IDENTITY = `sha256:${"1".repeat(64)}` as StemIdentity;
 

@@ -3,15 +3,14 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { EngineWebAdapterError } from "../src/errors.js";
-import {
-  BoundedStemAdmission,
-  MemoryStemResolver,
-  MemoryStemStorageBackend,
-  StemSessionGate,
-  VerifiedStemStore,
-} from "../src/stems/index.js";
-import type { StemIdentity, StemResolver } from "../src/stems/index.js";
-import type { StemStorageBackend, WebLockProvider } from "../src/stems/index.js";
+import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
+import { StemSessionGate } from "../src/stems/gate.js";
+import { MemoryStemResolver } from "../src/stems/memory-resolver.js";
+import { MemoryStemStorageBackend } from "../src/stems/storage.js";
+import { VerifiedStemStore } from "../src/stems/store.js";
+import type { StemIdentity, StemResolver } from "../src/stems/types.js";
+import type { StemStorageBackend } from "../src/stems/storage.js";
+import type { WebLockProvider } from "../src/stems/store.js";
 
 function fixture(values: readonly number[]): { bytes: Uint8Array; identity: StemIdentity } {
   const bytes = new Uint8Array(values);

@@ -3,8 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
-import { Msb1RingWriter, createMsb1Ring } from "../src/stems/index.js";
-import { MSB1_CONTROL } from "../src/stems/index.js";
+import { MSB1_CONTROL, Msb1RingWriter, createMsb1Ring } from "../src/stems/ring.js";
 
 test("shipped prelude wraps Engine process and submits MSB1 through the synchronous Wasm ABI", async () => {
   const registrations = new Map<string, new () => any>();
