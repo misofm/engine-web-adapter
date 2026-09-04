@@ -1,0 +1,104 @@
+name: Publish @misofm/engine-web-adapter
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character lowercase main commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+env:
+  PACKAGE_NAME: "@misofm/engine-web-adapter"
+  PACKAGE_VERSION: "0.1.0"
+  NPM_CONFIG_REGISTRY: "https://registry.npmjs.org"
+
+jobs:
+  publish:
+    name: Publish @misofm/engine-web-adapter 0.1.0
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Refuse a non-main or mismatched dispatch
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "release dispatches must use main" >&2; exit 1; }
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "expected_sha must be a full lowercase SHA" >&2; exit 1; }
+          [[ "$GITHUB_SHA" == "$EXPECTED_SHA" ]] || { echo "workflow dispatch SHA differs from expected_sha" >&2; exit 1; }
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.expected_sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Pin the npm release client
+        run: |
+          npm install --global npm@11.19.0
+          [[ "$(npm --version)" == "11.19.0" ]]
+
+      - name: Guard release identity
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" ]]
+          [[ "$(node -p "require('./package.json').name")" == "$PACKAGE_NAME" ]]
+          [[ "$(node -p "require('./package.json').version")" == "$PACKAGE_VERSION" ]]
+          [[ "$(node -p "require('./package-lock.json').name")" == "$PACKAGE_NAME" ]]
+          [[ "$(node -p "require('./package-lock.json').version")" == "$PACKAGE_VERSION" ]]
+          [[ "$(node -p "require('./package.json').dependencies['@misofm/engine']")" == "0.1.0" ]]
+          [[ "$(node -p "require('./package.json').repository.url")" == "git+https://github.com/misofm/engine-web-adapter.git" ]]
+
+      - name: Install and qualify
+        run: |
+          npm ci --ignore-scripts
+          npm run check
+
+      - name: Refuse an existing immutable version
+        run: |
+          set -euo pipefail
+          if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+            echo "$PACKAGE_NAME@$PACKAGE_VERSION already exists" >&2
+            exit 1
+          fi
+
+      - name: Publish through OIDC only
+        run: |
+          set -euo pipefail
+          for fallback in NODE_AUTH_TOKEN NPM_TOKEN NPM_CONFIG__AUTH_TOKEN; do
+            [[ -z "${!fallback:-}" ]] || { echo "refusing npm token fallback: $fallback" >&2; exit 1; }
+          done
+          oidc_userconfig="$RUNNER_TEMP/npmrc-oidc-only"
+          : > "$oidc_userconfig"
+          export NPM_CONFIG_USERCONFIG="$oidc_userconfig"
+          npm publish --access public
+
+      - name: Verify the public registry artifact
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version 2>/dev/null || true)" == "$PACKAGE_VERSION" ]]; then
+              break
+            fi
+            [[ "$attempt" == 12 ]] && { echo "registry did not converge" >&2; exit 1; }
+            sleep 5
+          done
+          [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dependencies.@misofm/engine)" == "0.1.0" ]]
+          consumer=$(mktemp -d)
+          trap 'rm -rf -- "$consumer"' EXIT
+          cd "$consumer"
+          npm install --ignore-scripts "$PACKAGE_NAME@$PACKAGE_VERSION"
+          node --input-type=module -e 'await import("@misofm/engine-web-adapter"); await import("@misofm/engine-web-adapter/stems"); await import("@misofm/engine-web-adapter/assets")'
+          npm audit signatures --include-attestations
