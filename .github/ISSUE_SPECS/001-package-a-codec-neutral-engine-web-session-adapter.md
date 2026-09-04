@@ -164,6 +164,12 @@ harness; and a conflicting byte count cannot demote verified cached content or
 its live pins. Clean-`dist` runs of check, packed Chromium, and publish dry-run
 exercise those contracts.
 
+Attempt 3 nevertheless received a final FAIL: a timed-out
+`PcmPumpWorkerClient.seekFrames()` rejected its public promise without first
+terminating the Worker, so the delayed Worker could still apply the rejected
+seek. The three-attempt stop is binding. No fourth correction belongs to this
+issue; the single remaining invariant is split into issue #2.
+
 `BigInt` is a JavaScript primitive and the language specification does not
 promise whether a particular engine allocates for its operations. No parallel
 ABI was invented. Measuring the shipping worklet's BigInt behavior under the
