@@ -50,18 +50,25 @@ function retryable(error: unknown): boolean {
     (error instanceof EngineWebAdapterError && error.details.retryable === true);
 }
 
-function requestFor(location: string | URL | Request, range: string, signal: AbortSignal): Readonly<{
+function requestFor(
+  location: string | URL | Request,
+  rangeHeader: string,
+  signal: AbortSignal,
+  details: Readonly<Record<string, unknown>>,
+): Readonly<{
   request: HttpClientRequest.HttpClientRequest;
   fetchInit: RequestInit;
 }> {
   let base: Request;
   try { base = location instanceof Request ? location : new Request(location); }
-  catch (error) { throw failure("stem.delivery.address", "FLAC locator returned an invalid delivery address", {}, error); }
+  catch (error) {
+    throw failure("stem.delivery.address", "FLAC locator returned an invalid delivery address", details, error);
+  }
   if (base.method !== "GET" || base.body !== null) {
-    throw failure("stem.delivery.address", "FLAC locator must return a bodyless GET Request", {});
+    throw failure("stem.delivery.address", "FLAC locator must return a bodyless GET Request", details);
   }
   const headers = new Headers(base.headers);
-  headers.set("Range", range);
+  headers.set("Range", rangeHeader);
   const fetchInit: RequestInit = {
     credentials: base.credentials,
     mode: base.mode,
@@ -78,7 +85,7 @@ function requestFor(location: string | URL | Request, range: string, signal: Abo
       fetchInit,
     };
   }
-  catch (error) { throw failure("stem.delivery.address", "FLAC delivery Request could not be constructed", {}, error); }
+  catch (error) { throw failure("stem.delivery.address", "FLAC delivery Request could not be constructed", details, error); }
 }
 
 /** Execute one credit-sized exact range through Effect HttpClient, including physical retries. */
@@ -122,7 +129,13 @@ export function readExactFlacRange(options: FlacHttpOptions & {
       }, error),
     });
     const normalized = yield* Effect.try({
-      try: () => requestFor(location, range, options.signal),
+      try: () => requestFor(location, range, options.signal, {
+        identity: options.identity,
+        phase: options.phase,
+        range: [options.start, options.end],
+        attempt,
+        retryable: false,
+      }),
       catch: (error) => error,
     });
     const service = options.httpClient ?? (yield* HttpClient.HttpClient);

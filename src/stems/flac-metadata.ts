@@ -8,10 +8,11 @@ export const MAXIMUM_DENSE_SEEK_POINTS = 65_536;
 const FLAC_MAGIC = new Uint8Array([0x66, 0x4c, 0x61, 0x43]);
 const SUPPORTED_SAMPLE_RATES = new Set([44_100, 48_000, 88_200, 96_000]);
 
-export type DenseFlacSeekPoint = Readonly<{
-  sampleNumber: number;
-  byteOffset: number;
-  frameSamples: number;
+export type DenseFlacSeekTable = Readonly<{
+  sampleNumbers: Float64Array;
+  byteOffsets: Float64Array;
+  frameSamples: Uint16Array;
+  length: number;
 }>;
 
 export type DenseFlacMetadata = Readonly<{
@@ -25,7 +26,7 @@ export type DenseFlacMetadata = Readonly<{
   streamMd5: Uint8Array;
   decoderDescription: Uint8Array;
   audioDataStart: number;
-  seekPoints: readonly DenseFlacSeekPoint[];
+  seekTable: DenseFlacSeekTable;
 }>;
 
 export type DenseFlacMetadataResult = Readonly<{
@@ -77,7 +78,7 @@ function assertMagicPrefix(bytes: Uint8Array): void {
   }
 }
 
-function parseStreamInfo(streamInfo: Uint8Array): Omit<DenseFlacMetadata, "audioDataStart" | "seekPoints"> {
+function parseStreamInfo(streamInfo: Uint8Array): Omit<DenseFlacMetadata, "audioDataStart" | "seekTable"> {
   const minimumBlockSamples = u16(streamInfo, 0);
   const maximumBlockSamples = u16(streamInfo, 2);
   if (minimumBlockSamples === 0 || minimumBlockSamples !== maximumBlockSamples) {
@@ -145,7 +146,7 @@ function parseStreamInfo(streamInfo: Uint8Array): Omit<DenseFlacMetadata, "audio
 function parseDenseSeekTable(
   bytes: Uint8Array,
   stream: ReturnType<typeof parseStreamInfo>,
-): readonly DenseFlacSeekPoint[] {
+): DenseFlacSeekTable {
   if (bytes.byteLength === 0 || bytes.byteLength % 18 !== 0) {
     throw flacFailure("stem.flac.invalid", "SEEKTABLE must be a nonempty sequence of seek points");
   }
@@ -164,7 +165,9 @@ function parseDenseSeekTable(
     });
   }
 
-  const points: DenseFlacSeekPoint[] = [];
+  const sampleNumbers = new Float64Array(pointCount);
+  const byteOffsets = new Float64Array(pointCount);
+  const frameSamplesByPoint = new Uint16Array(pointCount);
   let priorOffset = -1;
   for (let index = 0; index < pointCount; index += 1) {
     const offset = index * 18;
@@ -207,29 +210,38 @@ function parseDenseSeekTable(
         });
       }
     }
-    points.push({ sampleNumber, byteOffset, frameSamples });
+    sampleNumbers[index] = sampleNumber;
+    byteOffsets[index] = byteOffset;
+    frameSamplesByPoint[index] = frameSamples;
     priorOffset = byteOffset;
   }
-  return Object.freeze(points);
+  return Object.freeze({ sampleNumbers, byteOffsets, frameSamples: frameSamplesByPoint, length: pointCount });
 }
 
 /** Incrementally scans bounded legal metadata and locates one dense SEEKTABLE. */
 export class DenseFlacMetadataParser {
   #pending: Uint8Array<ArrayBufferLike> = new Uint8Array();
+  #pendingOffset = 0;
   #nextHeader = 4;
   #blockCount = 0;
-  #streamInfo: Uint8Array | undefined;
-  #seekTable: Uint8Array | undefined;
+  #streamInfo: ReturnType<typeof parseStreamInfo> | undefined;
+  #seekTable: DenseFlacSeekTable | undefined;
+  #sawSeekTable = false;
   #complete = false;
+
+  /** Bytes retained from incomplete input; processed comments/art are discarded. */
+  get bufferedBytes(): number { return this.#pending.byteLength; }
 
   get maximumBytes(): number {
     if (this.#complete) return MAXIMUM_DELIVERY_CHUNK_BYTES;
-    if (this.#pending.byteLength < 4) return 4 - this.#pending.byteLength;
-    if (this.#pending.byteLength < this.#nextHeader + 4) {
-      return this.#nextHeader + 4 - this.#pending.byteLength;
+    const pendingEnd = this.#pendingOffset + this.#pending.byteLength;
+    if (pendingEnd < 4) return 4 - pendingEnd;
+    if (pendingEnd < this.#nextHeader + 4) {
+      return this.#nextHeader + 4 - pendingEnd;
     }
-    const end = this.#nextHeader + 4 + u24(this.#pending, this.#nextHeader + 1);
-    return Math.min(end - this.#pending.byteLength, MAXIMUM_DELIVERY_CHUNK_BYTES);
+    const headerOffset = this.#nextHeader - this.#pendingOffset;
+    const end = this.#nextHeader + 4 + u24(this.#pending, headerOffset + 1);
+    return Math.min(end - pendingEnd, MAXIMUM_DELIVERY_CHUNK_BYTES);
   }
 
   get phase(): "probe" | "metadata" | "audio" {
@@ -239,11 +251,13 @@ export class DenseFlacMetadataParser {
 
   get phaseBytesRemaining(): number {
     if (this.#complete) return 0;
-    if (this.#pending.byteLength < 4) return 4 - this.#pending.byteLength;
-    if (this.#pending.byteLength < this.#nextHeader + 4) {
-      return this.#nextHeader + 4 - this.#pending.byteLength;
+    const pendingEnd = this.#pendingOffset + this.#pending.byteLength;
+    if (pendingEnd < 4) return 4 - pendingEnd;
+    if (pendingEnd < this.#nextHeader + 4) {
+      return this.#nextHeader + 4 - pendingEnd;
     }
-    return this.#nextHeader + 4 + u24(this.#pending, this.#nextHeader + 1) - this.#pending.byteLength;
+    const headerOffset = this.#nextHeader - this.#pendingOffset;
+    return this.#nextHeader + 4 + u24(this.#pending, headerOffset + 1) - pendingEnd;
   }
 
   push(chunk: Uint8Array): DenseFlacMetadataResult | null {
@@ -255,14 +269,15 @@ export class DenseFlacMetadataParser {
       });
     }
     this.#pending = append(this.#pending, chunk);
-    assertMagicPrefix(this.#pending);
-    if (this.#pending.byteLength < 4) return null;
+    if (this.#pendingOffset === 0) assertMagicPrefix(this.#pending);
+    if (this.#pendingOffset + this.#pending.byteLength < 4) return null;
 
-    while (this.#pending.byteLength >= this.#nextHeader + 4) {
-      const header = this.#pending[this.#nextHeader]!;
+    while (this.#pendingOffset + this.#pending.byteLength >= this.#nextHeader + 4) {
+      const headerOffset = this.#nextHeader - this.#pendingOffset;
+      const header = this.#pending[headerOffset]!;
       const isLast = (header & 0x80) !== 0;
       const type = header & 0x7f;
-      const length = u24(this.#pending, this.#nextHeader + 1);
+      const length = u24(this.#pending, headerOffset + 1);
       const blockEnd = this.#nextHeader + 4 + length;
       if (blockEnd > MAXIMUM_FLAC_METADATA_BYTES) {
         throw flacFailure("stem.flac.resource_limit", "FLAC metadata exceeds the package limit", {
@@ -271,9 +286,10 @@ export class DenseFlacMetadataParser {
         });
       }
       if (type > 6) throw flacFailure("stem.flac.invalid", `Reserved FLAC metadata block type ${type} is not legal`);
-      if (this.#pending.byteLength < blockEnd) return null;
+      if (this.#pendingOffset + this.#pending.byteLength < blockEnd) return null;
 
-      const payload = this.#pending.subarray(this.#nextHeader + 4, blockEnd);
+      const relativeEnd = blockEnd - this.#pendingOffset;
+      const payload = this.#pending.subarray(headerOffset + 4, relativeEnd);
       if (this.#blockCount === 0 && (type !== 0 || length !== 34)) {
         throw flacFailure("stem.flac.invalid", "The first metadata block must be 34-byte STREAMINFO");
       }
@@ -281,24 +297,25 @@ export class DenseFlacMetadataParser {
         if (this.#streamInfo !== undefined || this.#blockCount !== 0 || length !== 34) {
           throw flacFailure("stem.flac.invalid", "FLAC must contain exactly one first 34-byte STREAMINFO");
         }
-        this.#streamInfo = payload.slice();
+        this.#streamInfo = parseStreamInfo(payload);
       } else if (type === 3) {
-        if (this.#seekTable !== undefined) {
+        if (this.#sawSeekTable) {
           throw flacFailure("stem.flac.invalid", "FLAC must contain exactly one SEEKTABLE");
         }
-        this.#seekTable = payload.slice();
+        this.#sawSeekTable = true;
+        this.#seekTable = parseDenseSeekTable(payload, this.#streamInfo!);
       }
       this.#blockCount += 1;
       this.#nextHeader = blockEnd;
+      this.#pending = this.#pending.slice(relativeEnd);
+      this.#pendingOffset = blockEnd;
       if (!isLast) continue;
       if (this.#streamInfo === undefined || this.#seekTable === undefined) {
         throw flacFailure("stem.flac.invalid", "FLAC metadata must contain STREAMINFO and one dense SEEKTABLE");
       }
-      const stream = parseStreamInfo(this.#streamInfo);
-      const seekPoints = parseDenseSeekTable(this.#seekTable, stream);
       const result = {
-        metadata: Object.freeze({ ...stream, audioDataStart: blockEnd, seekPoints }),
-        audioRemainder: this.#pending.slice(blockEnd),
+        metadata: Object.freeze({ ...this.#streamInfo, audioDataStart: blockEnd, seekTable: this.#seekTable }),
+        audioRemainder: this.#pending.slice(),
       } satisfies DenseFlacMetadataResult;
       this.#pending = new Uint8Array();
       this.#complete = true;

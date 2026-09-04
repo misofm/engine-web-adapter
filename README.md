@@ -97,6 +97,10 @@ PCM pump Worker, feed worklet, and Engine assets.
 - Canonical output blocks are at most 384 KiB.
 - Each Worker has four decoder submissions and two decoded-output credits.
 - One active FLAC Worker reserves 8 MiB of package-owned memory.
+- Conservatively accounted live buffers and exact typed dense seek tables total
+  7,864,486 bytes per Worker; 524,122 bytes remain for bounded wrapper/bookkeeping
+  overhead. Browser
+  network and WebCodecs implementation memory is opaque and excluded.
 - Cold decode and warm OPFS verification share one FIFO admission width.
 - PCM is not leased or pumped until exact byte count and incremental SHA-256
   verification succeeds and the staging file is promoted.

@@ -5,6 +5,10 @@ import { EngineWebAdapterError } from "../src/errors.js";
 import {
   BoundedStemAdmission,
   DEFAULT_FLAC_MEMORY_BUDGET_BYTES,
+  FLAC_ACCOUNTED_FIXED_BUFFER_BYTES,
+  FLAC_ACCOUNTING_HEADROOM_BYTES,
+  FLAC_PACKAGE_MEMORY_COMPONENTS,
+  FLAC_WORKER_RESERVATION_BYTES,
   MAXIMUM_CANONICAL_OUTPUT_BYTES,
   MAXIMUM_DELIVERY_CHUNK_BYTES,
   DenseFlacFramePacketizer,
@@ -131,15 +135,22 @@ test("dense FLAC parser accepts exact, partial-final, and single-frame CLI geome
     }),
     7,
   );
-  assert.deepEqual(exact.metadata.seekPoints.map((point) => point.frameSamples), [16, 16]);
+  assert.deepEqual([...exact.metadata.seekTable.frameSamples], [16, 16]);
+  assert.equal(
+    exact.metadata.seekTable.sampleNumbers.byteLength + exact.metadata.seekTable.byteOffsets.byteLength +
+      exact.metadata.seekTable.frameSamples.byteLength,
+    exact.metadata.seekTable.length * 18,
+  );
 
   const partial = parse(fixture(), 1);
   assert.equal(partial.metadata.audioDataStart, 100);
-  assert.deepEqual(partial.metadata.seekPoints.map((point) => point.frameSamples), [16, 16, 8]);
+  assert.deepEqual([...partial.metadata.seekTable.frameSamples], [16, 16, 8]);
   assert.ok(partial.audioRemainder.byteLength <= 1);
 
   const single = parse(fixture({ totalSamples: 7, points: [[0, 0, 7]] }), 5);
-  assert.deepEqual(single.metadata.seekPoints, [{ sampleNumber: 0, byteOffset: 0, frameSamples: 7 }]);
+  assert.deepEqual([...single.metadata.seekTable.sampleNumbers], [0]);
+  assert.deepEqual([...single.metadata.seekTable.byteOffsets], [0]);
+  assert.deepEqual([...single.metadata.seekTable.frameSamples], [7]);
 });
 
 test("dense FLAC parser scans legal intervening metadata and uses the true audio offset", () => {
@@ -155,6 +166,35 @@ test("dense FLAC parser scans legal intervening metadata and uses the true audio
   assert.equal(parsed.metadata.audioDataStart, 166);
   assert.equal(parsed.metadata.decoderDescription.byteLength, 42);
   assert.deepEqual([...parsed.metadata.decoderDescription.subarray(0, 8)], [0x66, 0x4c, 0x61, 0x43, 0x80, 0, 0, 34]);
+});
+
+test("metadata parser discards large processed blocks while enforcing the cumulative budget", () => {
+  const largeComment = new Uint8Array(220_000);
+  const bytes = fixture({ metadata: [{ type: 4, bytes: largeComment }] });
+  const commentEnd = 4 + 4 + 34 + 4 + largeComment.byteLength;
+  const parser = new DenseFlacMetadataParser();
+  assert.equal(parser.push(bytes.subarray(0, commentEnd)), null);
+  assert.equal(parser.bufferedBytes, 0, "processed comment bytes must not remain live");
+  assert.equal(parser.maximumBytes, 4);
+  const parsed = parser.push(bytes.subarray(commentEnd));
+  assert.ok(parsed !== null);
+  assert.ok(parsed.audioRemainder.byteLength < 32);
+
+  const comments = Array.from({ length: 5 }, () => ({ type: 4, bytes: largeComment }));
+  const oversized = fixture({ metadata: comments });
+  const bounded = new DenseFlacMetadataParser();
+  assert.equal(bounded.push(oversized.subarray(0, 42)), null);
+  let offset = 42;
+  for (let index = 0; index < 4; index += 1) {
+    const end = offset + 4 + largeComment.byteLength;
+    assert.equal(bounded.push(oversized.subarray(offset, end)), null);
+    assert.equal(bounded.bufferedBytes, 0);
+    offset = end;
+  }
+  assert.throws(
+    () => bounded.push(oversized.subarray(offset, offset + 4 + largeComment.byteLength)),
+    expectCode("stem.flac.resource_limit"),
+  );
 });
 
 test("dense FLAC parser rejects gaps, shifted offsets, placeholders, and bad frame bounds", () => {
@@ -201,7 +241,7 @@ test("dense FLAC parser rejects unsupported shape and bounded resource violation
   const parser = new DenseFlacMetadataParser();
   parser.push(oversizedMetadataHeader);
   const streamAndHeader = new Uint8Array(38);
-  streamAndHeader.fill(1, 0, 34);
+  streamAndHeader.set(fixture().subarray(8, 42), 0);
   streamAndHeader.set([1, 0x10, 0, 0], 34);
   assert.throws(() => parser.push(streamAndHeader), expectCode("stem.flac.resource_limit"));
 });
@@ -221,6 +261,35 @@ test("packetizer emits exactly one packet per dense point across arbitrary chunk
     packets.map((packet) => [packet.sampleNumber, packet.frameSamples, packet.bytes.byteLength]),
     [[0, 16, 5], [16, 16, 7], [32, 8, 4]],
   );
+});
+
+test("Worker packet consumption stalls with one packet instead of an object queue", async () => {
+  const points = Array.from({ length: 100 }, (_, index) => [index, index, 1] as const);
+  const bytes = fixture({
+    blockSamples: 1,
+    totalSamples: points.length,
+    minimumFrameBytes: 1,
+    maximumFrameBytes: 1,
+    points,
+    finalFrameBytes: 1,
+  });
+  const parsed = parse(bytes);
+  const audio = bytes.subarray(parsed.metadata.audioDataStart);
+  const packetizer = new DenseFlacFramePacketizer(parsed.metadata, { expectedAudioBytes: audio.byteLength });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let consumed = 0;
+  const pushing = packetizer.pushTo(audio, async () => {
+    consumed += 1;
+    if (consumed === 1) await gate;
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(consumed, 1);
+  release();
+  await pushing;
+  assert.equal(consumed, 99);
+  await packetizer.finishTo(async () => { consumed += 1; });
+  assert.equal(consumed, 100);
 });
 
 test("packetizer rejects truncation and short or long final frames", () => {
@@ -331,6 +400,22 @@ test("FLAC admission defaults obey unknown hints and frozen memory/core bounds",
     flacAdmissionWidth({ hardwareConcurrency: 12, memoryBudgetBytes: 32 * 1024 * 1024, maximum: 2 }),
     2,
   );
+});
+
+test("worst-case package-owned fixed buffers fit the per-Worker reservation", () => {
+  assert.deepEqual(FLAC_PACKAGE_MEMORY_COMPONENTS, {
+    exactRange: MAXIMUM_DELIVERY_CHUNK_BYTES,
+    metadataParser: 1024 * 1024 + 2 * MAXIMUM_DELIVERY_CHUNK_BYTES,
+    packetizerPeak: 3 * 524_320 + 2 * MAXIMUM_DELIVERY_CHUNK_BYTES,
+    decoderSubmissions: 4 * 524_320,
+    decodedOutputCredits: 2 * MAXIMUM_CANONICAL_OUTPUT_BYTES,
+    seekTable: Math.floor((1024 * 1024 - 4 - 4 - 34 - 4) / 18) * 18,
+  });
+  assert.equal(
+    FLAC_ACCOUNTED_FIXED_BUFFER_BYTES + FLAC_ACCOUNTING_HEADROOM_BYTES,
+    FLAC_WORKER_RESERVATION_BYTES,
+  );
+  assert.ok(FLAC_ACCOUNTING_HEADROOM_BYTES > 0, "reservation must leave bounded JS bookkeeping headroom");
 });
 
 test("bounded admission is FIFO and removes queued cancellation", async () => {

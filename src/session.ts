@@ -74,7 +74,8 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       document,
       options: scratchBootOptions(options.policy ?? {}),
     });
-    const orderedSources = crossCompiledSources(compiledShape.sources, options.sources);
+    const documentDeclaration = extractDocumentDeclaration(document);
+    const orderedSources = crossSessionDeclarations(compiledShape, documentDeclaration, options.sources);
     if (scratchWorker !== undefined && closeScratchWorker !== undefined) {
       scratchWorker.close();
       const cleanupIndex = cleanup.indexOf(closeScratchWorker);
@@ -330,6 +331,125 @@ function crossCompiledSources(
   });
   if (mismatch) throw new EngineWebAdapterError("session.declaration_mismatch", "Engine-reported source order or shape differs from declarations");
   return ordered as EngineWebSessionOptions["sources"];
+}
+
+interface DocumentSourceDeclaration {
+  readonly id: string;
+  readonly identity: string;
+  readonly channels: number;
+  readonly bitDepth: 16 | 24 | "32f";
+  readonly frames: bigint;
+  readonly canonicalBytes: bigint | undefined;
+}
+
+interface DocumentDeclaration {
+  readonly sampleRateHz: number;
+  readonly sources: readonly DocumentSourceDeclaration[];
+}
+
+function extractDocumentDeclaration(document: Uint8Array): DocumentDeclaration {
+  let value: unknown;
+  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(document)); }
+  catch (error) {
+    throw new EngineWebAdapterError(
+      "session.declaration_mismatch",
+      "Normalized Session V1 JSON could not be inspected at the stem boundary",
+      {},
+      error,
+    );
+  }
+  if (!isRecord(value) || value.schema_version !== 1 || typeof value.sample_rate_hz !== "number" ||
+    !Number.isSafeInteger(value.sample_rate_hz) ||
+    !Array.isArray(value.sources)) {
+    throw declarationMismatch("Normalized document is not a strict Session V1 source declaration");
+  }
+  const ids = new Set<string>();
+  const sources = value.sources.map((candidate, index): DocumentSourceDeclaration => {
+    if (!isRecord(candidate) || typeof candidate.id !== "string" || candidate.id.length === 0 ||
+      typeof candidate.content !== "string" || typeof candidate.channels !== "number" ||
+      !Number.isSafeInteger(candidate.channels) || candidate.channels < 1 ||
+      (candidate.bit_depth !== 16 && candidate.bit_depth !== 24 && candidate.bit_depth !== "32f") ||
+      typeof candidate.frames !== "string" || !/^(?:0|[1-9]\d*)$/u.test(candidate.frames)) {
+      throw declarationMismatch("Document source declaration is not strict Session V1 JSON", { sourceIndex: index });
+    }
+    if (ids.has(candidate.id)) {
+      throw declarationMismatch("Document source IDs must be unique", { sourceId: candidate.id });
+    }
+    ids.add(candidate.id);
+    const frames = BigInt(candidate.frames);
+    const canonicalBytes = typeof candidate.bit_depth === "number"
+      ? frames * BigInt(candidate.channels) * BigInt(candidate.bit_depth / 8)
+      : undefined;
+    return {
+      id: candidate.id,
+      identity: candidate.content,
+      channels: candidate.channels,
+      bitDepth: candidate.bit_depth,
+      frames,
+      canonicalBytes,
+    };
+  });
+  return { sampleRateHz: value.sample_rate_hz as number, sources };
+}
+
+function crossSessionDeclarations(
+  compiled: Readonly<{
+    readonly sampleRateHz: number;
+    readonly sources: readonly { readonly id: string; readonly channels: number; readonly frames: bigint }[];
+  }>,
+  document: DocumentDeclaration,
+  declared: EngineWebSessionOptions["sources"],
+): EngineWebSessionOptions["sources"] {
+  const ordered = crossCompiledSources(compiled.sources, declared);
+  if (document.sampleRateHz !== compiled.sampleRateHz) {
+    throw declarationMismatch("Document sample rate differs from the scratch-compiled session", {
+      field: "sample_rate_hz", expected: compiled.sampleRateHz, actual: document.sampleRateHz,
+    });
+  }
+  const byId = new Map(document.sources.map((source) => [source.id, source]));
+  if (document.sources.length !== declared.length || byId.size !== declared.length) {
+    throw declarationMismatch("Document and caller source ID sets differ", {
+      documentSourceIds: document.sources.map((source) => source.id),
+      callerSourceIds: declared.map((source) => source.id),
+    });
+  }
+  for (const caller of declared) {
+    const source = byId.get(caller.id);
+    if (source === undefined) {
+      throw declarationMismatch("Document and caller source ID sets differ", { sourceId: caller.id, field: "id" });
+    }
+    const expectedFrames = BigInt(caller.spec.frames);
+    const expectedBytes = BigInt(canonicalPcmBytes(caller.spec));
+    const comparisons: readonly [string, unknown, unknown][] = [
+      ["content", caller.spec.content, source.identity],
+      ["channels", caller.spec.channels, source.channels],
+      ["bit_depth", caller.spec.bitDepth, source.bitDepth],
+      ["frames", expectedFrames, source.frames],
+      ["canonical_bytes", expectedBytes, source.canonicalBytes],
+    ];
+    for (const [field, expected, actual] of comparisons) {
+      if (expected !== actual) {
+        throw declarationMismatch("Document source differs from the caller stem declaration", {
+          sourceId: caller.id,
+          field,
+          expected: typeof expected === "bigint" ? expected.toString() : expected,
+          actual: typeof actual === "bigint" ? actual.toString() : actual,
+        });
+      }
+    }
+  }
+  return ordered;
+}
+
+function declarationMismatch(
+  message: string,
+  details: Readonly<Record<string, unknown>> = {},
+): EngineWebAdapterError {
+  return new EngineWebAdapterError("session.declaration_mismatch", message, details);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function exactFrames(value: number | bigint): number {

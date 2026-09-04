@@ -37,6 +37,26 @@ export class DenseFlacFramePacketizer {
   }
 
   push(chunk: Uint8Array): FlacFramePacket[] {
+    this.#append(chunk);
+    const packets: FlacFramePacket[] = [];
+    for (;;) {
+      const packet = this.#takeReady();
+      if (packet === undefined) return packets;
+      packets.push(packet);
+    }
+  }
+
+  /** Worker path: consume ready packets one at a time without an object queue. */
+  async pushTo(chunk: Uint8Array, consume: (packet: FlacFramePacket) => Promise<void>): Promise<void> {
+    this.#append(chunk);
+    for (;;) {
+      const packet = this.#takeReady();
+      if (packet === undefined) return;
+      await consume(packet);
+    }
+  }
+
+  #append(chunk: Uint8Array): void {
     if (this.#finished) throw invalid("Frame packetizer is already complete");
     if (chunk.byteLength > MAXIMUM_DELIVERY_CHUNK_BYTES) {
       throw new EngineWebAdapterError("stem.flac.resource_limit", "Delivery chunk exceeds the package limit", {
@@ -44,13 +64,14 @@ export class DenseFlacFramePacketizer {
         limit: MAXIMUM_DELIVERY_CHUNK_BYTES,
       });
     }
-    if (chunk.byteLength === 0) return [];
+    if (chunk.byteLength === 0) return;
     if (this.#expectedAudioBytes !== undefined && this.#received + chunk.byteLength > this.#expectedAudioBytes) {
       throw invalid("Delivered FLAC audio exceeds its declared length");
     }
 
     this.#received += chunk.byteLength;
-    const finalOffset = this.#metadata.seekPoints.at(-1)!.byteOffset;
+    const table = this.#metadata.seekTable;
+    const finalOffset = table.byteOffsets[table.length - 1]!;
     if (this.#received - finalOffset > Math.min(this.#metadata.maximumFrameBytes, MAXIMUM_FLAC_FRAME_BYTES)) {
       throw invalid("Final compressed FLAC frame exceeds its byte bound");
     }
@@ -59,28 +80,38 @@ export class DenseFlacFramePacketizer {
     joined.set(chunk, this.#pending.byteLength);
     this.#pending = joined;
 
-    const packets: FlacFramePacket[] = [];
-    while (this.#nextFrame + 1 < this.#metadata.seekPoints.length) {
-      const point = this.#metadata.seekPoints[this.#nextFrame]!;
-      const boundary = this.#metadata.seekPoints[this.#nextFrame + 1]!.byteOffset;
-      if (this.#received < boundary) break;
-      const length = boundary - point.byteOffset;
-      if (point.byteOffset !== this.#pendingOffset || length > this.#pending.byteLength) {
-        throw invalid("Delivered FLAC bytes disagree with dense seek offsets");
-      }
-      packets.push({
-        sampleNumber: point.sampleNumber,
-        frameSamples: point.frameSamples,
-        bytes: this.#pending.slice(0, length),
-      });
-      this.#pending = this.#pending.slice(length);
-      this.#pendingOffset = boundary;
-      this.#nextFrame += 1;
+  }
+
+  #takeReady(): FlacFramePacket | undefined {
+    const table = this.#metadata.seekTable;
+    if (this.#nextFrame + 1 >= table.length) return undefined;
+    const pointOffset = table.byteOffsets[this.#nextFrame]!;
+    const boundary = table.byteOffsets[this.#nextFrame + 1]!;
+    if (this.#received < boundary) return undefined;
+    const length = boundary - pointOffset;
+    if (pointOffset !== this.#pendingOffset || length > this.#pending.byteLength) {
+      throw invalid("Delivered FLAC bytes disagree with dense seek offsets");
     }
-    return packets;
+    const packet = {
+      sampleNumber: table.sampleNumbers[this.#nextFrame]!,
+      frameSamples: table.frameSamples[this.#nextFrame]!,
+      bytes: this.#pending.slice(0, length),
+    };
+    this.#pending = this.#pending.subarray(length);
+    this.#pendingOffset = boundary;
+    this.#nextFrame += 1;
+    return packet;
   }
 
   finish(): FlacFramePacket[] {
+    return [this.#takeFinal()];
+  }
+
+  async finishTo(consume: (packet: FlacFramePacket) => Promise<void>): Promise<void> {
+    await consume(this.#takeFinal());
+  }
+
+  #takeFinal(): FlacFramePacket {
     if (this.#finished) throw invalid("Frame packetizer is already complete");
     this.#finished = true;
     if (this.#expectedAudioBytes !== undefined && this.#received !== this.#expectedAudioBytes) {
@@ -89,17 +120,22 @@ export class DenseFlacFramePacketizer {
         actualBytes: this.#received,
       });
     }
-    const point = this.#metadata.seekPoints[this.#nextFrame];
+    const table = this.#metadata.seekTable;
+    const pointOffset = table.byteOffsets[this.#nextFrame];
     if (
-      point === undefined ||
-      this.#nextFrame !== this.#metadata.seekPoints.length - 1 ||
-      point.byteOffset !== this.#pendingOffset ||
+      pointOffset === undefined ||
+      this.#nextFrame !== table.length - 1 ||
+      pointOffset !== this.#pendingOffset ||
       this.#pending.byteLength < this.#metadata.minimumFrameBytes ||
       this.#pending.byteLength > this.#metadata.maximumFrameBytes ||
       this.#pending.byteLength > MAXIMUM_FLAC_FRAME_BYTES
     ) {
       throw invalid("Delivery ended without exactly one valid final FLAC frame");
     }
-    return [{ sampleNumber: point.sampleNumber, frameSamples: point.frameSamples, bytes: this.#pending.slice() }];
+    return {
+      sampleNumber: table.sampleNumbers[this.#nextFrame]!,
+      frameSamples: table.frameSamples[this.#nextFrame]!,
+      bytes: this.#pending.slice(),
+    };
   }
 }

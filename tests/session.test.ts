@@ -109,6 +109,49 @@ test("scratch declaration mismatch refuses before store or FLAC locator work", a
   assert.equal(locatorCalls, 0);
 });
 
+test("every document stem tuple mismatch refuses before store or FLAC delivery", async () => {
+  const exact = documentValue([{ id: "source", spec: {
+    channels: 1, bitDepth: 16, frames: 4, content: IDENTITY,
+  } }]);
+  const cases: Array<readonly [string, (document: any) => void]> = [
+    ["id", (document) => { document.sources[0].id = "other"; }],
+    ["content", (document) => { document.sources[0].content = IDENTITY_Z; }],
+    ["channels", (document) => { document.sources[0].channels = 2; }],
+    ["frames", (document) => { document.sources[0].frames = "5"; }],
+    ["bit_depth", (document) => { document.sources[0].bit_depth = 24; }],
+    ["sample_rate_hz", (document) => { document.sample_rate_hz = 44_100; }],
+  ];
+  for (const [field, mutate] of cases) {
+    const document = structuredClone(exact);
+    mutate(document);
+    let storeOpened = false;
+    let locatorCalls = 0;
+    const base = baseOptions();
+    const { resolver: _resolver, ...common } = base;
+    await assert.rejects(
+      openEngineWebSession({
+        ...common,
+        document: JSON.stringify(document),
+        flac: { locate: () => { locatorCalls += 1; return "https://caller.invalid/stem"; } },
+        capabilityScope: capabilities(),
+        store: {
+          async open() { storeOpened = true; return this; },
+          async openSession() { storeOpened = true; throw new Error("unreachable"); },
+        },
+        scratchBoot: async () => ({
+          sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
+          sources: [{ id: "source", channels: 1, frames: 4n }], tracks: [],
+        }),
+      }),
+      (error: unknown) => error instanceof EngineWebAdapterError &&
+        error.code === "session.declaration_mismatch" && error.details.field === field,
+      field,
+    );
+    assert.equal(storeOpened, false, field);
+    assert.equal(locatorCalls, 0, field);
+  }
+});
+
 test("session composes in order and serializes lifecycle with reverse cleanup", async () => {
   const events: string[] = [];
   const context = fakeContext(events);
@@ -142,6 +185,10 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
       { id: "source-z", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY_Z } },
       { id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
     ],
+    document: documentFor([
+      { id: "source-z", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY_Z } },
+      { id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
+    ]),
     capabilityScope: capabilities(),
     createContext: () => context,
     createHost: async ({ context: engineContext }) => {
@@ -213,11 +260,32 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
 });
 
 function baseOptions(): EngineWebSessionCommonOptions & { readonly resolver: StemResolver; readonly flac?: never } {
+  const sources = [{ id: "source", spec: { channels: 1 as const, bitDepth: 16 as const, frames: 4, content: IDENTITY } }];
   return {
-    document: "{}", leaseId: "lease",
-    sources: [{ id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } }],
+    document: documentFor(sources), leaseId: "lease", sources,
     resolver: { async resolve() { throw new Error("resolver must not run in this test"); } },
   };
+}
+
+function documentValue(sources: EngineWebSessionCommonOptions["sources"]) {
+  return {
+    schema_version: 1,
+    session_id: "test",
+    revision: "0",
+    sample_rate_hz: 48_000,
+    quantum_frames: 4,
+    sources: sources.map((source) => ({
+      id: source.id,
+      content: source.spec.content,
+      channels: source.spec.channels,
+      bit_depth: source.spec.bitDepth,
+      frames: String(source.spec.frames),
+    })),
+  };
+}
+
+function documentFor(sources: EngineWebSessionCommonOptions["sources"]): string {
+  return JSON.stringify(documentValue(sources));
 }
 
 function capabilities(): NonNullable<EngineWebSessionOptions["capabilityScope"]> {

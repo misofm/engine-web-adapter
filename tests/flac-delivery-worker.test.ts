@@ -35,6 +35,12 @@ function exactResponse(bytes: Uint8Array, start: number, end: number, total = by
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 test("Effect HttpClient delivery preserves caller headers and overwrites exact Range", async () => {
   const source = new Uint8Array([1, 2, 3, 4, 5, 6]);
   const seen: Array<Readonly<Record<string, string>>> = [];
@@ -63,6 +69,37 @@ test("Effect HttpClient delivery preserves caller headers and overwrites exact R
   assert.deepEqual(attempts, [1]);
   assert.equal(seen[0]!.authorization, "Bearer caller");
   assert.equal(seen[0]!.range, "bytes=1-3");
+});
+
+test("delivery address failures retain stable range-attempt diagnostics", async () => {
+  for (const locate of [
+    () => "not an absolute URL",
+    () => new Request("https://caller.invalid/stem", { method: "POST" }),
+    () => { throw new Error("address lookup failed"); },
+  ]) {
+    await assert.rejects(
+      readExactFlacRange({
+        identity: IDENTITY,
+        phase: "metadata",
+        start: 17,
+        end: 31,
+        signal: new AbortController().signal,
+        state: {},
+        maximumAttempts: 1,
+        locate,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof EngineWebAdapterError);
+        assert.equal(error.code, "stem.delivery.address");
+        assert.equal(error.details.identity, IDENTITY);
+        assert.equal(error.details.phase, "metadata");
+        assert.deepEqual(error.details.range, [17, 31]);
+        assert.equal(error.details.attempt, 1);
+        assert.equal(error.details.retryable, false);
+        return true;
+      },
+    );
+  }
 });
 
 test("default FetchHttpClient preserves caller Request credentials and mode", async () => {
@@ -209,9 +246,11 @@ class FakeWorker implements FlacWorkerLike {
   readonly posted: FlacWorkerRequest[] = [];
   readonly ranges: number[] = [];
   terminated = false;
+  postsAfterTermination = 0;
   #received = 0;
   #listeners = new Map<string, Set<(event: any) => void>>();
   postMessage(message: FlacWorkerRequest): void {
+    if (this.terminated) { this.postsAfterTermination += 1; return; }
     this.posted.push(message);
     if (message.type === "start") queueMicrotask(() => this.emit({ type: "input-credit", requestId: message.requestId, maximumBytes: 4, phase: "probe", phaseBytesRemaining: 4 }));
     if (message.type === "input") {
@@ -238,6 +277,10 @@ class FakeWorker implements FlacWorkerLike {
   }
   emit(message: FlacWorkerResponse): void {
     for (const listener of this.#listeners.get("message") ?? []) listener({ data: message });
+  }
+  fail(error: Error): void {
+    const event = { message: error.message, error };
+    for (const listener of this.#listeners.get("error") ?? []) listener(event);
   }
 }
 
@@ -266,6 +309,48 @@ test("resolver follows Worker credit with exact nonoverlapping ranges and dispos
   assert.deepEqual(ranges, ["bytes=0-3", "bytes=4-7", "bytes=8-9"]);
   assert.equal(worker.terminated, true);
   assert.ok(worker.posted.some((message) => message.type === "output-credit"));
+});
+
+test("mid-body retry resumes at Worker credit without duplicated accepted bytes", async () => {
+  const source = new Uint8Array(10);
+  const ranges: string[] = [];
+  let first = true;
+  const worker = new FakeWorker();
+  const resolver = createFlacStemResolver({
+    createWorker: () => worker,
+    hardwareConcurrency: 2,
+    maximumAttempts: 2,
+    readDeadlineMs: 5,
+    locate: () => "https://caller.invalid/stem",
+    httpClient: responseClient((request) => {
+      const range = request.headers.range!;
+      ranges.push(range);
+      const match = /^bytes=(\d+)-(\d+)$/u.exec(range)!;
+      const start = Number(match[1]);
+      const end = Number(match[2]);
+      if (first) {
+        first = false;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { controller.enqueue(source.slice(start, start + 2)); },
+        }), {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${end}/${source.byteLength}`,
+            "Content-Length": String(end - start + 1),
+            ETag: '"stable"',
+          },
+        });
+      }
+      return exactResponse(source, start, end);
+    }),
+  });
+  const reader = (await resolver.resolve(IDENTITY)).stream.getReader();
+  assert.deepEqual([...(await reader.read()).value!], [9, 8, 7, 6]);
+  assert.equal((await reader.read()).done, true);
+  assert.deepEqual(ranges, ["bytes=0-3", "bytes=0-3", "bytes=4-7", "bytes=8-9"]);
+  const accepted = worker.posted.filter((message): message is Extract<FlacWorkerRequest, { type: "input" }> =>
+    message.type === "input");
+  assert.deepEqual(accepted.map((message) => message.bytes.byteLength), [4, 4, 2]);
 });
 
 test("Worker pool removes queued cancellation and terminates before active rejection", async () => {
@@ -309,6 +394,106 @@ test("active resolver cancellation terminates its physical Worker before stream 
     },
   );
   assert.ok(worker.posted.some((message) => message.type === "cancel"));
+});
+
+test("metadata locator cancellation aborts before Worker termination and rejection", async () => {
+  class MetadataWorker extends FakeWorker {
+    override postMessage(message: FlacWorkerRequest): void {
+      if (this.terminated) { this.postsAfterTermination += 1; return; }
+      this.posted.push(message);
+      if (message.type === "start") queueMicrotask(() => this.emit({
+        type: "input-credit", requestId: message.requestId, maximumBytes: 4,
+        phase: "metadata", phaseBytesRemaining: 4,
+      }));
+    }
+  }
+  const worker = new MetadataWorker();
+  const abort = new AbortController();
+  const locateStarted = deferred<void>();
+  let locatorAborted = false;
+  const resolver = createFlacStemResolver({
+    createWorker: () => worker,
+    hardwareConcurrency: 2,
+    locate: (_identity, attempt) => {
+      locateStarted.resolve();
+      attempt.signal.addEventListener("abort", () => { locatorAborted = true; }, { once: true });
+      return new Promise<string>(() => undefined);
+    },
+  });
+  const reading = (await resolver.resolve(IDENTITY, { signal: abort.signal })).stream.getReader().read();
+  await locateStarted.promise;
+  abort.abort("metadata cancellation");
+  await assert.rejects(reading, (error: unknown) => {
+    assert.equal(worker.terminated, true);
+    return error instanceof EngineWebAdapterError && error.code === "stem.cancelled";
+  });
+  assert.equal(locatorAborted, true);
+  assert.equal(worker.postsAfterTermination, 0);
+});
+
+test("Worker terminal failure aborts active range input and no continuation posts after termination", async () => {
+  const worker = new FakeWorker();
+  const requestStarted = deferred<void>();
+  let deliveryAborted = false;
+  const client = responseClient(() => new Response(new ReadableStream<Uint8Array>({
+    start() { requestStarted.resolve(); },
+  }), {
+    status: 206,
+    headers: { "Content-Range": "bytes 0-3/4", "Content-Length": "4", ETag: '"stable"' },
+  }));
+  const resolver = createFlacStemResolver({
+    createWorker: () => worker,
+    hardwareConcurrency: 2,
+    locate: (_identity, attempt) => {
+      attempt.signal.addEventListener("abort", () => { deliveryAborted = true; }, { once: true });
+      return "https://caller.invalid/active-range";
+    },
+    httpClient: client,
+  });
+  const resolved = await resolver.resolve(IDENTITY);
+  const reading = resolved.stream.getReader().read();
+  await requestStarted.promise;
+  worker.fail(new Error("decoder process failed"));
+  await assert.rejects(
+    reading,
+    (error: unknown) => {
+      assert.equal(worker.terminated, true);
+      return error instanceof EngineWebAdapterError && error.code === "stem.decode.worker";
+    },
+  );
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(deliveryAborted, true);
+  assert.equal(worker.postsAfterTermination, 0);
+});
+
+test("caller abort after decoder output terminates before rejection and leaves late work inert", async () => {
+  class OutputWorker extends FakeWorker {
+    override postMessage(message: FlacWorkerRequest): void {
+      if (this.terminated) { this.postsAfterTermination += 1; return; }
+      this.posted.push(message);
+      if (message.type === "start") queueMicrotask(() => this.emit({
+        type: "pcm", requestId: message.requestId, bytes: new Uint8Array([1, 2]).buffer,
+        frames: 1, totalPcmBytes: 4,
+      }));
+    }
+  }
+  const worker = new OutputWorker();
+  const abort = new AbortController();
+  const resolver = createFlacStemResolver({
+    createWorker: () => worker,
+    hardwareConcurrency: 2,
+    locate: () => "https://caller.invalid/unused",
+  });
+  const resolved = await resolver.resolve(IDENTITY, { signal: abort.signal });
+  const reader = resolved.stream.getReader();
+  assert.deepEqual([...(await reader.read()).value!], [1, 2]);
+  abort.abort("decoder output cancellation");
+  await assert.rejects(reader.read(), (error: unknown) => {
+    assert.equal(worker.terminated, true);
+    return error instanceof EngineWebAdapterError && error.code === "stem.cancelled";
+  });
+  worker.emit({ type: "complete", requestId: 1, pcmBytes: 4, frames: 1 });
+  assert.equal(worker.postsAfterTermination, 0);
 });
 
 test("ingest core reports typed Worker WebCodecs capability failure", async () => {

@@ -120,7 +120,7 @@ test("recovery without lock query keeps ambiguous final and staging files", asyn
   assert.equal(backend.files.has(`staging-tab-${digest}`), true);
 });
 
-test("duplicate content single-flights and distinct source IDs share one verified Blob", async () => {
+test("duplicate content locks once and distinct source IDs share one verified Blob", async () => {
   const item = fixture([2, 4, 6, 8, 10, 12, 14, 16]);
   const backend = new MemoryStemStorageBackend();
   const resolver = new MemoryStemResolver({ [item.identity]: item.bytes }, { chunkBytes: 1 });
@@ -139,6 +139,80 @@ test("duplicate content single-flights and distinct source IDs share one verifie
   assert.equal((await b.read(item.identity)).size, item.bytes.length);
   assert.equal([...backend.files.keys()].filter((name) => name.startsWith("sha256-")).length, 1);
   await Promise.all([a.close(), b.close()]);
+});
+
+test("cancelling one open cannot contaminate or deadlock an independent same-stem open", async () => {
+  const item = fixture([71, 72, 73, 74]);
+  const backend = new MemoryStemStorageBackend();
+  const store = new VerifiedStemStore({ backend, readDeadlineMs: 100 });
+  const stems = [requirement("source", item.identity, item.bytes.length)];
+  const firstStarted = deferred<void>();
+  let firstCancelled = false;
+  const firstResolver: StemResolver = {
+    async resolve(_identity, options) {
+      firstStarted.resolve();
+      options?.signal?.addEventListener("abort", () => { firstCancelled = true; }, { once: true });
+      return { stream: new ReadableStream<Uint8Array>({
+        pull: () => new Promise<void>(() => undefined),
+      }) };
+    },
+  };
+  const firstAbort = new AbortController();
+  const first = store.openSession({ leaseId: "cancelled", stems, resolver: firstResolver, signal: firstAbort.signal });
+  await firstStarted.promise;
+  const secondResolver = new MemoryStemResolver({ [item.identity]: item.bytes });
+  const second = store.openSession({ leaseId: "independent", stems, resolver: secondResolver });
+  firstAbort.abort(new DOMException("cancel first", "AbortError"));
+  await assert.rejects(
+    first,
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled",
+  );
+  const lease = await Promise.race([
+    second,
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("independent open deadlocked")), 100)),
+  ]);
+  assert.equal(firstCancelled, true);
+  assert.equal(secondResolver.requests.length, 1);
+  assert.deepEqual(new Uint8Array(await (await lease.read(item.identity)).arrayBuffer()), item.bytes);
+  await lease.close();
+});
+
+test("cancellation during OPFS write awaits writer abort and removes staging", async () => {
+  const item = fixture([81, 82, 83, 84]);
+  const storage = new MemoryStemStorageBackend();
+  const writeStarted = deferred<void>();
+  const writeStopped = deferred<void>();
+  let writerAborted = false;
+  const backend: StemStorageBackend = {
+    ...backendView(storage),
+    async createWriter(name) {
+      if (!name.startsWith("staging-")) return storage.createWriter(name);
+      return {
+        async write() {
+          writeStarted.resolve();
+          await writeStopped.promise;
+          if (writerAborted) throw new DOMException("write aborted", "AbortError");
+        },
+        async close() { assert.fail("cancelled staging writer closed"); },
+        async abort() { writerAborted = true; writeStopped.resolve(); },
+      };
+    },
+  };
+  const abort = new AbortController();
+  const opening = new VerifiedStemStore({ backend }).openSession({
+    leaseId: "opfs-cancel",
+    stems: [requirement("source", item.identity, item.bytes.length)],
+    resolver: new MemoryStemResolver({ [item.identity]: item.bytes }),
+    signal: abort.signal,
+  });
+  await writeStarted.promise;
+  abort.abort(new DOMException("cancel OPFS write", "AbortError"));
+  await assert.rejects(
+    opening,
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled",
+  );
+  assert.equal(writerAborted, true);
+  assert.equal([...storage.files.keys()].some((name) => name.startsWith("staging-") || name.startsWith("sha256-")), false);
 });
 
 test("Web Locks serialize separate tab/store instances into one resolve", async () => {

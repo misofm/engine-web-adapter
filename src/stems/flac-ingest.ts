@@ -72,7 +72,6 @@ export async function runFlacIngest(options: {
   let emittedPcmBytes = 0;
   let decoderFailure: unknown;
   let wakeDecoder: (() => void) | undefined;
-  const packets: FlacFramePacket[] = [];
 
   const wake = () => {
     const current = wakeDecoder;
@@ -85,22 +84,20 @@ export async function runFlacIngest(options: {
     await new Promise<void>((resolve) => { wakeDecoder = resolve; });
     if (decoderFailure !== undefined) throw decoderFailure;
   };
-  const submit = async () => {
-    while (packets.length > 0 && !options.cancelled()) {
-      while (submitted >= MAXIMUM_FLAC_DECODER_SUBMISSIONS) await awaitDecoder();
-      await options.nextOutputCredit();
-      if (options.cancelled()) return;
-      const packet = packets.shift()!;
-      const current = metadata!;
-      const chunk = new EncodedChunk({
-        type: "key",
-        timestamp: Math.round(packet.sampleNumber * 1_000_000 / current.sampleRateHz),
-        duration: Math.round(packet.frameSamples * 1_000_000 / current.sampleRateHz),
-        data: packet.bytes,
-      });
-      submitted += 1;
-      try { decoder!.decode(chunk); } catch (error) { submitted -= 1; throw error; }
-    }
+  const submit = async (packet: FlacFramePacket) => {
+    if (options.cancelled()) return;
+    while (submitted >= MAXIMUM_FLAC_DECODER_SUBMISSIONS) await awaitDecoder();
+    await options.nextOutputCredit();
+    if (options.cancelled()) return;
+    const current = metadata!;
+    const chunk = new EncodedChunk({
+      type: "key",
+      timestamp: Math.round(packet.sampleNumber * 1_000_000 / current.sampleRateHz),
+      duration: Math.round(packet.frameSamples * 1_000_000 / current.sampleRateHz),
+      data: packet.bytes,
+    });
+    submitted += 1;
+    try { decoder!.decode(chunk); } catch (error) { submitted -= 1; throw error; }
   };
 
   options.post({ type: "ready", requestId: options.requestId });
@@ -149,8 +146,8 @@ export async function runFlacIngest(options: {
         decoder = new AudioDecoderConstructor({
           output(audio) {
             try {
-              const expectedFrame = expectedMetadata.seekPoints[emittedFrames];
-              if (expectedFrame === undefined) {
+              const expectedFrameSamples = expectedMetadata.seekTable.frameSamples[emittedFrames];
+              if (expectedFrameSamples === undefined) {
                 audio.close();
                 throw new EngineWebAdapterError("stem.decode.output", "Decoder emitted an extra AudioData block");
               }
@@ -158,7 +155,7 @@ export async function runFlacIngest(options: {
                 sampleRateHz: expectedMetadata.sampleRateHz,
                 channels: expectedMetadata.channels,
                 bitDepth: expectedMetadata.bitDepth,
-                frameSamples: expectedFrame.frameSamples,
+                frameSamples: expectedFrameSamples,
               });
               emittedFrames += 1;
               emittedPcmBytes += pcm.byteLength;
@@ -168,7 +165,7 @@ export async function runFlacIngest(options: {
                 type: "pcm",
                 requestId: options.requestId,
                 bytes,
-                frames: expectedFrame.frameSamples,
+                frames: expectedFrameSamples,
                 totalPcmBytes: expectedMetadata.totalSamples * expectedMetadata.channels * (expectedMetadata.bitDepth / 8),
               }, [bytes]);
               wake();
@@ -177,20 +174,18 @@ export async function runFlacIngest(options: {
           error(error) { decoderFailure = error; wake(); },
         });
         decoder.configure(supported.config ?? config);
-        packets.push(...packetizer.push(parsed.audioRemainder));
+        await packetizer.pushTo(parsed.audioRemainder, submit);
       } else {
-        packets.push(...packetizer!.push(input.bytes));
+        await packetizer!.pushTo(input.bytes, submit);
       }
-      await submit();
     }
 
     if (metadata === undefined || packetizer === undefined || decoder === undefined) parser.finish();
-    packets.push(...packetizer!.finish());
-    await submit();
+    await packetizer!.finishTo(submit);
     while (submitted > 0) await awaitDecoder();
     await decoder!.flush();
     if (decoderFailure !== undefined) throw decoderFailure;
-    if (emittedFrames !== metadata!.seekPoints.length) {
+    if (emittedFrames !== metadata!.seekTable.length) {
       throw new EngineWebAdapterError("stem.decode.output", "Decoder output frame count is not exact");
     }
     if (!options.cancelled()) {

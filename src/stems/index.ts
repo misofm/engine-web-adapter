@@ -7,6 +7,9 @@ export { StemSessionGate } from "./gate.js";
 export {
   DEFAULT_FLAC_MEMORY_BUDGET_BYTES,
   DEFAULT_MAXIMUM_ACTIVE_FLAC_WORKERS,
+  FLAC_ACCOUNTED_FIXED_BUFFER_BYTES,
+  FLAC_ACCOUNTING_HEADROOM_BYTES,
+  FLAC_PACKAGE_MEMORY_COMPONENTS,
   FLAC_WORKER_RESERVATION_BYTES,
   MAXIMUM_FLAC_MEMORY_BUDGET_BYTES,
   MINIMUM_FLAC_MEMORY_BUDGET_BYTES,
@@ -52,7 +55,7 @@ export type { EngineSourceSink, Msb1RingCounters, Msb1RingLayout } from "./ring.
 export type { PumpWorkerRequest, PumpWorkerResponse } from "./worker-protocol.js";
 export type { PumpWorkerLike } from "./worker-client.js";
 export type { StemAdmissionLease } from "./flac-admission.js";
-export type { DenseFlacMetadata, DenseFlacMetadataResult, DenseFlacSeekPoint } from "./flac-metadata.js";
+export type { DenseFlacMetadata, DenseFlacMetadataResult, DenseFlacSeekTable } from "./flac-metadata.js";
 export type { FlacFramePacket } from "./flac-packetizer.js";
 export type { WebCodecsAudioDataLike, WebCodecsAudioFormat } from "./flac-pcm.js";
 export type { FlacHttpOptions, FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";

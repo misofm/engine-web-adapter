@@ -54,9 +54,6 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
     resolve(identity, resolveOptions = {}): Promise<ResolvedStem> {
       assertStemIdentity(identity);
       const controller = new AbortController();
-      const abort = () => controller.abort(resolveOptions.signal?.reason);
-      if (resolveOptions.signal?.aborted) abort();
-      else resolveOptions.signal?.addEventListener("abort", abort, { once: true });
       const requestId = nextRequestId++;
       let worker: FlacWorkerLike | undefined;
       let ended = false;
@@ -64,40 +61,62 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
       const blocks: ArrayBuffer[] = [];
       let wake: (() => void) | undefined;
       const notify = () => { const current = wake; wake = undefined; current?.(); };
+      let stopActive: ((error: unknown, sendCancel: boolean) => void) | undefined;
+      const cancelled = (reason: unknown) => new EngineWebAdapterError(
+        "stem.cancelled",
+        "FLAC decode was cancelled",
+        { identity },
+        reason,
+      );
+      const cancel = (reason: unknown) => {
+        const error = cancelled(reason);
+        if (stopActive === undefined) controller.abort(error);
+        else stopActive(error, true);
+      };
+      const abort = () => cancel(resolveOptions.signal?.reason);
+      if (resolveOptions.signal?.aborted) abort();
+      else resolveOptions.signal?.addEventListener("abort", abort, { once: true });
 
       const workflow = pool.run({
         signal: controller.signal,
         ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
         work: (physical) => new Promise<void>((resolve, reject) => {
           worker = physical;
-          let settled = false;
+          let stopping = false;
           let offset = 0;
           let totalBytes: number | undefined;
           const deliveryState: { totalBytes?: number; etag?: string } = {};
           let inputTail = Promise.resolve();
-          const settle = (error?: unknown) => {
-            if (settled) return;
-            settled = true;
-            cleanup();
-            if (error === undefined) resolve(); else reject(error);
-          };
-          const onAbort = () => {
-            try { physical.postMessage({ type: "cancel", requestId }); } catch { /* termination is authoritative */ }
-            settle(new EngineWebAdapterError("stem.cancelled", "FLAC decode was cancelled", {}, controller.signal.reason));
-          };
-          const onWorkerFailure = (event: ErrorEvent) => settle(new EngineWebAdapterError(
-            "stem.decode.worker", event.message || "FLAC Worker stopped unexpectedly", {}, event.error,
-          ));
-          const onMessageError = () => settle(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker reply could not be cloned"));
           const cleanup = () => {
-            controller.signal.removeEventListener("abort", onAbort);
             physical.removeEventListener("message", onMessage);
             physical.removeEventListener("error", onWorkerFailure);
             physical.removeEventListener("messageerror", onMessageError);
           };
+          const stop = (error: unknown, sendCancel: boolean, successful = false) => {
+            if (stopping) return;
+            stopping = true;
+            stopActive = undefined;
+            cleanup();
+            if (sendCancel) {
+              try { physical.postMessage({ type: "cancel", requestId }); } catch { /* termination is authoritative */ }
+            }
+            if (!successful) controller.abort(error);
+            void inputTail.then(() => {
+              if (successful) resolve(); else reject(error);
+            });
+          };
+          stopActive = stop;
+          const onWorkerFailure = (event: ErrorEvent) => stop(new EngineWebAdapterError(
+            "stem.decode.worker", event.message || "FLAC Worker stopped unexpectedly", {}, event.error,
+          ), false);
+          const onMessageError = () => stop(
+            new EngineWebAdapterError("stem.decode.worker", "FLAC Worker reply could not be cloned"),
+            false,
+          );
           const handleCredit = async (message: Extract<FlacWorkerResponse, { type: "input-credit" }>) => {
-            if (settled) return;
+            if (stopping) return;
             if (totalBytes !== undefined && offset === totalBytes) {
+              if (stopping) return;
               physical.postMessage({ type: "finish", requestId });
               return;
             }
@@ -119,19 +138,20 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
               state: deliveryState,
               ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
             });
+            if (stopping || controller.signal.aborted) return;
             totalBytes = result.totalBytes;
             offset += result.bytes.byteLength;
             const bytes = result.bytes.buffer as ArrayBuffer;
+            if (stopping || controller.signal.aborted) return;
             physical.postMessage({ type: "input", requestId, bytes, totalFlacBytes: totalBytes }, [bytes]);
           };
           const onMessage = (event: MessageEvent<FlacWorkerResponse>) => {
             const message = event.data;
-            if (settled || message.requestId !== requestId) return;
+            if (stopping || message.requestId !== requestId) return;
             if (message.type === "input-credit") {
-              inputTail = inputTail.then(() => handleCredit(message)).catch((error) => {
-                try { physical.postMessage({ type: "cancel", requestId }); } catch { /* terminate below */ }
-                settle(error);
-              });
+              const input = inputTail.then(() => handleCredit(message));
+              inputTail = input.catch(() => undefined);
+              void input.catch((error) => stop(error, true));
             } else if (message.type === "pcm") {
               blocks.push(message.bytes);
               resolveOptions.onProgress?.({
@@ -141,17 +161,11 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
               });
               notify();
             } else if (message.type === "complete") {
-              ended = true;
-              notify();
-              settle();
+              stop(undefined, false, true);
             } else if (message.type === "error") {
-              const error = workerError(message);
-              failure = error;
-              notify();
-              settle(error);
+              stop(workerError(message), false);
             }
           };
-          controller.signal.addEventListener("abort", onAbort, { once: true });
           physical.addEventListener("message", onMessage);
           physical.addEventListener("error", onWorkerFailure);
           physical.addEventListener("messageerror", onMessageError);
@@ -160,18 +174,22 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
               type: "start", requestId, identity,
               ...(resolveOptions.expected === undefined ? {} : { expected: resolveOptions.expected }),
             });
-          } catch (error) { settle(error); }
+          } catch (error) { stop(error, false); }
         }),
-      }).catch((error) => {
+      }).then(() => {
+        worker = undefined;
+        ended = true;
+        notify();
+      }, (error) => {
+        worker = undefined;
         failure = error;
         notify();
       }).finally(() => {
-        worker = undefined;
         resolveOptions.signal?.removeEventListener("abort", abort);
       });
 
       const stream = new ReadableStream<Uint8Array>({
-        cancel(reason) { controller.abort(reason); return workflow; },
+        cancel(reason) { cancel(reason); return workflow; },
         async pull(streamController) {
           for (;;) {
             const block = blocks.shift();

@@ -193,4 +193,72 @@ within the repository's three-attempt rule; gates are not weakened.
 
 ## Evidence and decisions
 
-Pending implementation.
+Attempt 1 was reviewed at immutable adapter commit `64d8572`. The adversarial
+review found six release-blocking gaps: the Engine `SessionShape` could not
+prove content/bit-depth equality, shared flights coupled independent abort
+domains, Worker terminal paths did not join range continuations, processed
+metadata stayed live, Request construction lacked stable diagnostics, and
+several proportional cancellation/memory gates were absent. Attempt 2 corrects
+those findings without changing the frozen product scope.
+
+Decisions in attempt 2:
+
+- Scratch compilation remains authoritative for Engine shape. After scratch
+  succeeds, the adapter strictly extracts only the normalized Session V1
+  `sample_rate_hz` and source tuples, then compares source ID, content identity,
+  channels, bit depth, frames, and derived canonical bytes against caller
+  declarations before store, locator, or network work.
+- Shared ingest flights were removed. Existing per-identity locks serialize
+  ingest; an independent opener subsequently performs warm verification in its
+  own abort domain.
+- Worker termination first stops message admission, aborts active delivery,
+  joins the serialized input tail, and lets the pool terminate the physical
+  Worker before the PCM stream observes rejection. Successful completion does
+  not abort the delivery controller.
+- The metadata parser tracks absolute input offsets while compacting every
+  processed block. It retains parsed STREAMINFO and bounded seek-point records,
+  not raw comments, artwork, or SEEKTABLE bytes. The cumulative one-MiB metadata
+  ceiling remains absolute despite compaction.
+- The 8-MiB per-Worker reservation now has executable conservative live-buffer
+  and exact typed-table accounting: 7,864,486 bytes for exact range, metadata
+  compaction with one possible delivery-chunk remainder, packetizer peak,
+  decoder submissions, and two
+  decoded output credits, plus 18 typed-array bytes per maximum
+  metadata-permitted dense seek point, leaving 524,122 bytes for bounded
+  wrapper/bookkeeping overhead. Browser network and WebCodecs internal
+  memory remains opaque and is not claimed by this figure.
+
+Locally demonstrated evidence for attempt 2:
+
+- 73 deterministic tests pass after the corrections. New cases cover every
+  document/caller tuple mismatch before store/locator, independent same-stem
+  cancellation without contamination or hang, metadata cancellation, active
+  range cancellation on Worker failure, decoder-output cancellation, OPFS
+  writer cancellation/cleanup, no post-termination messages, mid-body retry
+  with a repeated physical range but no duplicated Worker-accepted bytes,
+  large processed metadata lifetime/cumulative refusal, stable address details,
+  and worst-case fixed-buffer accounting.
+- Existing tests continue to cover queued cancellation, session close/reverse
+  cleanup, fail-closed sibling cleanup, parser/packetizer geometry, PCM layout
+  conversion, SHA-256 promotion, warm verification bounds, and pump late-message
+  inertness.
+
+Final attempt-2 gates: `npm run check` passes with 73/73 tests, source policy
+over 34 files, and packed policy over 140 files / 100,560 bytes. The packed
+Chromium fresh consumer passes cold decode/play/pause/unaligned-seek/close and
+warm reuse: locator calls 8 -> 8, FLAC Workers 1 -> 1, network requests 8 -> 8,
+32 Engine submissions, one applied seek, and zero refused, torn, or feed errors.
+All eight expected JS/Wasm assets were observed.
+
+Root independently reran `npm run check` and the packed Chromium fixture on the
+final correction tree with the same results. The opt-in live-host profile also
+passes against `stems.miso.fm`: 21 cold locator/range requests and one FLAC
+Worker decoded the 4,198,461-byte Bass object with ETag
+`"5cc22b5075610fc68f75247c7d135dd9"`; the warm reopen left all three counters
+unchanged at 21/21/1, applied one seek, submitted 122 PCM chunks, and reported
+zero refusals, torn feeds, or errors.
+
+Native Safari has not been run in this attempt because Safari Remote Automation
+is disabled on the test Mac. Safari support therefore remains candidly
+unverified; unsupported Worker FLAC must remain a typed platform blocker rather
+than gain a codec-Wasm fallback.

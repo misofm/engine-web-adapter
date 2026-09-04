@@ -21,13 +21,13 @@ const INDEX_VERSION = 1;
 
 interface IndexRow { bytes: number; pins: string[]; lastUsedAt: number }
 interface StoreIndex { version: 1; stems: Record<string, IndexRow> }
-interface SharedState { locks: Map<string, Promise<void>>; flights: Map<string, Promise<void>> }
+interface SharedState { locks: Map<string, Promise<void>> }
 const SHARED = new WeakMap<object, SharedState>();
 
 function sharedFor(backend: StemStorageBackend): SharedState {
   let shared = SHARED.get(backend as object);
   if (shared === undefined) {
-    shared = { locks: new Map(), flights: new Map() };
+    shared = { locks: new Map() };
     SHARED.set(backend as object, shared);
   }
   return shared;
@@ -207,21 +207,13 @@ export class VerifiedStemStore implements StemStore {
     onProgress?: (progress: StemProgress) => void,
     admission?: BoundedStemAdmission,
   ): Promise<void> {
-    const prior = this.#shared.flights.get(stem.identity);
-    if (prior !== undefined) return prior;
-    const flight = this.#withLock(this.#stemLock(stem.identity), signal, async () => {
+    await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
       const verified = admission === undefined
         ? await this.#verifyIndexed(stem, signal, onProgress)
         : await admission.run(() => this.#verifyIndexed(stem, signal, onProgress), signal);
       if (verified) return;
       await this.#ingest(stem, resolver, signal, onProgress);
     });
-    this.#shared.flights.set(stem.identity, flight);
-    try {
-      await flight;
-    } finally {
-      if (this.#shared.flights.get(stem.identity) === flight) this.#shared.flights.delete(stem.identity);
-    }
   }
 
   async #verifyIndexed(
