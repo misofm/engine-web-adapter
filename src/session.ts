@@ -1,5 +1,5 @@
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
-import { createEngine, toWebBootOptions } from "@misofm/engine/browser";
+import { createEngine, scratchBootOptions, toWebBootOptions } from "@misofm/engine/browser";
 import type { BrowserEngine, CreateEngineOptions } from "@misofm/engine/browser";
 
 import { ADAPTER_ASSETS } from "./assets.js";
@@ -15,12 +15,35 @@ import type {
   EngineWebSessionOptions,
   EngineWebSessionState,
 } from "./session-types.js";
-import { canonicalPcmBytes, OpfsStemStore, PcmPumpWorkerClient } from "./stems/index.js";
-import type { PcmPumpSource, StemRequirement, StemSessionLease } from "./stems/index.js";
+import {
+  BoundedStemAdmission,
+  canonicalPcmBytes,
+  createFlacStemResolver,
+  defaultFlacMemoryBudgetBytes,
+  flacAdmissionWidth,
+  OpfsStemStore,
+  PcmPumpWorkerClient,
+} from "./stems/index.js";
+import type {
+  CanonicalPcmExpectation,
+  PcmPumpSource,
+  StemRequirement,
+  StemResolver,
+  StemSessionLease,
+} from "./stems/index.js";
 
 const PREFILL_TIMEOUT_MS = 2_000;
 
 export async function openEngineWebSession(options: EngineWebSessionOptions): Promise<EngineWebSession> {
+  const hasFlac = options.flac !== undefined;
+  const hasResolver = options.resolver !== undefined;
+  if (hasFlac === hasResolver) {
+    throw new EngineWebAdapterError(
+      "session.input_path",
+      "Exactly one of flac or resolver must be supplied",
+      { hasFlac, hasResolver },
+    );
+  }
   assertEngineWebCapabilities(options.capabilityScope);
   const abort = new AbortController();
   const detachAbort = forwardAbort(options.signal, abort);
@@ -32,6 +55,12 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
   let output: AudioNode | undefined;
 
   try {
+    const document = normalizeDocument(options.document);
+    const requirements = requirementsFor(options);
+    const engineWasmUrl = options.assets?.engineWasmUrl ?? BUNDLED_ENGINE_ASSETS.wasm;
+    const engineWorkletUrl = options.assets?.engineWorkletModuleUrl ?? BUNDLED_ENGINE_ASSETS.workletModule;
+    const engineHostUrl = options.assets?.engineHostModuleUrl ?? BUNDLED_ENGINE_ASSETS.hostModule;
+    const feedPreludeUrl = options.assets?.feedWorkletModuleUrl ?? ADAPTER_ASSETS.feedWorkletModule;
     const scratchWorker = options.scratchBoot === undefined
       ? await ScratchWorkerClient.create({
         ...(options.assets === undefined ? {} : { assets: options.assets }), signal: abort.signal,
@@ -39,30 +68,65 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       : undefined;
     const closeScratchWorker = scratchWorker === undefined ? undefined : () => scratchWorker.close();
     if (closeScratchWorker !== undefined) cleanup.push(closeScratchWorker);
-    const requirements = requirementsFor(options);
+    const scratchBoot = options.scratchBoot ?? ((request: Parameters<NonNullable<EngineWebSessionOptions["scratchBoot"]>>[0]) =>
+      scratchWorker!.boot({ ...request, moduleUrl: engineWasmUrl, signal: abort.signal }));
+    const compiledShape = await scratchBoot({
+      document,
+      options: scratchBootOptions(options.policy ?? {}),
+    });
+    const orderedSources = crossCompiledSources(compiledShape.sources, options.sources);
+    if (scratchWorker !== undefined && closeScratchWorker !== undefined) {
+      scratchWorker.close();
+      const cleanupIndex = cleanup.indexOf(closeScratchWorker);
+      if (cleanupIndex >= 0) cleanup.splice(cleanupIndex, 1);
+    }
+
+    let resolver: StemResolver;
+    let admission: BoundedStemAdmission | undefined;
+    if (options.flac !== undefined) {
+      const navigatorHints = typeof navigator === "undefined"
+        ? undefined
+        : navigator as Navigator & { readonly deviceMemory?: number };
+      const hardwareConcurrency = options.flac.hardwareConcurrency ?? navigatorHints?.hardwareConcurrency;
+      admission = options.flac.admission ?? new BoundedStemAdmission(flacAdmissionWidth({
+        ...(hardwareConcurrency === undefined ? {} : { hardwareConcurrency }),
+        memoryBudgetBytes: options.flac.memoryBudgetBytes ?? defaultFlacMemoryBudgetBytes(
+          options.flac.deviceMemory ?? navigatorHints?.deviceMemory,
+        ),
+        ...(options.flac.maximumWorkers === undefined ? {} : { maximum: options.flac.maximumWorkers }),
+      }));
+      const expectations = expectationsFor(orderedSources, compiledShape.sampleRateHz);
+      const flacResolver = createFlacStemResolver({ ...options.flac, admission });
+      resolver = {
+        resolve(identity, resolveOptions = {}) {
+          const expected = expectations.get(identity);
+          if (expected === undefined) {
+            return Promise.reject(new EngineWebAdapterError(
+              "session.declaration_mismatch",
+              "FLAC resolver received an undeclared stem identity",
+              { identity },
+            ));
+          }
+          return flacResolver.resolve(identity, { ...resolveOptions, expected });
+        },
+      };
+    } else {
+      resolver = options.resolver;
+    }
     const store = options.store ?? new OpfsStemStore();
     options.onProgress?.({ stage: "loading", sourcesTotal: requirements.length });
     lease = await store.openSession({
       leaseId: options.leaseId,
       stems: requirements,
-      resolver: options.resolver,
+      resolver,
+      ...(admission === undefined ? {} : { admission }),
       signal: abort.signal,
       ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
     });
     cleanup.push(() => lease!.close());
 
-    const engineWasmUrl = options.assets?.engineWasmUrl ?? BUNDLED_ENGINE_ASSETS.wasm;
-    const engineWorkletUrl = options.assets?.engineWorkletModuleUrl ?? BUNDLED_ENGINE_ASSETS.workletModule;
-    const engineHostUrl = options.assets?.engineHostModuleUrl ?? BUNDLED_ENGINE_ASSETS.hostModule;
-    const feedPreludeUrl = options.assets?.feedWorkletModuleUrl ?? ADAPTER_ASSETS.feedWorkletModule;
-
     const createContext = options.createContext ?? defaultCreateContext;
-    const scratchBoot: CreateEngineOptions["scratchBoot"] = options.scratchBoot ?? ((request) =>
-      scratchWorker!.boot({
-        ...request,
-        moduleUrl: engineWasmUrl,
-        signal: abort.signal,
-      }));
+    const reuseScratchBoot: CreateEngineOptions["scratchBoot"] = async () => compiledShape;
     const createHost: CreateEngineOptions["createHost"] = options.createHost ?? (async (request) => {
       const context = request.context as unknown as BaseAudioContext & { suspend?: () => Promise<void> };
       if (context.state === "running") await context.suspend?.();
@@ -86,10 +150,10 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     });
 
     engine = await createEngine({
-      document: options.document,
+      document,
       sources: options.sources.map((source) => ({ id: source.id, spec: source.spec })),
       createContext,
-      scratchBoot,
+      scratchBoot: reuseScratchBoot,
       createHost: async (request) => {
         if (options.createHost !== undefined) await prepareEngineFeed(request.context, feedPreludeUrl);
         return createHost(request);
@@ -99,12 +163,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       ...(options.policy === undefined ? {} : { policy: options.policy }),
     });
     cleanup.push(() => engine!.close());
-    if (scratchWorker !== undefined && closeScratchWorker !== undefined) {
-      scratchWorker.close();
-      const cleanupIndex = cleanup.indexOf(closeScratchWorker);
-      if (cleanupIndex >= 0) cleanup.splice(cleanupIndex, 1);
-    }
-    const orderedSources = crossCompiledSources(engine.shape.sources, options.sources);
+    crossCompiledSources(engine.shape.sources, orderedSources);
 
     feed = attachEngineFeed({
       context: engine.context as unknown as BaseAudioContext,
@@ -212,6 +271,51 @@ function requirementsFor(options: EngineWebSessionOptions): StemRequirement[] {
     ids.add(source.id);
     return { sourceId: source.id, identity: source.spec.content as `sha256:${string}`, bytes: canonicalPcmBytes(source.spec) };
   });
+}
+
+function normalizeDocument(document: EngineWebSessionOptions["document"]): Uint8Array<ArrayBuffer> {
+  if (typeof document === "string") return new TextEncoder().encode(document);
+  if (document instanceof Uint8Array) {
+    return document.buffer instanceof ArrayBuffer ? document as Uint8Array<ArrayBuffer> : new Uint8Array(document);
+  }
+  return new TextEncoder().encode(document.toJson());
+}
+
+function expectationsFor(
+  sources: EngineWebSessionOptions["sources"],
+  sampleRateHz: number,
+): ReadonlyMap<`sha256:${string}`, CanonicalPcmExpectation> {
+  const expectations = new Map<`sha256:${string}`, CanonicalPcmExpectation>();
+  for (const source of sources) {
+    if (source.spec.bitDepth !== 16 && source.spec.bitDepth !== 24) {
+      throw new EngineWebAdapterError("session.declaration_mismatch", "Browser FLAC delivery requires PCM16 or PCM24", {
+        sourceId: source.id,
+        bitDepth: source.spec.bitDepth,
+      });
+    }
+    const identity = source.spec.content as `sha256:${string}`;
+    const expectation: CanonicalPcmExpectation = {
+      sampleRateHz,
+      channels: source.spec.channels,
+      bitDepth: source.spec.bitDepth,
+      frames: exactFrames(source.spec.frames),
+      canonicalBytes: canonicalPcmBytes(source.spec),
+    };
+    const prior = expectations.get(identity);
+    if (prior !== undefined && (
+      prior.sampleRateHz !== expectation.sampleRateHz || prior.channels !== expectation.channels ||
+      prior.bitDepth !== expectation.bitDepth || prior.frames !== expectation.frames ||
+      prior.canonicalBytes !== expectation.canonicalBytes
+    )) {
+      throw new EngineWebAdapterError(
+        "session.declaration_mismatch",
+        "One FLAC identity has conflicting source declarations",
+        { identity },
+      );
+    }
+    expectations.set(identity, expectation);
+  }
+  return expectations;
 }
 
 function crossCompiledSources(

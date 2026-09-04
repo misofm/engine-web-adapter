@@ -3,6 +3,7 @@ import type { HttpClient } from "effect/unstable/http";
 
 import { EngineWebAdapterError } from "../errors.js";
 import type { AdapterAssetOverrides } from "../assets.js";
+import type { BoundedStemAdmission } from "./flac-admission.js";
 import { assertStemIdentity } from "./identity.js";
 import { readExactFlacRange, type FlacLocator } from "./flac-delivery.js";
 import { MAXIMUM_DELIVERY_CHUNK_BYTES } from "./flac-metadata.js";
@@ -12,6 +13,8 @@ import type { ResolvedStem, StemIdentity, StemProgress, StemResolver } from "./t
 
 export interface FlacDeliveryOptions {
   readonly locate: FlacLocator;
+  /** Optional shared admission used to bound both decode and cache verification. */
+  readonly admission?: BoundedStemAdmission;
   readonly httpClient?: HttpClient.HttpClient;
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
   readonly readDeadlineMs?: number;
@@ -38,6 +41,7 @@ function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): E
 export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolver {
   if (typeof options.locate !== "function") throw new TypeError("createFlacStemResolver requires locate");
   const poolOptions: FlacWorkerPoolOptions = {
+    ...(options.admission === undefined ? {} : { admission: options.admission }),
     ...(options.assets === undefined ? {} : { assets: options.assets }),
     ...(options.createWorker === undefined ? {} : { createWorker: options.createWorker }),
     ...(options.hardwareConcurrency === undefined ? {} : { hardwareConcurrency: options.hardwareConcurrency }),

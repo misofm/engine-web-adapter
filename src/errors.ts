@@ -9,6 +9,7 @@ export type EngineWebAdapterErrorCode =
   | "capability.web_locks"
   | "session.closed"
   | "session.declaration_mismatch"
+  | "session.input_path"
   | "session.open"
   | "stem.cancelled"
   | "stem.corrupt"

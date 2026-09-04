@@ -1,4 +1,5 @@
 import type { SourceSpec } from "@misofm/engine";
+import type { BoundedStemAdmission } from "./flac-admission.js";
 
 export type StemIdentity = `sha256:${string}`;
 
@@ -40,7 +41,7 @@ export interface ResolvedStem {
   readonly canonicalBytes?: number;
 }
 
-/** Caller-owned transport and decode boundary. */
+/** Advanced caller-owned boundary for already-decoded canonical PCM. */
 export interface StemResolver {
   resolve(
     identity: StemIdentity,
@@ -80,6 +81,7 @@ export interface StemStore {
     readonly leaseId: string;
     readonly stems: readonly StemRequirement[];
     readonly resolver: StemResolver;
+    readonly admission?: BoundedStemAdmission;
     readonly signal?: AbortSignal;
     readonly onProgress?: (progress: StemProgress) => void;
   }): Promise<StemSessionLease>;

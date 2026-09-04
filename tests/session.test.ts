@@ -6,8 +6,8 @@ import type { BrowserEngine } from "@misofm/engine/browser";
 import { EngineWebAdapterError, openEngineWebSession } from "../src/index.js";
 import { assertEngineWebCapabilities } from "../src/capabilities.js";
 import { MSB1_CONTROL } from "../src/stems/index.js";
-import type { EngineAudioContext, EngineWebSessionOptions } from "../src/session-types.js";
-import type { StemSessionLease, StemStore } from "../src/stems/index.js";
+import type { EngineAudioContext, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
+import type { StemResolver, StemSessionLease, StemStore } from "../src/stems/index.js";
 
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
 const IDENTITY_Z = `sha256:${"b".repeat(64)}` as const;
@@ -67,6 +67,46 @@ test("default module Worker handshake fails before store or resolver work", asyn
   assert.equal(storeOpened, false);
   assert.equal(resolverCalled, false);
   assert.equal(worker.terminated, true);
+});
+
+test("JavaScript callers must select exactly one stem input path", async () => {
+  const base = baseOptions();
+  await assert.rejects(
+    openEngineWebSession({ ...base, resolver: undefined } as unknown as EngineWebSessionOptions),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.input_path",
+  );
+  await assert.rejects(
+    openEngineWebSession({
+      ...base,
+      flac: { locate: () => "https://caller.invalid/stem" },
+    } as unknown as EngineWebSessionOptions),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.input_path",
+  );
+});
+
+test("scratch declaration mismatch refuses before store or FLAC locator work", async () => {
+  let storeOpened = false;
+  let locatorCalls = 0;
+  const base = baseOptions();
+  const { resolver: _resolver, ...common } = base;
+  await assert.rejects(
+    openEngineWebSession({
+      ...common,
+      flac: { locate: () => { locatorCalls += 1; return "https://caller.invalid/stem"; } },
+      capabilityScope: capabilities(),
+      store: {
+        async open() { storeOpened = true; return this; },
+        async openSession() { storeOpened = true; throw new Error("unreachable"); },
+      },
+      scratchBoot: async () => ({
+        sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
+        sources: [{ id: "source", channels: 2, frames: 4n }], tracks: [],
+      }),
+    }),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.declaration_mismatch",
+  );
+  assert.equal(storeOpened, false);
+  assert.equal(locatorCalls, 0);
 });
 
 test("session composes in order and serializes lifecycle with reverse cleanup", async () => {
@@ -135,10 +175,10 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
 
   const session = await openEngineWebSession(options);
   assert.equal(session.state, "ready");
-  assert.ok(events.indexOf("store.openSession") < events.indexOf("scratch"));
-  assert.ok(events.indexOf("scratch") < events.indexOf("engine-worklet"));
-  assert.ok(events.indexOf("engine-worklet") < events.indexOf("scratch.terminate"));
-  assert.ok(events.indexOf("scratch.terminate") < events.indexOf("pump.create"));
+  assert.ok(events.indexOf("scratch") < events.indexOf("scratch.terminate"));
+  assert.ok(events.indexOf("scratch.terminate") < events.indexOf("store.openSession"));
+  assert.ok(events.indexOf("store.openSession") < events.indexOf("engine-worklet"));
+  assert.equal(events.filter((event) => event === "scratch").length, 1, "document is scratch-compiled once");
   assert.ok(events.indexOf("engine-worklet") < events.indexOf("pump.create"));
   assert.equal(pumpRings.length, 2);
   const playing = session.play();
@@ -172,7 +212,7 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
   await assert.rejects(hungPlay, (error: unknown) => error instanceof DOMException && error.name === "AbortError");
 });
 
-function baseOptions(): EngineWebSessionOptions {
+function baseOptions(): EngineWebSessionCommonOptions & { readonly resolver: StemResolver; readonly flac?: never } {
   return {
     document: "{}", leaseId: "lease",
     sources: [{ id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } }],

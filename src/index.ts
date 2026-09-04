@@ -8,6 +8,7 @@ export type {
   EngineSessionDocument,
   EngineSourceSpec,
   EngineWebSession,
+  EngineWebSessionCommonOptions,
   EngineWebSessionOptions,
   EngineWebSessionState,
 } from "./session-types.js";

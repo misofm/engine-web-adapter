@@ -1,7 +1,7 @@
 {
   "name": "@misofm/engine-web-adapter",
-  "version": "0.1.0",
-  "description": "Codec-neutral browser session adapter for @misofm/engine",
+  "version": "0.2.0",
+  "description": "Bounded dense-FLAC browser session adapter for @misofm/engine",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

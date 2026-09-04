@@ -4,6 +4,7 @@ import type { StemProgress } from "./types.js";
 import type { FlacWorkerLike } from "./flac-worker-protocol.js";
 
 export interface FlacWorkerPoolOptions {
+  readonly admission?: BoundedStemAdmission;
   readonly assets?: AdapterAssetOverrides;
   readonly createWorker?: () => FlacWorkerLike;
   readonly hardwareConcurrency?: number;
@@ -22,7 +23,7 @@ export class FlacWorkerPool {
       ? undefined
       : navigator as Navigator & { readonly deviceMemory?: number };
     const hardwareConcurrency = options.hardwareConcurrency ?? navigatorHints?.hardwareConcurrency;
-    this.#admission = new BoundedStemAdmission(flacAdmissionWidth({
+    this.#admission = options.admission ?? new BoundedStemAdmission(flacAdmissionWidth({
       ...(hardwareConcurrency === undefined ? {} : { hardwareConcurrency }),
       memoryBudgetBytes: options.memoryBudgetBytes ?? defaultFlacMemoryBudgetBytes(options.deviceMemory ?? navigatorHints?.deviceMemory),
       ...(options.maximumWorkers === undefined ? {} : { maximum: options.maximumWorkers }),
