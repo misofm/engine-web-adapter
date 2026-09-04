@@ -74,8 +74,13 @@ export class NativeFlacDecoder {
       "miso_flac_allocator_peak_heap_bytes",
       "miso_flac_allocator_free_calls", "miso_flac_allocator_realloc_calls",
     ] as const;
-    let valid = exports.memory instanceof WebAssembly.Memory && exports.memory.buffer.byteLength === FLAC_DECODER_MEMORY_BYTES &&
-      required.every((name) => typeof exports[name] === "function");
+    let fixedNonSharedMemory = false;
+    if (exports.memory instanceof WebAssembly.Memory && exports.memory.buffer instanceof ArrayBuffer &&
+      exports.memory.buffer.byteLength === FLAC_DECODER_MEMORY_BYTES) {
+      try { exports.memory.grow(1); }
+      catch (error) { fixedNonSharedMemory = error instanceof RangeError; }
+    }
+    let valid = fixedNonSharedMemory && required.every((name) => typeof exports[name] === "function");
     try { valid = valid && exports.miso_flac_decoder_abi_version() === 2; }
     catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder ABI validation trapped", { phase: "decoder-load" }, error); }
     if (!valid) {

@@ -79,8 +79,9 @@ scope.onmessage = (event) => {
         scope.postMessage({ type: "pcm", requestId: active, bytes: output, frames: result.frames, totalPcmBytes: message.totalPcmBytes }, [output]);
       }
       current.finish();
-      scope.postMessage({ type: "complete", requestId: active, pcmBytes: bytes, frames });
       current.destroy();
+      decoder = undefined;
+      scope.postMessage({ type: "complete", requestId: active, pcmBytes: bytes, frames });
       scope.close?.();
     })().catch(fail);
   }

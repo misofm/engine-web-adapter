@@ -280,9 +280,34 @@ Attempt-2 implementation evidence at the uncommitted review boundary:
   reuse while independently observing decoder Wasm and Engine Wasm package
   assets.
 
-Attempt 2 remains pending fresh adversarial review and the separately required
-native Safari, mobile Safari, and live-object product gates; this local record
-does not claim final PASS.
+Attempt 2 review is **FAIL** on two narrow ABI findings. The Worker posted
+`complete` before calling the trapping `destroy` export, and load checked only
+the initial memory byte length rather than rejecting shared memory and proving
+that a nominally 32-page memory could not grow to page 33.
+
+Attempt 3 is deliberately bounded to those two findings. The success path now
+finishes, destroys, clears its decoder reference, and only then posts
+`complete` and closes. A real Worker-path injected destroy trap must emit
+`stem.decode.asset` and emit no completion. Decoder load additionally requires
+an ordinary `ArrayBuffer`-backed 32-page memory and actively attempts page 33,
+accepting only the required `RangeError`; focused tests reject fixed shared and
+initial-32/max-33 memories.
+
+Attempt-3 implementation evidence at the uncommitted review boundary:
+
+- the focused suite passes both new ABI cases: fixed shared and initial-32/
+  max-33 memories are rejected, while an end-to-end Worker destroy trap emits
+  `stem.decode.asset`, emits no `complete`, and then closes;
+- `npm run check` passes 81/81 tests; decoder policy remains 56,762 bytes with
+  only `env.miso_flac_read` and fixed 32/32 non-shared pages; package policy
+  reports 142 files and 121,576 bytes; and
+- packed Chromium passes the cold and warm fixture paths with one FLAC Worker,
+  32 submitted blocks, one applied seek, and no refusal, torn block, console,
+  or engine error; `git diff --check` also passes.
+
+The broad fixture/device/live qualification matrix is intentionally deferred
+to the separate safety and qualification pass requested by the user; this
+attempt does not claim it or final release PASS.
 
 ## Workflow
 

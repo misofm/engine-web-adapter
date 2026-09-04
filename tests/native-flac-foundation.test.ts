@@ -345,6 +345,87 @@ test("trapping ABI validation and invalid arenas normalize as stem.decode.asset"
   }
 });
 
+test("decoder load rejects shared and growable 32-page Wasm memory", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCompile = WebAssembly.compileStreaming;
+  const originalInstantiate = WebAssembly.instantiate;
+  const producer = new FlacInputSlotProducer();
+  const shared = new WebAssembly.Memory({ initial: 32, maximum: 32, shared: true });
+  const growable = new WebAssembly.Memory({ initial: 32, maximum: 33 });
+  let selected = shared;
+  const fakeExports = () => ({
+    memory: selected,
+    miso_flac_decoder_abi_version: () => 2,
+    miso_flac_decoder_description_ptr: () => 0,
+    miso_flac_decoder_description_capacity: () => 42,
+    miso_flac_decoder_output_ptr: () => 0,
+    miso_flac_decoder_output_length: () => 0,
+    miso_flac_decoder_output_frames: () => 0,
+    miso_flac_decoder_callback_error: () => 0,
+    miso_flac_decoder_state: () => 0,
+    miso_flac_decoder_initialize: () => 0,
+    miso_flac_decoder_process_single: () => 2,
+    miso_flac_decoder_release_output: () => undefined,
+    miso_flac_decoder_finish: () => 0,
+    miso_flac_decoder_destroy: () => undefined,
+    miso_flac_allocator_live_bytes: () => 0,
+    miso_flac_allocator_peak_live_bytes: () => 0,
+    miso_flac_allocator_peak_heap_bytes: () => 0,
+    miso_flac_allocator_free_calls: () => 0,
+    miso_flac_allocator_realloc_calls: () => 0,
+  });
+  globalThis.fetch = async () => new Response(new Uint8Array([0]), { headers: { "Content-Type": "application/wasm" } });
+  WebAssembly.compileStreaming = async () => ({} as WebAssembly.Module);
+  WebAssembly.instantiate = (async () => ({ exports: fakeExports() }) as unknown) as typeof WebAssembly.instantiate;
+  try {
+    for (const memory of [shared, growable]) {
+      selected = memory;
+      await assert.rejects(
+        NativeFlacDecoder.load({ url: "https://asset.invalid/memory.wasm", inputSlot: producer.buffers, requestRefill() {} }),
+        (error: unknown) => error instanceof Error && "code" in error && error.code === "stem.decode.asset",
+      );
+    }
+    assert.ok(shared.buffer instanceof SharedArrayBuffer);
+    assert.equal(growable.buffer.byteLength, 33 * 64 * 1024, "load must actively prove that page 33 cannot be grown");
+  } finally {
+    globalThis.fetch = originalFetch;
+    WebAssembly.compileStreaming = originalCompile;
+    WebAssembly.instantiate = originalInstantiate;
+  }
+});
+
+test("Worker destroy trap reports stem.decode.asset and never completes", async () => {
+  const worker = new Worker(new URL("flac-worker-destroy-trap-runner.js", import.meta.url));
+  const producer = new FlacInputSlotProducer();
+  const parsed = parseNativeFlacStreamInfo(streamInfo({ final: true }));
+  const messages: Array<{ readonly type: string; readonly error?: { readonly code?: string } }> = [];
+  const closed = new Promise<void>((resolve, reject) => {
+    worker.on("error", reject);
+    worker.on("message", (message: { readonly type: string; readonly requestId?: number; readonly error?: { readonly code?: string } }) => {
+      messages.push(message);
+      if (message.type === "booted") {
+        worker.postMessage({
+          type: "start", requestId: 17, identity: `sha256:${"a".repeat(64)}`,
+          decoderWasmUrl: "https://asset.invalid/decoder.wasm", inputSlot: producer.buffers,
+        });
+      } else if (message.type === "ready") {
+        worker.postMessage({
+          type: "initialize", requestId: 17, streamInfo: parsed.streamInfo,
+          expectedFrames: parsed.streamInfo.totalSamples, totalPcmBytes: parsed.streamInfo.totalSamples * 6,
+        });
+      } else if (message.type === "closed") resolve();
+    });
+  });
+  try {
+    await closed;
+    assert.equal(messages.some((message) => message.type === "complete"), false);
+    const failure = messages.find((message) => message.type === "error");
+    assert.equal(failure?.error?.code, "stem.decode.asset");
+  } finally {
+    await worker.terminate();
+  }
+});
+
 test("native FLAC admission obeys frozen memory and core bounds", () => {
   assert.equal(defaultFlacMemoryBudgetBytes(), DEFAULT_FLAC_MEMORY_BUDGET_BYTES);
   assert.equal(defaultFlacMemoryBudgetBytes(Number.NaN), DEFAULT_FLAC_MEMORY_BUDGET_BYTES);
