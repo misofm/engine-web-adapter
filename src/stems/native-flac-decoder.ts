@@ -20,6 +20,11 @@ interface DecoderExports extends WebAssembly.Exports {
   readonly miso_flac_decoder_release_output: () => void;
   readonly miso_flac_decoder_finish: () => number;
   readonly miso_flac_decoder_destroy: () => void;
+  readonly miso_flac_allocator_live_bytes: () => number;
+  readonly miso_flac_allocator_peak_live_bytes: () => number;
+  readonly miso_flac_allocator_peak_heap_bytes: () => number;
+  readonly miso_flac_allocator_free_calls: () => number;
+  readonly miso_flac_allocator_realloc_calls: () => number;
 }
 
 function decoderError(code: "stem.decode.asset" | "stem.decode.flac" | "stem.decode.output", message: string, details: Readonly<Record<string, unknown>> = {}, cause?: unknown): EngineWebAdapterError {
@@ -65,60 +70,116 @@ export class NativeFlacDecoder {
       "miso_flac_decoder_output_ptr", "miso_flac_decoder_output_length", "miso_flac_decoder_output_frames",
       "miso_flac_decoder_callback_error", "miso_flac_decoder_state", "miso_flac_decoder_initialize",
       "miso_flac_decoder_process_single", "miso_flac_decoder_release_output", "miso_flac_decoder_finish",
-      "miso_flac_decoder_destroy",
+      "miso_flac_decoder_destroy", "miso_flac_allocator_live_bytes", "miso_flac_allocator_peak_live_bytes",
+      "miso_flac_allocator_peak_heap_bytes",
+      "miso_flac_allocator_free_calls", "miso_flac_allocator_realloc_calls",
     ] as const;
-    if (!(exports.memory instanceof WebAssembly.Memory) || exports.memory.buffer.byteLength !== FLAC_DECODER_MEMORY_BYTES ||
-      required.some((name) => typeof exports[name] !== "function") || exports.miso_flac_decoder_abi_version() !== 1) {
+    let valid = exports.memory instanceof WebAssembly.Memory && exports.memory.buffer.byteLength === FLAC_DECODER_MEMORY_BYTES &&
+      required.every((name) => typeof exports[name] === "function");
+    try { valid = valid && exports.miso_flac_decoder_abi_version() === 2; }
+    catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder ABI validation trapped", { phase: "decoder-load" }, error); }
+    if (!valid) {
       throw decoderError("stem.decode.asset", "FLAC decoder asset has an incompatible ABI or memory", { phase: "decoder-load" });
     }
     return new NativeFlacDecoder(exports);
   }
 
   initialize(stream: NativeFlacStreamInfo, expectedFrames: number): void {
-    const pointer = this.#exports.miso_flac_decoder_description_ptr();
-    if (this.#exports.miso_flac_decoder_description_capacity() !== stream.decoderDescription.byteLength) {
+    let pointer: number;
+    let capacity: number;
+    try {
+      pointer = this.#exports.miso_flac_decoder_description_ptr();
+      capacity = this.#exports.miso_flac_decoder_description_capacity();
+    } catch (error) {
+      throw decoderError("stem.decode.asset", "FLAC decoder STREAMINFO ABI trapped", { phase: "metadata" }, error);
+    }
+    if (!Number.isInteger(pointer) || pointer < 0 || capacity !== stream.decoderDescription.byteLength ||
+      pointer > FLAC_DECODER_MEMORY_BYTES - stream.decoderDescription.byteLength) {
       throw decoderError("stem.decode.asset", "FLAC decoder STREAMINFO arena is incompatible", { phase: "metadata" });
     }
-    new Uint8Array(this.#exports.memory.buffer, pointer, stream.decoderDescription.byteLength).set(stream.decoderDescription);
-    const result = this.#exports.miso_flac_decoder_initialize(
-      stream.decoderDescription.byteLength, stream.sampleRateHz, stream.channels, stream.bitDepth,
-      expectedFrames >>> 0, Math.floor(expectedFrames / 0x1_0000_0000) >>> 0,
-    );
+    let result: number;
+    try {
+      new Uint8Array(this.#exports.memory.buffer, pointer, capacity).set(stream.decoderDescription);
+      result = this.#exports.miso_flac_decoder_initialize(
+        stream.decoderDescription.byteLength, stream.sampleRateHz, stream.channels, stream.bitDepth,
+        stream.minimumBlockSamples, stream.maximumBlockSamples,
+        expectedFrames >>> 0, Math.floor(expectedFrames / 0x1_0000_0000) >>> 0,
+      );
+    } catch (error) {
+      throw decoderError("stem.decode.asset", "FLAC decoder initialization ABI trapped", { phase: "metadata" }, error);
+    }
     if (result !== 0) throw this.#flacFailure("libFLAC initialization failed", "metadata", { result });
   }
 
   processSingle(): Readonly<{ bytes: Uint8Array; frames: number }> | null | "eof" {
     let result: number;
     try { result = this.#exports.miso_flac_decoder_process_single(); }
-    catch (error) { throw this.#flacFailure("libFLAC trapped while decoding", "frame", {}, error); }
+    catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder process ABI trapped", { phase: "frame" }, error); }
     if (result < 0) throw this.#flacFailure("libFLAC rejected the compressed stream", "frame", { result });
     if (result === 2) return "eof";
     if (result === 0) return null;
-    const length = this.#exports.miso_flac_decoder_output_length();
-    const frames = this.#exports.miso_flac_decoder_output_frames();
-    const pointer = this.#exports.miso_flac_decoder_output_ptr();
-    if (length < 1 || length > MAXIMUM_CANONICAL_OUTPUT_BYTES || frames < 1 || pointer + length > FLAC_DECODER_MEMORY_BYTES) {
+    let length: number;
+    let frames: number;
+    let pointer: number;
+    try {
+      length = this.#exports.miso_flac_decoder_output_length();
+      frames = this.#exports.miso_flac_decoder_output_frames();
+      pointer = this.#exports.miso_flac_decoder_output_ptr();
+    } catch (error) {
+      throw decoderError("stem.decode.asset", "FLAC decoder output ABI trapped", { phase: "frame" }, error);
+    }
+    if (!Number.isInteger(pointer) || pointer < 0 || !Number.isInteger(length) || length < 0 ||
+      length > FLAC_DECODER_MEMORY_BYTES || pointer > FLAC_DECODER_MEMORY_BYTES - length) {
+      throw decoderError("stem.decode.asset", "FLAC decoder output arena is incompatible", { phase: "frame", pointer, length });
+    }
+    if (length < 1 || length > MAXIMUM_CANONICAL_OUTPUT_BYTES || !Number.isInteger(frames) || frames < 1) {
       throw decoderError("stem.decode.output", "libFLAC produced an invalid canonical output block", { phase: "frame", length, frames });
     }
     const bytes = new Uint8Array(this.#exports.memory.buffer, pointer, length).slice();
-    this.#exports.miso_flac_decoder_release_output();
+    try { this.#exports.miso_flac_decoder_release_output(); }
+    catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder output-release ABI trapped", { phase: "frame" }, error); }
     return { bytes, frames };
   }
 
   finish(): void {
-    const result = this.#exports.miso_flac_decoder_finish();
+    let result: number;
+    try { result = this.#exports.miso_flac_decoder_finish(); }
+    catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder finish ABI trapped", { phase: "finish" }, error); }
     if (result !== 0) throw this.#flacFailure("libFLAC final count or MD5 verification failed", "finish", { result });
   }
 
   destroy(): void {
     if (this.#destroyed) return;
     this.#destroyed = true;
-    this.#exports.miso_flac_decoder_destroy();
+    try { this.#exports.miso_flac_decoder_destroy(); }
+    catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder destroy ABI trapped", { phase: "finish" }, error); }
+  }
+
+  allocatorStats(): Readonly<{
+    liveBytes: number; peakLiveBytes: number; peakHeapBytes: number; freeCalls: number; reallocCalls: number;
+  }> {
+    try {
+      return Object.freeze({
+        liveBytes: this.#exports.miso_flac_allocator_live_bytes(),
+        peakLiveBytes: this.#exports.miso_flac_allocator_peak_live_bytes(),
+        peakHeapBytes: this.#exports.miso_flac_allocator_peak_heap_bytes(),
+        freeCalls: this.#exports.miso_flac_allocator_free_calls(),
+        reallocCalls: this.#exports.miso_flac_allocator_realloc_calls(),
+      });
+    } catch (error) {
+      throw decoderError("stem.decode.asset", "FLAC decoder allocator ABI trapped", { phase: "frame" }, error);
+    }
   }
 
   #flacFailure(message: string, phase: string, details: Readonly<Record<string, unknown>>, cause?: unknown): EngineWebAdapterError {
-    return decoderError("stem.decode.flac", message, {
-      phase, decoderState: this.#exports.miso_flac_decoder_state(), callbackError: this.#exports.miso_flac_decoder_callback_error(), ...details,
-    }, cause);
+    let decoderState: number | undefined;
+    let callbackError: number | undefined;
+    try {
+      decoderState = this.#exports.miso_flac_decoder_state();
+      callbackError = this.#exports.miso_flac_decoder_callback_error();
+    } catch (error) {
+      return decoderError("stem.decode.asset", "FLAC decoder diagnostic ABI trapped", { phase }, error);
+    }
+    return decoderError("stem.decode.flac", message, { phase, decoderState, callbackError, ...details }, cause);
   }
 }

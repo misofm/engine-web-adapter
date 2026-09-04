@@ -23,6 +23,8 @@ export interface FlacDeliveryOptions {
   readonly httpClient?: HttpClient.HttpClient;
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
   readonly readDeadlineMs?: number;
+  /** Main-thread deadline for decoder asset/decode progress. */
+  readonly decodeNoProgressMs?: number;
   readonly maximumAttempts?: number;
   readonly memoryBudgetBytes?: number;
   readonly maximumWorkers?: number;
@@ -45,6 +47,10 @@ function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): E
 /** Create the advanced low-level native-FLAC resolver used by session integration. */
 export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolver {
   if (typeof options.locate !== "function") throw new TypeError("createFlacStemResolver requires locate");
+  const decodeNoProgressMs = options.decodeNoProgressMs ?? 30_000;
+  if (!Number.isSafeInteger(decodeNoProgressMs) || decodeNoProgressMs < 1) {
+    throw new RangeError("decodeNoProgressMs must be positive");
+  }
   const poolOptions: FlacWorkerPoolOptions = {
     ...(options.admission === undefined ? {} : { admission: options.admission }),
     ...(options.assets === undefined ? {} : { assets: options.assets }),
@@ -96,7 +102,17 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
           let decodedBytes = 0;
           const deliveryState: { totalBytes?: number; etag?: string } = {};
           let inputTail = Promise.resolve();
+          let watchdog: ReturnType<typeof setTimeout> | undefined;
+          const resetWatchdog = (phase: "decoder-load" | "metadata" | "frame" | "finish") => {
+            if (stopping) return;
+            if (watchdog !== undefined) clearTimeout(watchdog);
+            watchdog = setTimeout(() => stop(new EngineWebAdapterError(
+              "stem.decode.stall", `FLAC decoder made no progress for ${decodeNoProgressMs}ms`,
+              { identity, phase, milliseconds: decodeNoProgressMs, retryable: false },
+            ), true), decodeNoProgressMs);
+          };
           const cleanup = () => {
+            if (watchdog !== undefined) clearTimeout(watchdog);
             physical.removeEventListener("message", onMessage);
             physical.removeEventListener("error", onWorkerFailure);
             physical.removeEventListener("messageerror", onMessageError);
@@ -111,6 +127,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
               try { physical.postMessage({ type: "cancel", requestId }); } catch { /* termination is authoritative */ }
             }
             if (!successful) controller.abort(error);
+            if (!successful) physical.terminate();
             void inputTail.then(() => {
               if (successful) resolve(); else reject(error);
             });
@@ -131,6 +148,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
             ...(options.maximumAttempts === undefined ? {} : { maximumAttempts: options.maximumAttempts }),
             identity, phase, start, end, signal: controller.signal, state: deliveryState,
             ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
+            onActivity: () => resetWatchdog(phase === "audio" ? "frame" : phase === "metadata" ? "metadata" : "decoder-load"),
           });
           const prepare = async () => {
             const probe = await range("probe", 0, NATIVE_FLAC_STREAMINFO_PROBE_BYTES - 1);
@@ -152,6 +170,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
             physical.postMessage({
               type: "initialize", requestId, streamInfo: parsed.streamInfo, expectedFrames, totalPcmBytes,
             });
+            resetWatchdog("frame");
           };
           const handleCredit = async (message: Extract<FlacWorkerResponse, { type: "input-credit" }>) => {
             if (stopping) return;
@@ -165,10 +184,12 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
             offset += result.bytes.byteLength;
             if (stopping || controller.signal.aborted) return;
             decoderInput!.publish(result.bytes, offset === totalBytes);
+            resetWatchdog("frame");
           };
           const onMessage = (event: MessageEvent<FlacWorkerResponse>) => {
             const message = event.data;
             if (stopping || message.requestId !== requestId) return;
+            resetWatchdog(message.type === "ready" ? "metadata" : message.type === "complete" ? "finish" : "frame");
             if (message.type === "ready") {
               const input = inputTail.then(prepare);
               inputTail = input.catch(() => undefined);
@@ -178,6 +199,12 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
               inputTail = input.catch(() => undefined);
               void input.catch((error) => stop(error, true));
             } else if (message.type === "pcm") {
+              if (blocks.length >= 2) {
+                stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker exceeded two unconsumed PCM outputs", {
+                  identity, limit: 2,
+                }), true);
+                return;
+              }
               blocks.push(message.bytes);
               decodedBytes += message.bytes.byteLength;
               resolveOptions.onProgress?.({
@@ -195,6 +222,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
           physical.addEventListener("message", onMessage);
           physical.addEventListener("error", onWorkerFailure);
           physical.addEventListener("messageerror", onMessageError);
+          resetWatchdog("decoder-load");
           try {
             physical.postMessage({
               type: "start", requestId, identity,
@@ -231,7 +259,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
             await new Promise<void>((resolve) => { wake = resolve; });
           }
         },
-      });
+      }, { highWaterMark: 0 });
       return Promise.resolve({
         stream,
         ...(resolveOptions.expected === undefined ? {} : { canonicalBytes: resolveOptions.expected.canonicalBytes }),

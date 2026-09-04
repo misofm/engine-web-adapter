@@ -15,6 +15,7 @@ export type EngineWebAdapterErrorCode =
   | "stem.decode.asset"
   | "stem.decode.flac"
   | "stem.decode.output"
+  | "stem.decode.stall"
   | "stem.decode.worker"
   | "stem.delivery.address"
   | "stem.delivery.http"

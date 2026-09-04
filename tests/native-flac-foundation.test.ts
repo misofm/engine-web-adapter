@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { Worker } from "node:worker_threads";
@@ -12,7 +13,7 @@ import {
   NativeFlacMetadataScanner,
   parseNativeFlacStreamInfo,
 } from "../src/stems/native-flac-metadata.js";
-import { NativeFlacDecoder } from "../src/stems/native-flac-decoder.js";
+import { FLAC_DECODER_MEMORY_BYTES, NativeFlacDecoder } from "../src/stems/native-flac-decoder.js";
 import {
   BoundedStemAdmission,
   DEFAULT_FLAC_MEMORY_BUDGET_BYTES,
@@ -149,6 +150,80 @@ test("real fixed-memory libFLAC Wasm emits exact canonical PCM", async () => {
   }
 });
 
+test("real increasing variable-block stereo decode reclaims libFLAC allocations within fixed memory", async () => {
+  const flac = new Uint8Array(await readFile("tests/fixtures/native-variable-stereo24.flac"));
+  const parsed = parseNativeFlacStreamInfo(flac.subarray(0, 42), {
+    sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: 41_024, canonicalBytes: 246_144,
+  });
+  const producer = new FlacInputSlotProducer();
+  producer.publish(flac.subarray(42), true);
+  const wasm = await readFile("src/internal/engine-web-flac-decoder.wasm");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(wasm, { headers: { "Content-Type": "application/wasm" } });
+  try {
+    const decoder = await NativeFlacDecoder.load({
+      url: "https://asset.invalid/decoder.wasm", inputSlot: producer.buffers,
+      requestRefill: () => assert.fail("bounded fixture unexpectedly requested another refill"),
+    });
+    decoder.initialize(parsed.streamInfo, 41_024);
+    const hash = createHash("sha256");
+    const blocks: number[] = [];
+    const live: number[] = [];
+    const heapPeaks: number[] = [];
+    for (;;) {
+      const result = decoder.processSingle();
+      if (result === "eof") break;
+      if (result !== null) {
+        blocks.push(result.frames);
+        hash.update(result.bytes);
+        const stats = decoder.allocatorStats();
+        live.push(stats.liveBytes);
+        heapPeaks.push(stats.peakHeapBytes);
+      }
+    }
+    decoder.finish();
+    const beforeDestroy = decoder.allocatorStats();
+    decoder.destroy();
+    const afterDestroy = decoder.allocatorStats();
+    assert.deepEqual(blocks, [576, 1_152, 2_304, 4_096, 4_096, 4_096, 4_096, 4_096, 4_096, 4_096, 4_096, 4_096, 128]);
+    assert.equal(hash.digest("hex"), "1c56647d30a67bd892fd802860925f85eed692a706151dd1738235e0dc62889f");
+    assert.ok(live.slice(3, -1).every((bytes) => bytes === live[3]), "live allocation must plateau once the maximum block is reached");
+    assert.ok(heapPeaks.slice(3).every((bytes) => bytes === heapPeaks[3]), "heap high-water must be duration-independent after the maximum block");
+    assert.ok(beforeDestroy.peakHeapBytes < FLAC_DECODER_MEMORY_BYTES);
+    assert.equal(afterDestroy.liveBytes, 0, "libFLAC delete/free must reclaim every live allocation");
+    assert.ok(afterDestroy.freeCalls > 0, "real libFLAC must exercise allocator free");
+    assert.ok(afterDestroy.reallocCalls > 0, "increasing real blocks must exercise allocator realloc");
+    assert.equal(afterDestroy.peakHeapBytes, beforeDestroy.peakHeapBytes, "destroy must not invent allocator history");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("real decoder rejects a valid-CRC reordered variable frame", async () => {
+  const flac = new Uint8Array(await readFile("tests/fixtures/native-reordered-stereo24.flac"));
+  const parsed = parseNativeFlacStreamInfo(flac.subarray(0, 42));
+  const producer = new FlacInputSlotProducer();
+  producer.publish(flac.subarray(42), true);
+  const wasm = await readFile("src/internal/engine-web-flac-decoder.wasm");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(wasm, { headers: { "Content-Type": "application/wasm" } });
+  try {
+    const decoder = await NativeFlacDecoder.load({
+      url: "https://asset.invalid/decoder.wasm", inputSlot: producer.buffers,
+      requestRefill: () => assert.fail("bounded fixture unexpectedly requested another refill"),
+    });
+    decoder.initialize(parsed.streamInfo, 41_024);
+    assert.notEqual(decoder.processSingle(), null);
+    assert.throws(
+      () => decoder.processSingle(),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "stem.decode.flac",
+    );
+    decoder.destroy();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("real libFLAC waits through delayed one-byte refills across arbitrary frame splits", async () => {
   const flac = new Uint8Array(await readFile("tests/fixtures/native-silence.flac"));
   let audioOffset = 42;
@@ -187,6 +262,86 @@ test("real libFLAC waits through delayed one-byte refills across arbitrary frame
     assert.equal(refills, audio.byteLength);
   } finally {
     await worker.terminate();
+  }
+});
+
+test("malformed decoder modules and ABI traps normalize as stem.decode.asset", async () => {
+  const producer = new FlacInputSlotProducer();
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const bytes of [new Uint8Array([0]), new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])]) {
+      globalThis.fetch = async () => new Response(bytes, { headers: { "Content-Type": "application/wasm" } });
+      await assert.rejects(
+        NativeFlacDecoder.load({ url: "https://asset.invalid/bad.wasm", inputSlot: producer.buffers, requestRefill() {} }),
+        (error: unknown) => error instanceof Error && "code" in error && error.code === "stem.decode.asset",
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("trapping ABI validation and invalid arenas normalize as stem.decode.asset", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCompile = WebAssembly.compileStreaming;
+  const originalInstantiate = WebAssembly.instantiate;
+  const producer = new FlacInputSlotProducer();
+  const memory = new WebAssembly.Memory({ initial: 32, maximum: 32 });
+  const functions = {
+    miso_flac_decoder_abi_version: () => 2,
+    miso_flac_decoder_description_ptr: () => memory.buffer.byteLength - 1,
+    miso_flac_decoder_description_capacity: () => 42,
+    miso_flac_decoder_output_ptr: () => 0,
+    miso_flac_decoder_output_length: () => 0,
+    miso_flac_decoder_output_frames: () => 0,
+    miso_flac_decoder_callback_error: () => 0,
+    miso_flac_decoder_state: () => 0,
+    miso_flac_decoder_initialize: () => 0,
+    miso_flac_decoder_process_single: () => 2,
+    miso_flac_decoder_release_output: () => undefined,
+    miso_flac_decoder_finish: () => 0,
+    miso_flac_decoder_destroy: () => undefined,
+    miso_flac_allocator_live_bytes: () => 0,
+    miso_flac_allocator_peak_live_bytes: () => 0,
+    miso_flac_allocator_peak_heap_bytes: () => 0,
+    miso_flac_allocator_free_calls: () => 0,
+    miso_flac_allocator_realloc_calls: () => 0,
+  };
+  globalThis.fetch = async () => new Response(new Uint8Array([0]), { headers: { "Content-Type": "application/wasm" } });
+  WebAssembly.compileStreaming = async () => ({} as WebAssembly.Module);
+  try {
+    WebAssembly.instantiate = (async () => ({ exports: {
+      memory, ...functions, miso_flac_decoder_abi_version: () => { throw new Error("trap"); },
+    } }) as unknown) as typeof WebAssembly.instantiate;
+    await assert.rejects(
+      NativeFlacDecoder.load({ url: "https://asset.invalid/trap.wasm", inputSlot: producer.buffers, requestRefill() {} }),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "stem.decode.asset",
+    );
+    WebAssembly.instantiate = (async () => ({ exports: { memory, ...functions } }) as unknown) as typeof WebAssembly.instantiate;
+    const decoder = await NativeFlacDecoder.load({
+      url: "https://asset.invalid/pointer.wasm", inputSlot: producer.buffers, requestRefill() {},
+    });
+    const parsed = parseNativeFlacStreamInfo(streamInfo());
+    assert.throws(
+      () => decoder.initialize(parsed.streamInfo, parsed.streamInfo.totalSamples),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "stem.decode.asset",
+    );
+    WebAssembly.instantiate = (async () => ({ exports: {
+      memory, ...functions, miso_flac_decoder_description_ptr: () => 0,
+      miso_flac_decoder_process_single: () => { throw new Error("trap"); },
+    } }) as unknown) as typeof WebAssembly.instantiate;
+    const processTrap = await NativeFlacDecoder.load({
+      url: "https://asset.invalid/process-trap.wasm", inputSlot: producer.buffers, requestRefill() {},
+    });
+    processTrap.initialize(parsed.streamInfo, parsed.streamInfo.totalSamples);
+    assert.throws(
+      () => processTrap.processSingle(),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "stem.decode.asset",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    WebAssembly.compileStreaming = originalCompile;
+    WebAssembly.instantiate = originalInstantiate;
   }
 });
 

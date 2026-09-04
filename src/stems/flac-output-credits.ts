@@ -10,6 +10,7 @@ export class FlacOutputCredits {
 
   give(): void {
     if (this.#cancelled) return;
+    if (this.#available >= FLAC_DECODE_OUTPUT_CREDITS) throw new Error("FLAC output credit overflow");
     this.#available += 1;
     const wake = this.#wake;
     this.#wake = undefined;

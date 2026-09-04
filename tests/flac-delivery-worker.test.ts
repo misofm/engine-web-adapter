@@ -70,6 +70,27 @@ test("Effect HttpClient delivery preserves caller headers and overwrites exact R
   assert.equal(seen[0]!.range, "bytes=1-3");
 });
 
+test("HTTP response and body chunks report decoder-watchdog activity", async () => {
+  let activity = 0;
+  const chunks = [new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])];
+  const result = await readExactFlacRange({
+    identity: IDENTITY, phase: "audio", start: 0, end: 2,
+    signal: new AbortController().signal, state: {}, maximumAttempts: 1,
+    locate: () => "https://caller.invalid/stem",
+    onActivity: () => { activity += 1; },
+    httpClient: responseClient(() => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks.shift();
+        if (chunk === undefined) controller.close(); else controller.enqueue(chunk);
+      },
+    }), { status: 206, headers: {
+      "Content-Range": "bytes 0-2/4", "Content-Length": "3", ETag: '"stable"',
+    } })),
+  });
+  assert.deepEqual([...result.bytes], [1, 2, 3]);
+  assert.equal(activity, 4);
+});
+
 test("delivery address failures retain stable range-attempt diagnostics", async () => {
   for (const locate of [
     () => "not an absolute URL",
@@ -407,6 +428,78 @@ test("active resolver cancellation terminates its physical Worker before stream 
     },
   );
   assert.ok(worker.posted.some((message) => message.type === "cancel"));
+});
+
+for (const phase of ["decoder-load", "frame"] as const) {
+  test(`${phase} no-progress watchdog terminates before typed rejection`, async () => {
+    class StalledWorker extends FakeWorker {
+      override postMessage(message: FlacWorkerRequest): void {
+        if (this.terminated) return;
+        this.posted.push(message);
+        if (phase === "frame" && message.type === "start") {
+          queueMicrotask(() => this.emit({ type: "ready", requestId: message.requestId }));
+        }
+      }
+    }
+    const worker = new StalledWorker();
+    const source = singleFrameFlac();
+    const resolver = createFlacStemResolver({
+      createWorker: () => worker,
+      hardwareConcurrency: 2,
+      decodeNoProgressMs: 10,
+      maximumAttempts: 1,
+      locate: () => "https://caller.invalid/stem",
+      httpClient: responseClient((request) => {
+        const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+        return exactResponse(source, Number(match[1]), Number(match[2]));
+      }),
+    });
+    const reading = (await resolver.resolve(IDENTITY)).stream.getReader().read();
+    await assert.rejects(reading, (error: unknown) => {
+      assert.equal(worker.terminated, true);
+      return error instanceof EngineWebAdapterError && error.code === "stem.decode.stall" && error.details.phase === phase;
+    });
+  });
+}
+
+test("zero-high-water stream returns credit only after consuming one of exactly two buffered PCM blocks", async () => {
+  class TwoCreditWorker extends FakeWorker {
+    emittedThird = false;
+    override postMessage(message: FlacWorkerRequest): void {
+      if (this.terminated) return;
+      this.posted.push(message);
+      if (message.type === "start") queueMicrotask(() => this.emit({ type: "ready", requestId: message.requestId }));
+      if (message.type === "initialize") queueMicrotask(() => {
+        this.emit({ type: "pcm", requestId: message.requestId, bytes: new Uint8Array([1]).buffer, frames: 1, totalPcmBytes: 3 });
+        this.emit({ type: "pcm", requestId: message.requestId, bytes: new Uint8Array([2]).buffer, frames: 1, totalPcmBytes: 3 });
+      });
+      if (message.type === "output-credit" && !this.emittedThird) {
+        this.emittedThird = true;
+        queueMicrotask(() => {
+        this.emit({ type: "pcm", requestId: message.requestId, bytes: new Uint8Array([3]).buffer, frames: 1, totalPcmBytes: 3 });
+        this.emit({ type: "complete", requestId: message.requestId, pcmBytes: 3, frames: 3 });
+        });
+      }
+    }
+  }
+  const worker = new TwoCreditWorker();
+  const source = singleFrameFlac();
+  const resolver = createFlacStemResolver({
+    createWorker: () => worker, hardwareConcurrency: 2, decodeNoProgressMs: 1_000,
+    locate: () => "https://caller.invalid/stem",
+    httpClient: responseClient((request) => {
+      const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+      return exactResponse(source, Number(match[1]), Number(match[2]));
+    }),
+  });
+  const reader = (await resolver.resolve(IDENTITY)).stream.getReader();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(worker.posted.filter((message) => message.type === "output-credit").length, 0);
+  assert.deepEqual([...(await reader.read()).value!], [1]);
+  assert.equal(worker.posted.filter((message) => message.type === "output-credit").length, 1);
+  assert.deepEqual([...(await reader.read()).value!], [2]);
+  assert.deepEqual([...(await reader.read()).value!], [3]);
+  assert.equal((await reader.read()).done, true);
 });
 
 test("metadata locator cancellation aborts before Worker termination and rejection", async () => {

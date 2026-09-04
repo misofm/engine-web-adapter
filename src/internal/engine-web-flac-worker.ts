@@ -28,7 +28,7 @@ function serialize(error: unknown): Extract<FlacWorkerResponse, { type: "error" 
 
 function fail(error: unknown): void {
   if (!credits?.cancelled) scope.postMessage({ type: "error", requestId: active, error: serialize(error) });
-  decoder?.destroy();
+  try { decoder?.destroy(); } catch { /* the first typed failure remains authoritative */ }
   scope.close?.();
 }
 
@@ -55,7 +55,7 @@ scope.onmessage = (event) => {
   if (message.type === "output-credit") { credits.give(); return; }
   if (message.type === "cancel") {
     credits.cancel();
-    decoder?.destroy();
+    try { decoder?.destroy(); } catch { /* physical Worker close is authoritative */ }
     scope.close?.();
     return;
   }

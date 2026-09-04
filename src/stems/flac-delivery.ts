@@ -97,6 +97,7 @@ export function readExactFlacRange(options: FlacHttpOptions & {
   readonly signal: AbortSignal;
   readonly state: DeliveryState;
   readonly onProgress?: (progress: StemProgress) => void;
+  readonly onActivity?: () => void;
 }): Promise<Readonly<{ bytes: Uint8Array; totalBytes: number }>> {
   const maximumAttempts = options.maximumAttempts ?? 4;
   const deadlineMs = options.readDeadlineMs ?? 30_000;
@@ -148,6 +149,7 @@ export function readExactFlacRange(options: FlacHttpOptions & {
       Effect.provideService(HttpClient.TracerPropagationEnabled, false),
       Effect.timeoutOrElse({ duration: deadlineMs, orElse: () => Effect.fail(stalled()) }),
     );
+    options.onActivity?.();
     if (response.status !== 206) {
       const transient = response.status >= 500 && response.status <= 599;
       return yield* Effect.fail(failure("stem.delivery.http", `FLAC range returned HTTP ${response.status}`, {
@@ -200,6 +202,7 @@ export function readExactFlacRange(options: FlacHttpOptions & {
           }
           bytes.set(chunk, received);
           received += chunk.byteLength;
+          options.onActivity?.();
         },
         catch: (error) => error,
       })),

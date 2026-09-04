@@ -246,6 +246,44 @@ pre-verification playback, other codec, Wasm threads/SIMD optimization, Worker
 reuse, service-worker cache, prefetch, or SRC. App upgrade and npm publication
 follow only after Sol PASS.
 
+## Attempt record
+
+Attempt 1 reached a fully streaming universal-Wasm path but review is **FAIL**.
+The immutable reviewed checkpoint did not yet prove a main-realm decoder
+no-progress watchdog, reclaim allocator behavior, the exact two-unconsumed-PCM
+ceiling, frame-position/block-bound enforcement, or total ABI-trap
+normalization. Its packed gate also conflated the decoder and Engine Wasm
+observations.
+
+Attempt 2 keeps the same architecture and corrects only those findings:
+
+- a resettable main-thread asset/decode watchdog physically terminates before
+  reporting `stem.decode.stall`;
+- a bounded reclaiming allocator exposes live/peak evidence for real libFLAC;
+- a zero-high-water PCM stream and output-credit checks enforce two
+  unconsumed blocks;
+- STREAMINFO block bounds and contiguous decoded sample positions are checked
+  in the decoder wrapper while permitting one legal final partial block;
+- malformed/trapping ABI surfaces normalize to `stem.decode.asset`; and
+- the packed browser gate names decoder Wasm and Engine Wasm independently.
+
+Attempt-2 implementation evidence at the uncommitted review boundary:
+
+- strict Emscripten 6.0.9 rebuild reproduced decoder SHA-256
+  `b18990c13c17d05ef1d5c337a6a21c15b731a4a3669e6ab3557b5b9bd16beabb`;
+- decoder policy reports 56,762 bytes, the sole `env.miso_flac_read` import,
+  and fixed 32/32 non-growing pages;
+- `npm run check` passes 79/79 tests, including real allocator, variable-block,
+  final-partial, reordered-frame, watchdog, output-credit, and malformed-ABI
+  cases; and
+- the packed Chromium fixture passes cold decode/play/pause/seek/close and warm
+  reuse while independently observing decoder Wasm and Engine Wasm package
+  assets.
+
+Attempt 2 remains pending fresh adversarial review and the separately required
+native Safari, mobile Safari, and live-object product gates; this local record
+does not claim final PASS.
+
 ## Workflow
 
 Fresh Sol-high produced and approved the brief and this ordinary-FLAC

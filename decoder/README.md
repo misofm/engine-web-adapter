@@ -11,3 +11,9 @@ The only application import is the synchronous `env.miso_flac_read` bridge.
 The script uses `/tmp/engine-web-adapter-em-cache` because the pinned
 Homebrew toolchain cache is read-only; set `EM_CACHE` to another pre-created or
 writable cache directory on non-macOS builders.
+
+The default command is an integrity check and never changes the checked-in
+asset. After an intentional reviewed wrapper/toolchain change, run
+`UPDATE_FLAC_DECODER_ASSET=1 scripts/build-flac-decoder.sh` once to replace the
+artifact and digest together, review both changes, then rerun the command
+without that variable to prove a byte-identical strict rebuild.

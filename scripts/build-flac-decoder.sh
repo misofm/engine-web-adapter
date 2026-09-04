@@ -58,11 +58,20 @@ test -x "$wasm_ld"
   --export=miso_flac_decoder_release_output \
   --export=miso_flac_decoder_finish \
   --export=miso_flac_decoder_destroy \
+  --export=miso_flac_allocator_live_bytes \
+  --export=miso_flac_allocator_peak_live_bytes \
+  --export=miso_flac_allocator_peak_heap_bytes \
+  --export=miso_flac_allocator_free_calls \
+  --export=miso_flac_allocator_realloc_calls \
   -o "$output" "$wrapper" $objects "$runtime"
 
 size=$(wc -c < "$output" | tr -d ' ')
 test "$size" -le 262144
 candidate=$(shasum -a 256 "$output" | awk '{print $1}')
+if test "${UPDATE_FLAC_DECODER_ASSET:-0}" = 1; then
+  cp "$output" "$root/src/internal/engine-web-flac-decoder.wasm"
+  printf '%s  %s\n' "$candidate" engine-web-flac-decoder.wasm > "$root/decoder/flac_decoder.sha256"
+fi
 pin=$(awk '{print $1}' "$root/decoder/flac_decoder.sha256")
 test "$candidate" = "$pin"
 cmp "$output" "$root/src/internal/engine-web-flac-decoder.wasm"

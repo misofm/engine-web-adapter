@@ -20,6 +20,9 @@ typedef struct {
     uint32_t expected_rate;
     uint32_t expected_channels;
     uint32_t expected_depth;
+    uint32_t minimum_block_samples;
+    uint32_t maximum_block_samples;
+    uint32_t previous_block_samples;
     uint64_t expected_frames;
     uint64_t decoded_frames;
     uint64_t decoded_bytes;
@@ -69,8 +72,13 @@ static FLAC__StreamDecoderWriteStatus write_callback(
     uint32_t sample;
     uint32_t width;
     uint64_t bytes;
+    uint64_t sample_position;
     (void)decoder;
-    if (self->output_length != 0 || block == 0 || block > 65535u ||
+    sample_position = frame->header.number.sample_number;
+    if (self->output_length != 0 || block == 0 || block > self->maximum_block_samples ||
+        (self->previous_block_samples != 0 && self->previous_block_samples < self->minimum_block_samples) ||
+        frame->header.number_type != FLAC__FRAME_NUMBER_TYPE_SAMPLE_NUMBER ||
+        sample_position != self->decoded_frames ||
         frame->header.sample_rate != self->expected_rate ||
         frame->header.channels != self->expected_channels ||
         frame->header.bits_per_sample != self->expected_depth) {
@@ -94,6 +102,7 @@ static FLAC__StreamDecoderWriteStatus write_callback(
     }
     self->output_length = (uint32_t)bytes;
     self->output_frames = block;
+    self->previous_block_samples = block;
     self->decoded_frames += block;
     self->decoded_bytes += bytes;
     return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
@@ -107,7 +116,9 @@ static void metadata_callback(
     if (metadata->type != FLAC__METADATA_TYPE_STREAMINFO ||
         metadata->data.stream_info.sample_rate != self->expected_rate ||
         metadata->data.stream_info.channels != self->expected_channels ||
-        metadata->data.stream_info.bits_per_sample != self->expected_depth) self->callback_error = 4;
+        metadata->data.stream_info.bits_per_sample != self->expected_depth ||
+        metadata->data.stream_info.min_blocksize != self->minimum_block_samples ||
+        metadata->data.stream_info.max_blocksize != self->maximum_block_samples) self->callback_error = 4;
 }
 
 static void error_callback(
@@ -118,7 +129,7 @@ static void error_callback(
     self->callback_error = 100 + (int32_t)status;
 }
 
-uint32_t miso_flac_decoder_abi_version(void) { return 1u; }
+uint32_t miso_flac_decoder_abi_version(void) { return 2u; }
 uint8_t *miso_flac_decoder_description_ptr(void) { return state.description; }
 uint32_t miso_flac_decoder_description_capacity(void) { return DESCRIPTION_CAPACITY; }
 uint8_t *miso_flac_decoder_output_ptr(void) { return state.output; }
@@ -134,16 +145,22 @@ int32_t miso_flac_decoder_initialize(
     uint32_t sample_rate,
     uint32_t channels,
     uint32_t depth,
+    uint32_t minimum_block_samples,
+    uint32_t maximum_block_samples,
     uint32_t expected_frames_low,
     uint32_t expected_frames_high
 ) {
     FLAC__StreamDecoderInitStatus status;
     if (state.decoder != NULL || description_length != DESCRIPTION_CAPACITY ||
-        (channels != 1u && channels != 2u) || (depth != 16u && depth != 24u)) return -1;
+        (channels != 1u && channels != 2u) || (depth != 16u && depth != 24u) ||
+        minimum_block_samples < 16u || maximum_block_samples < minimum_block_samples ||
+        maximum_block_samples > 65535u) return -1;
     state.description_length = description_length;
     state.expected_rate = sample_rate;
     state.expected_channels = channels;
     state.expected_depth = depth;
+    state.minimum_block_samples = minimum_block_samples;
+    state.maximum_block_samples = maximum_block_samples;
     state.expected_frames = ((uint64_t)expected_frames_high << 32) | expected_frames_low;
     state.decoder = FLAC__stream_decoder_new();
     if (state.decoder == NULL) return -2;
@@ -179,7 +196,8 @@ int32_t miso_flac_decoder_finish(void) {
     if (!state.initialized || state.decoder == NULL ||
         FLAC__stream_decoder_get_state(state.decoder) != FLAC__STREAM_DECODER_END_OF_STREAM) return -1;
     expected_bytes = state.expected_frames * state.expected_channels * (state.expected_depth / 8u);
-    if (state.decoded_frames != state.expected_frames || state.decoded_bytes != expected_bytes) return -2;
+    if (state.decoded_frames != state.expected_frames || state.decoded_bytes != expected_bytes ||
+        state.previous_block_samples == 0 || state.previous_block_samples > state.maximum_block_samples) return -2;
     valid = FLAC__stream_decoder_finish(state.decoder);
     state.initialized = 0;
     return valid && state.callback_error == 0 ? 0 : -3;

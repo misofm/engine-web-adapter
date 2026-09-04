@@ -144,7 +144,8 @@ try {
   assert.equal(result.result?.warmClosed, true);
   assert.deepEqual(consoleErrors, []);
   const requested = [...requests.entries()];
-  assert.ok(requested.some(([path, mime]) => path.endsWith(".wasm") && mime === "application/wasm"), "Wasm asset/MIME not observed");
+  assert.ok(requested.some(([path, mime]) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm") && mime === "application/wasm"), "decoder Wasm asset/MIME not observed");
+  assert.ok(requested.some(([path, mime]) => path.includes("miso-engine") && path.endsWith(".wasm") && mime === "application/wasm"), "Engine Wasm asset/MIME not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("scratch-worker") && mime.includes("javascript")), "scratch Worker asset not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("flac-worker") && mime.includes("javascript")), "FLAC Worker asset not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("pcm-pump-worker") && mime.includes("javascript")), "pump Worker asset not observed");
