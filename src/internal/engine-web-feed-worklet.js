@@ -279,6 +279,14 @@ function wrapEngineProcessor(Base) {
         (ring) => incoming.indexOf(ring.shared) < 0
       )
       for (let index = 0; index < bound.length; index += 1) {
+        // Cut the first-drain id view here, on the attach/control path. The
+        // steady process path must never allocate a typed-array view.
+        bound[index].idTarget = new Uint8Array(
+          this.memoryBuffer,
+          this.sourceIdPointer,
+          Math.min(bound[index].idLength, this.sourceIdCapacity)
+        )
+        bound[index].idTargetBuffer = this.memoryBuffer
         Atomics.store(bound[index].control, CONTROL_ATTACHED, 1)
       }
       this.sabRings = kept.concat(bound)
@@ -324,19 +332,13 @@ function wrapEngineProcessor(Base) {
      *  the end is what releases the slots back to the writer. */
     drainSharedRing(ring) {
       const control = ring.control
-      if (ring.idTargetBuffer !== this.memoryBuffer) {
-        ring.idTarget = new Uint8Array(
-          this.memoryBuffer,
-          this.sourceIdPointer,
-          Math.min(ring.idLength, this.sourceIdCapacity)
-        )
-        ring.idTargetBuffer = this.memoryBuffer
-      }
+      // Memory growth after attach invalidates the pre-cut view. Refuse this
+      // drain rather than allocating a replacement inside process().
+      if (ring.idTargetBuffer !== this.memoryBuffer) return
       if (ring.idTarget.length !== ring.idLength) return
 
       const epoch = Atomics.load(control, CONTROL_SEEK_EPOCH)
       if (epoch !== ring.seenEpoch) {
-        ring.seenEpoch = epoch
         ring.idTarget.set(ring.idBytes)
         const result = this.exports.miso_engine_web_v1_source_seek(
           this.handle,
@@ -344,11 +346,18 @@ function wrapEngineProcessor(Base) {
           ring.controlI64[CONTROL_I64_SEEK_GENERATION],
           ring.controlI64[CONTROL_I64_SEEK_FRAME]
         )
-        control[CONTROL_SEEKS_APPLIED] += 1
+        if (result === RESULT_BACKPRESSURE) {
+          // Ordinary flow control. Leave the epoch unseen and retry the same
+          // seek before touching any slots on the next process call.
+          return
+        }
         if (result !== RESULT_OK) {
           control[CONTROL_REFUSED] += 1
           control[CONTROL_LAST_RESULT] = result
+          return
         }
+        ring.seenEpoch = epoch
+        control[CONTROL_SEEKS_APPLIED] += 1
         // The engine dropped everything it held for this source.
         ring.depth = 0
         ring.finished = false
@@ -388,10 +397,9 @@ function wrapEngineProcessor(Base) {
           const plane = slotPlanes[channel]
           // A full quantum is the steady case and copies the view as it is;
           // only a region's last chunk is short, and only it cuts a subview.
-          staging.set(
-            frames === ring.frameCapacity ? plane : plane.subarray(0, frames),
-            channel * quantumFrames
-          )
+          // Every slot plane is pre-zeroed by the writer. Copy its full fixed
+          // quantum even for the legal tail, avoiding a tail subview allocation.
+          staging.set(plane, channel * quantumFrames)
         }
         ring.idTarget.set(ring.idBytes)
         const word64 = slot * (SLOT_HEADER_BYTES / 8)
@@ -513,4 +521,3 @@ originalRegister.call(
   ATTACH_PROCESSOR_NAME,
   MisoSabFeedAttachProcessor
 )
-

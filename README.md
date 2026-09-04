@@ -61,7 +61,9 @@ Cross-Origin-Embedder-Policy: require-corp
 
 The browser must also provide OPFS, Web Locks, module Workers, AudioWorklet,
 and WebAssembly SIMD128. Missing capabilities fail with a typed
-`EngineWebAdapterError` before resolver or large-allocation work.
+`EngineWebAdapterError` before resolver or large-allocation work. The default
+path loads and handshakes its scratch module Worker before opening OPFS or
+calling the resolver, so a blocked Worker deployment fails early.
 
 Bundlers resolve the package-relative Worker and worklet URLs exported from
 `@misofm/engine-web-adapter/assets`. Deployments with a custom asset pipeline

@@ -7,9 +7,11 @@ import {
   MSB1_CONTROL,
   MSB1_CONTROL_BYTES,
   Msb1RingReader,
+  PcmPumpWorkerClient,
   createMsb1Ring,
 } from "../src/stems/index.js";
 import type { EngineSourceSink, PumpWorkerRequest, StemIdentity } from "../src/stems/index.js";
+import type { PumpWorkerLike, PumpWorkerResponse } from "../src/stems/index.js";
 
 const IDENTITY = `sha256:${"1".repeat(64)}` as StemIdentity;
 
@@ -125,6 +127,32 @@ test("dedicated Worker keeps driving while the main realm is blocked and stops c
   }
 });
 
+test("pump Worker client bounds requests and terminates on close/error/messageerror", async () => {
+  const shared = ring("client", 1, 4, 2);
+  const source = { sourceId: "client", identity: IDENTITY, channels: 1 as const, bitDepth: 16 as const, frames: 4, ring: shared };
+  const lease = { read: async () => new Blob([new Uint8Array(8)]) };
+
+  const stalled = new FakePumpWorker();
+  await assert.rejects(
+    PcmPumpWorkerClient.create({ lease, sources: [source], worker: stalled, requestDeadlineMs: 5 }),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "stem.read_deadline",
+  );
+  assert.equal(stalled.terminated, true);
+
+  const closable = new FakePumpWorker(true);
+  const client = await PcmPumpWorkerClient.create({ lease, sources: [source], worker: closable, requestDeadlineMs: 5 });
+  await client.close();
+  assert.equal(closable.terminated, true, "missing stop reply is bounded by deadline then terminated");
+
+  for (const type of ["error", "messageerror"] as const) {
+    const failing = new FakePumpWorker();
+    const opening = PcmPumpWorkerClient.create({ lease, sources: [source], worker: failing, requestDeadlineMs: 100 });
+    failing.emit(type, type === "error" ? { message: "worker died", error: new Error("worker died") } : {});
+    await assert.rejects(opening);
+    assert.equal(failing.terminated, true);
+  }
+});
+
 function counter(shared: SharedArrayBuffer, word: number): number {
   return Atomics.load(new Int32Array(shared, 0, MSB1_CONTROL_BYTES / 4), word);
 }
@@ -145,4 +173,25 @@ class TrackingBlob extends Blob {
     this.maximumSliceBytes = Math.max(this.maximumSliceBytes, (end ?? this.size) - (start ?? 0));
     return super.slice(start, end, contentType);
   }
+}
+
+class FakePumpWorker implements PumpWorkerLike {
+  readonly listeners = new Map<string, Set<(event: any) => void>>();
+  terminated = false;
+  constructor(readonly answerInitialize = false) {}
+  postMessage(message: PumpWorkerRequest): void {
+    if (this.answerInitialize && message.type === "initialize") {
+      queueMicrotask(() => this.emit("message", {
+        data: { type: "initialized", requestId: message.requestId, bounds: { windowBytes: 8, ringBytes: message.sources[0]!.ring.byteLength } } satisfies PumpWorkerResponse,
+      }));
+    }
+  }
+  terminate(): void { this.terminated = true; }
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
+    const listeners = this.listeners.get(type) ?? new Set(); listeners.add(listener); this.listeners.set(type, listeners);
+  }
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+  emit(type: string, event: any): void { for (const listener of this.listeners.get(type) ?? []) listener(event); }
 }

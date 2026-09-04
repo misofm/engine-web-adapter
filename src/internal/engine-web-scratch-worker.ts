@@ -12,6 +12,7 @@ scope.onmessage = (event) => {
   const request = event.data;
   void run(request).then((reply) => scope.postMessage(reply));
 };
+scope.postMessage({ type: "worker-ready" });
 
 async function run(request: ScratchBootRequest): Promise<ScratchBootReply> {
   try {

@@ -76,10 +76,24 @@ test("missing or malformed index recovers verified finals without resolving", as
   backend.files.set("staging-dead", new Uint8Array([8, 8]));
 
   const recoveredResolver = new MemoryStemResolver({});
-  const recovered = new VerifiedStemStore({ backend });
+  const recovered = new VerifiedStemStore({ backend, locks: new TestLocks() });
   await (await recovered.openSession({ leaseId: "recovered", stems, resolver: recoveredResolver })).close();
   assert.equal(recoveredResolver.requests.length, 0);
   assert.equal(backend.files.has("staging-dead"), false);
+});
+
+test("recovery without lock query keeps ambiguous final and staging files", async () => {
+  const backend = new MemoryStemStorageBackend();
+  const digest = "c".repeat(64);
+  const final = `sha256-${digest}`;
+  backend.files.set(final, new Uint8Array([1, 2, 3]));
+  backend.files.set(`staging-tab-${digest}`, new Uint8Array([1]));
+  backend.files.set("index.json", new TextEncoder().encode("{broken"));
+  const locks = new TestLocks();
+  const requestOnly: WebLockProvider = { request: locks.request.bind(locks) };
+  await new VerifiedStemStore({ backend, locks: requestOnly }).open();
+  assert.equal(backend.files.has(final), true);
+  assert.equal(backend.files.has(`staging-tab-${digest}`), true);
 });
 
 test("duplicate content single-flights and distinct source IDs share one verified Blob", async () => {
@@ -117,6 +131,35 @@ test("Web Locks serialize separate tab/store instances into one resolve", async 
   ]);
   assert.equal(resolver.requests.length, 1);
   await Promise.all([one.close(), two.close()]);
+});
+
+test("late-opening store preserves a live promoted final until its index commit", async () => {
+  const item = fixture([21, 22, 23, 24, 25, 26]);
+  const storage = new MemoryStemStorageBackend();
+  const locks = new TestLocks();
+  const promoted = deferred<void>();
+  const releaseMove = deferred<void>();
+  const firstBackend: StemStorageBackend = {
+    ...backendView(storage),
+    async move(from, to) {
+      await storage.move(from, to);
+      if (to.startsWith("sha256-")) { promoted.resolve(); await releaseMove.promise; }
+    },
+  };
+  const stems = [requirement("source", item.identity, item.bytes.length)];
+  const resolver = new MemoryStemResolver({ [item.identity]: item.bytes }, { chunkBytes: 1 });
+  const opening = new VerifiedStemStore({ backend: firstBackend, locks, instanceId: "writer" })
+    .openSession({ leaseId: "writer", stems, resolver });
+  await promoted.promise;
+
+  const late = new VerifiedStemStore({ backend: backendView(storage), locks, instanceId: "late" });
+  await late.open();
+  assert.equal(storage.files.has(`sha256-${item.identity.slice(7)}`), true);
+  releaseMove.resolve();
+  await (await opening).close();
+  const warmResolver = new MemoryStemResolver({});
+  await (await late.openSession({ leaseId: "warm", stems, resolver: warmResolver })).close();
+  assert.equal(warmResolver.requests.length, 0);
 });
 
 test("quota, integrity, cancellation, and no-progress deadline are typed", async () => {
@@ -193,6 +236,14 @@ function backendView(storage: MemoryStemStorageBackend): StemStorageBackend {
 
 class TestLocks implements WebLockProvider {
   readonly #tails = new Map<string, Promise<void>>();
+  readonly #held = new Set<string>();
+  readonly #pending = new Set<string>();
+  async query() {
+    return {
+      held: [...this.#held].map((name) => ({ name })),
+      pending: [...this.#pending].map((name) => ({ name })),
+    };
+  }
   async request<T>(
     name: string,
     options: { readonly mode: "exclusive"; readonly signal?: AbortSignal },
@@ -204,8 +255,20 @@ class TestLocks implements WebLockProvider {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const tail = prior.then(() => gate);
     this.#tails.set(name, tail);
+    this.#pending.add(name);
     await prior;
+    this.#pending.delete(name);
+    this.#held.add(name);
     try { options.signal?.throwIfAborted(); return await callback(); }
-    finally { release(); if (this.#tails.get(name) === tail) this.#tails.delete(name); }
+    finally {
+      this.#held.delete(name); release();
+      if (this.#tails.get(name) === tail) this.#tails.delete(name);
+    }
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
 }

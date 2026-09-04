@@ -8,21 +8,27 @@ import type { StemSessionLease } from "./types.js";
 export interface PumpWorkerLike {
   postMessage(message: PumpWorkerRequest): void;
   terminate(): void;
-  addEventListener(type: "message", listener: (event: MessageEvent<PumpWorkerResponse>) => void): void;
-  removeEventListener(type: "message", listener: (event: MessageEvent<PumpWorkerResponse>) => void): void;
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void;
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void;
 }
 
 export class PcmPumpWorkerClient {
   readonly #worker: PumpWorkerLike;
-  readonly #pending = new Map<number, { resolve(value: PumpWorkerResponse): void; reject(reason: unknown): void }>();
+  readonly #pending = new Map<number, { resolve(value: PumpWorkerResponse): void; reject(reason: unknown): void; timer: ReturnType<typeof setTimeout> }>();
   readonly #onMessage = (event: MessageEvent<PumpWorkerResponse>) => this.#receive(event.data);
+  readonly #onWorkerError = (event: ErrorEvent) => this.#terminate(event.error ?? new Error(event.message));
+  readonly #onMessageError = () => this.#terminate(new EngineWebAdapterError("session.open", "PCM pump Worker message could not be cloned"));
+  readonly #requestDeadlineMs: number;
   #detachAbort: (() => void) | undefined;
   #requestId = 1;
   #closed = false;
 
-  private constructor(worker: PumpWorkerLike) {
+  private constructor(worker: PumpWorkerLike, requestDeadlineMs: number) {
     this.#worker = worker;
+    this.#requestDeadlineMs = requestDeadlineMs;
     worker.addEventListener("message", this.#onMessage);
+    worker.addEventListener("error", this.#onWorkerError);
+    worker.addEventListener("messageerror", this.#onMessageError);
   }
 
   static async create(options: {
@@ -34,9 +40,12 @@ export class PcmPumpWorkerClient {
     readonly assets?: AdapterAssetOverrides;
     readonly worker?: PumpWorkerLike;
     readonly signal?: AbortSignal;
+    readonly requestDeadlineMs?: number;
   }): Promise<PcmPumpWorkerClient> {
     const worker = options.worker ?? createPumpWorker(options.assets) as unknown as PumpWorkerLike;
-    const client = new PcmPumpWorkerClient(worker);
+    const deadline = options.requestDeadlineMs ?? 5_000;
+    if (!Number.isSafeInteger(deadline) || deadline <= 0) throw new RangeError("requestDeadlineMs must be positive");
+    const client = new PcmPumpWorkerClient(worker, deadline);
     try {
       options.signal?.throwIfAborted();
       if (options.signal !== undefined) {
@@ -77,6 +86,8 @@ export class PcmPumpWorkerClient {
     this.#closed = true;
     try {
       await this.#request({ type: "stop", requestId: this.#next() });
+    } catch {
+      // Teardown is best-effort; termination below is the hard stop.
     } finally {
       this.#terminate(new EngineWebAdapterError("session.closed", "PCM pump Worker closed"));
     }
@@ -85,8 +96,17 @@ export class PcmPumpWorkerClient {
   #next(): number { return this.#requestId++; }
   #request(message: PumpWorkerRequest): Promise<PumpWorkerResponse> {
     return new Promise((resolve, reject) => {
-      this.#pending.set(message.requestId, { resolve, reject });
-      this.#worker.postMessage(message);
+      const timer = setTimeout(() => {
+        const error = new EngineWebAdapterError("stem.read_deadline", "PCM pump Worker request timed out", {
+          requestId: message.requestId,
+          milliseconds: this.#requestDeadlineMs,
+        });
+        this.#pending.delete(message.requestId);
+        reject(error);
+      }, this.#requestDeadlineMs);
+      this.#pending.set(message.requestId, { resolve, reject, timer });
+      try { this.#worker.postMessage(message); }
+      catch (error) { clearTimeout(timer); this.#pending.delete(message.requestId); reject(error); }
     });
   }
   #receive(message: PumpWorkerResponse): void {
@@ -95,20 +115,23 @@ export class PcmPumpWorkerClient {
       const error = new Error(message.error.message);
       error.name = message.error.name;
       if (message.requestId === undefined) { this.#terminate(error); return; }
-      this.#pending.get(message.requestId)?.reject(error);
+      const pending = this.#pending.get(message.requestId);
+      if (pending !== undefined) { clearTimeout(pending.timer); pending.reject(error); }
       this.#pending.delete(message.requestId);
       return;
     }
     const pending = this.#pending.get(message.requestId);
-    if (pending !== undefined) { this.#pending.delete(message.requestId); pending.resolve(message); }
+    if (pending !== undefined) { clearTimeout(pending.timer); this.#pending.delete(message.requestId); pending.resolve(message); }
   }
   #terminate(reason: unknown): void {
     this.#closed = true;
     this.#detachAbort?.();
     this.#detachAbort = undefined;
     this.#worker.removeEventListener("message", this.#onMessage);
+    this.#worker.removeEventListener("error", this.#onWorkerError);
+    this.#worker.removeEventListener("messageerror", this.#onMessageError);
     this.#worker.terminate();
-    for (const pending of this.#pending.values()) pending.reject(reason);
+    for (const pending of this.#pending.values()) { clearTimeout(pending.timer); pending.reject(reason); }
     this.#pending.clear();
   }
 }

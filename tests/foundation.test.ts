@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { ADAPTER_ASSETS, createPumpWorker, createScratchWorker } from "../src/assets.js";
@@ -19,6 +20,12 @@ test("foundation is pinned to the exact public Engine release", () => {
     "5360874854f47e3dbfa2279ec6c57174e5ca018e",
   );
   assert.equal(ADAPTER_PROVENANCE.safeBaselines.stemStore, "bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c");
+});
+
+test("documented package gates are fresh-checkout safe", async () => {
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+  assert.match(packageJson.scripts["check:package"], /^npm run build && /u);
+  assert.doesNotMatch(packageJson.scripts.lint, /check-package/u);
 });
 
 test("canonical byte accounting accepts launch PCM and rejects 32f", () => {

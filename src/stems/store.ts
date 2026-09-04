@@ -38,6 +38,10 @@ export interface WebLockProvider {
     options: { readonly mode: "exclusive"; readonly signal?: AbortSignal },
     callback: () => Promise<T>,
   ): Promise<T>;
+  query?(): Promise<{
+    readonly held?: readonly { readonly name?: string }[];
+    readonly pending?: readonly { readonly name?: string }[];
+  }>;
 }
 
 export interface VerifiedStemStoreOptions {
@@ -175,14 +179,20 @@ export class VerifiedStemStore implements StemStore {
   async #openOnce(): Promise<void> {
     await this.#backend.open();
     await this.#withLock("index", undefined, async () => {
+      const liveLocks = await this.#liveLockNames();
       for (const name of await this.#backend.list()) {
-        if (name.startsWith(STAGING_PREFIX) || name === INDEX_TEMP) await this.#backend.remove(name);
+        if (name === INDEX_TEMP) await this.#backend.remove(name);
+        if (name.startsWith(STAGING_PREFIX) && liveLocks !== undefined && !liveLocks.has(lockForStorageName(name))) {
+          await this.#backend.remove(name);
+        }
       }
-      const index = await this.#readIndex();
+      const index = await this.#readIndex(liveLocks);
       for (const name of await this.#backend.list()) {
         if (name.startsWith(FINAL_PREFIX)) {
           const identity = `sha256:${name.slice(FINAL_PREFIX.length)}`;
-          if (!Object.hasOwn(index.stems, identity)) await this.#backend.remove(name);
+          if (!Object.hasOwn(index.stems, identity) && liveLocks !== undefined && !liveLocks.has(lockForStorageName(name))) {
+            await this.#backend.remove(name);
+          }
         }
       }
     });
@@ -328,7 +338,7 @@ export class VerifiedStemStore implements StemStore {
     await this.#mutateIndex((index) => { delete index.stems[identity]; });
   }
 
-  async #readIndex(): Promise<StoreIndex> {
+  async #readIndex(liveLocks?: ReadonlySet<string>): Promise<StoreIndex> {
     try {
       const parsed: unknown = JSON.parse(await this.#backend.readText(INDEX_FILE));
       if (validIndex(parsed)) return parsed;
@@ -337,13 +347,14 @@ export class VerifiedStemStore implements StemStore {
         // Malformed and unreadable indexes take the same bounded recovery path.
       }
     }
-    return this.#rebuildIndex();
+    return this.#rebuildIndex(liveLocks ?? await this.#liveLockNames());
   }
 
-  async #rebuildIndex(): Promise<StoreIndex> {
+  async #rebuildIndex(liveLocks: ReadonlySet<string> | undefined): Promise<StoreIndex> {
     const index = emptyIndex();
     for (const name of await this.#backend.list()) {
       if (!name.startsWith(FINAL_PREFIX) || name.length !== FINAL_PREFIX.length + 64) continue;
+      if (liveLocks?.has(lockForStorageName(name))) continue;
       const identity = `sha256:${name.slice(FINAL_PREFIX.length)}` as StemIdentity;
       try {
         assertStemIdentity(identity);
@@ -351,15 +362,27 @@ export class VerifiedStemStore implements StemStore {
         const observed = await sha256Stream(blob.stream(), { readDeadlineMs: this.#readDeadlineMs });
         if (observed.hex === digest(identity)) {
           index.stems[identity] = { bytes: observed.bytes, pins: [], lastUsedAt: this.#now() };
-        } else {
+        } else if (liveLocks !== undefined) {
           await this.#backend.remove(name);
         }
       } catch {
-        await this.#backend.remove(name).catch(() => undefined);
+        if (liveLocks !== undefined) await this.#backend.remove(name).catch(() => undefined);
       }
     }
     await this.#writeIndex(index);
     return index;
+  }
+
+  async #liveLockNames(): Promise<ReadonlySet<string> | undefined> {
+    if (this.#locks?.query === undefined) return undefined;
+    try {
+      const snapshot = await this.#locks.query();
+      return new Set([...(snapshot.held ?? []), ...(snapshot.pending ?? [])]
+        .map((lock) => lock.name).filter((name): name is string => typeof name === "string"));
+    } catch {
+      // Without a reliable liveness snapshot recovery keeps ambiguous files.
+      return undefined;
+    }
   }
 
   async #mutateIndex(mutation: (index: StoreIndex) => void, signal?: AbortSignal): Promise<void> {
@@ -491,6 +514,9 @@ function validIndex(value: unknown): value is StoreIndex {
   });
 }
 function finalName(identity: StemIdentity): string { return `${FINAL_PREFIX}${digest(identity)}`; }
+function lockForStorageName(name: string): string {
+  return `miso:engine-web:v1:stem:${name.slice(-64)}`;
+}
 function digest(identity: StemIdentity): string { return identity.slice("sha256:".length); }
 function nonempty(value: string, label: string): string { if (value.length === 0) throw new TypeError(`${label} must not be empty`); return value; }
 function positive(value: number, label: string): number { if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${label} must be positive`); return value; }

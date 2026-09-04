@@ -1,5 +1,5 @@
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
-import { createEngine } from "@misofm/engine/browser";
+import { createEngine, toWebBootOptions } from "@misofm/engine/browser";
 import type { BrowserEngine, CreateEngineOptions } from "@misofm/engine/browser";
 
 import { ADAPTER_ASSETS } from "./assets.js";
@@ -7,7 +7,7 @@ import { assertEngineWebCapabilities } from "./capabilities.js";
 import { EngineWebAdapterError } from "./errors.js";
 import { attachEngineFeed, prepareEngineFeed } from "./feed.js";
 import type { EngineFeed } from "./feed.js";
-import { scratchBootWithWorker } from "./scratch.js";
+import { ScratchWorkerClient } from "./scratch.js";
 import type {
   EngineAudioContext,
   EnginePump,
@@ -32,6 +32,13 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
   let output: AudioNode | undefined;
 
   try {
+    const scratchWorker = options.scratchBoot === undefined
+      ? await ScratchWorkerClient.create({
+        ...(options.assets === undefined ? {} : { assets: options.assets }), signal: abort.signal,
+      })
+      : undefined;
+    const closeScratchWorker = scratchWorker === undefined ? undefined : () => scratchWorker.close();
+    if (closeScratchWorker !== undefined) cleanup.push(closeScratchWorker);
     const requirements = requirementsFor(options);
     const store = options.store ?? new OpfsStemStore();
     options.onProgress?.({ stage: "loading", sourcesTotal: requirements.length });
@@ -51,18 +58,31 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
 
     const createContext = options.createContext ?? defaultCreateContext;
     const scratchBoot: CreateEngineOptions["scratchBoot"] = options.scratchBoot ?? ((request) =>
-      scratchBootWithWorker({
+      scratchWorker!.boot({
         ...request,
         moduleUrl: engineWasmUrl,
         signal: abort.signal,
-        ...(options.assets === undefined ? {} : { assets: options.assets }),
       }));
     const createHost: CreateEngineOptions["createHost"] = options.createHost ?? (async (request) => {
+      const context = request.context as unknown as BaseAudioContext & { suspend?: () => Promise<void> };
+      if (context.state === "running") await context.suspend?.();
       await prepareEngineFeed(request.context, feedPreludeUrl);
       const module = await import(/* @vite-ignore */ String(engineHostUrl)) as {
         createMisoAudioWorkletHost(value: unknown): Promise<BrowserEngine["host"]>;
       };
-      return module.createMisoAudioWorkletHost(request);
+      const hostRequest = { ...request, options: toWebBootOptions(request.options) };
+      try { return await module.createMisoAudioWorkletHost(hostRequest); }
+      catch (error) {
+        throw new EngineWebAdapterError("session.open", "Engine AudioWorklet host could not start", {
+          contextState: request.context.state,
+          sampleRate: request.context.sampleRate,
+          renderQuantumSize: request.context.renderQuantumSize,
+          documentBytes: request.document.byteLength,
+          optionKeys: Object.keys(hostRequest.options),
+          simd128ModuleUrlType: typeof request.simd128ModuleUrl,
+          workletModuleUrlType: typeof request.workletModuleUrl,
+        }, error);
+      }
     });
 
     engine = await createEngine({
@@ -79,17 +99,22 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       ...(options.policy === undefined ? {} : { policy: options.policy }),
     });
     cleanup.push(() => engine!.close());
-    crossCompiledSources(engine.shape.sources, options.sources);
+    if (scratchWorker !== undefined && closeScratchWorker !== undefined) {
+      scratchWorker.close();
+      const cleanupIndex = cleanup.indexOf(closeScratchWorker);
+      if (cleanupIndex >= 0) cleanup.splice(cleanupIndex, 1);
+    }
+    const orderedSources = crossCompiledSources(engine.shape.sources, options.sources);
 
     feed = attachEngineFeed({
       context: engine.context as unknown as BaseAudioContext,
-      sources: options.sources.map((source) => ({ sourceId: source.id, channels: source.spec.channels })),
+      sources: orderedSources.map((source) => ({ sourceId: source.id, channels: source.spec.channels })),
       quantumFrames: engine.shape.quantumFrames,
       ...(options.createAttachNode === undefined ? {} : { createNode: options.createAttachNode }),
     });
     cleanup.push(() => feed!.close());
 
-    const pumpSources: PcmPumpSource[] = options.sources.map((source, index) => ({
+    const pumpSources: PcmPumpSource[] = orderedSources.map((source, index) => ({
       sourceId: source.id,
       identity: source.spec.content as `sha256:${string}`,
       channels: source.spec.channels,
@@ -116,6 +141,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     detachAbort();
 
     let state: EngineWebSessionState = "ready";
+    let closing = false;
     let tail: Promise<void> = Promise.resolve();
     let closePromise: Promise<void> | undefined;
     const enqueue = (operation: () => Promise<void>): Promise<void> => {
@@ -131,35 +157,39 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       output,
       get state() { return state; },
       play() {
-        if (state === "closed") return Promise.reject(new EngineWebAdapterError("session.closed", "Engine Web session is closed"));
+        if (closing || state === "closed") return Promise.reject(new EngineWebAdapterError("session.closed", "Engine Web session is closed"));
         // This call intentionally precedes the first await and preserves the user gesture.
         const resumed = context.resume();
         return enqueue(async () => {
-          await resumed;
-          await feed!.ready();
+          await abortable(resumed, abort.signal);
+          if (context.state !== "running") await abortable(context.resume(), abort.signal);
+          await abortable(feed!.ready(), abort.signal);
+          if (closing) throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
           state = "playing";
         });
       },
       pause() {
         return enqueue(async () => {
-          if (state === "closed") throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
-          await context.suspend();
+          if (closing || state === "closed") throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
+          await abortable(context.suspend(), abort.signal);
+          if (closing) throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
           state = "paused";
         });
       },
       seekFrames(frame) {
         return enqueue(async () => {
-          if (state === "closed") throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
-          await pump!.seekFrames(frame);
+          if (closing || state === "closed") throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
+          await abortable(pump!.seekFrames(frame), abort.signal);
         });
       },
       close() {
-        closePromise ??= enqueue(async () => {
-          if (state === "closed") return;
+        if (closePromise === undefined) {
+          closing = true;
           state = "closed";
           abort.abort(new DOMException("Engine Web session closed", "AbortError"));
-          await reverseCleanup(cleanup);
-        });
+          // Cleanup starts now; it never waits behind a hung lifecycle call.
+          closePromise = reverseCleanup(cleanup);
+        }
         return closePromise;
       },
     };
@@ -187,12 +217,15 @@ function requirementsFor(options: EngineWebSessionOptions): StemRequirement[] {
 function crossCompiledSources(
   compiled: readonly { readonly id: string; readonly channels: number; readonly frames: bigint }[],
   declared: EngineWebSessionOptions["sources"],
-): void {
-  const mismatch = compiled.length !== declared.length || compiled.some((source, index) => {
-    const expected = declared[index];
-    return expected === undefined || source.id !== expected.id || source.channels !== expected.spec.channels || source.frames !== BigInt(expected.spec.frames);
+): EngineWebSessionOptions["sources"] {
+  const byId = new Map(declared.map((source) => [source.id, source]));
+  const ordered = compiled.map((source) => byId.get(source.id));
+  const mismatch = compiled.length !== declared.length || ordered.some((expected, index) => {
+    const source = compiled[index]!;
+    return expected === undefined || source.channels !== expected.spec.channels || source.frames !== BigInt(expected.spec.frames);
   });
   if (mismatch) throw new EngineWebAdapterError("session.declaration_mismatch", "Engine-reported source order or shape differs from declarations");
+  return ordered as EngineWebSessionOptions["sources"];
 }
 
 function exactFrames(value: number | bigint): number {
@@ -228,4 +261,17 @@ function forwardAbort(parent: AbortSignal | undefined, child: AbortController): 
   const abort = () => child.abort(parent.reason);
   if (parent.aborted) abort(); else parent.addEventListener("abort", abort, { once: true });
   return () => parent.removeEventListener("abort", abort);
+}
+
+function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => { cleanup(); reject(signal.reason ?? new DOMException("Operation aborted", "AbortError")); };
+    const cleanup = () => signal.removeEventListener("abort", abort);
+    signal.addEventListener("abort", abort, { once: true });
+    operation.then(
+      (value) => { cleanup(); resolve(value); },
+      (error) => { cleanup(); reject(error); },
+    );
+  });
 }

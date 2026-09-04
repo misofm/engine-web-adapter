@@ -38,15 +38,22 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "format:check": "node scripts/check-format.mjs",
+    "lint": "npm run typecheck && node scripts/check-source-policy.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
-    "check": "npm run typecheck && npm test && npm pack --dry-run"
+    "test:browser": "node scripts/browser-packed.mjs",
+    "check:package": "npm run build && node scripts/check-package.mjs",
+    "publish:dry-run": "npm publish --dry-run",
+    "check": "npm run format:check && npm run lint && npm test && npm run check:package"
   },
   "dependencies": {
     "@misofm/engine": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
+    "playwright-core": "1.62.1",
+    "vite": "8.2.2",
     "typescript": "5.9.3"
   }
 }

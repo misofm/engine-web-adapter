@@ -39,8 +39,9 @@ host, semantic console, output node, state, and serialized `play`, `pause`,
 `seekFrames`, and idempotent `close` operations. A caller closes and constructs a
 new instance to switch sessions in v0.1.
 
-Open order is validate/capabilities; OPFS verify-or-ingest and lease; scratch
-boot; rate-matched AudioContext; adapter feed prelude before engine worklet;
+Open order is validate/capabilities; load and handshake the scratch module
+Worker; OPFS verify-or-ingest and lease; scratch boot; rate-matched
+AudioContext; adapter feed prelude before engine worklet;
 engine host; one MSB1 ring per compiled source; self-driving PCM pump; bounded
 prefill; output connection; semantic console; ready. Failure cleanup and close
 run in reverse, keeping the lease until all readers stop. `play()` invokes
@@ -123,3 +124,41 @@ pumping; postMessage fallback; and Firefox/WebKit/iOS qualification.
 A fresh Sol xhigh produced this brief. Sol medium implements the smallest
 publishable vertical slice. A fresh Sol high then reviews it adversarially.
 Failed gates are recorded; no gate is weakened to declare readiness.
+
+## Attempt evidence and decisions
+
+Attempt 1 (`8fea81a`) failed adversarial review. The release blockers were
+real implementation gaps, not qualification exceptions: pump ticks could race
+seek, worklet seek backpressure was marked applied, lifecycle close could sit
+behind a hung operation, Worker RPCs had no failure/deadline path, crash
+recovery ignored live Web Locks, a typed-array view and tail subview could be
+created in `process()`, declarations were order-coupled, and the packed browser
+path had not been exercised.
+
+Revision attempt 2 fixes those findings with one serialized Worker queue;
+retry-without-mutation for seek backpressure; synchronously aborting close and
+last-call lifecycle ordering; bounded Worker RPC; an early scratch Worker
+handshake; held/pending Web Locks recovery protection with conservative
+query-unavailable behavior; attach-time views and full pre-zeroed plane copies;
+ID-based compiled ordering; and a persistent extracted-tarball Vite/Chromium
+COOP/COEP harness. Live browser qualification also found that the low-level
+Engine host asset requires `toWebBootOptions(request.options)`; the adapter now
+uses the Engine package's own conversion, matching the authorized app
+baseline. The harness records cold/warm cache reuse, play/pause, an unaligned
+seek, close, accepted submissions, zero refused/torn/feed errors, and emitted
+asset MIME.
+
+The subsequent clean-checkout audit made the package gate build before
+inventory, separated source lint from built-artifact policy, and pinned Vite
+plus Playwright Core as development-only harness dependencies. The browser
+gate now resolves those tools locally and discovers Chrome/Chromium from an
+explicit environment override or standard installation paths. Query-less Web
+Locks recovery keeps ambiguous staging and final files, and the prepared
+scratch Worker is terminated immediately after Engine construction instead of
+living for the playback session.
+
+`BigInt` is a JavaScript primitive and the language specification does not
+promise whether a particular engine allocates for its operations. No parallel
+ABI was invented. Measuring the shipping worklet's BigInt behavior under the
+qualified Chromium runtime remains a performance follow-up; it is not asserted
+as allocation evidence by source inspection.

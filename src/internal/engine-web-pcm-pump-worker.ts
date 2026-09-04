@@ -1,4 +1,4 @@
-import { CanonicalPcmPump, SelfDrivingPcmPump } from "../stems/pump.js";
+import { CanonicalPcmPump } from "../stems/pump.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "../stems/worker-protocol.js";
 import type { StemIdentity } from "../stems/types.js";
 
@@ -10,11 +10,15 @@ interface WorkerScope {
 
 const scope = ((globalThis as unknown as { readonly self?: WorkerScope }).self ?? globalThis) as unknown as WorkerScope;
 let pump: CanonicalPcmPump | undefined;
-let driver: SelfDrivingPcmPump | undefined;
 let tail = Promise.resolve();
+let driveToken: object | undefined;
+let idleWake: (() => void) | undefined;
+let idleMs = 4;
 
 scope.onmessage = (event) => {
-  tail = tail.then(() => handle(event.data)).catch((error: unknown) => {
+  const queued = tail.then(() => handle(event.data));
+  tail = queued.then(() => undefined, () => undefined);
+  void queued.catch((error: unknown) => {
     scope.postMessage({
       type: "pump-error",
       ...(typeof event.data?.requestId === "number" ? { requestId: event.data.requestId } : {}),
@@ -25,7 +29,8 @@ scope.onmessage = (event) => {
 
 async function handle(message: PumpWorkerRequest): Promise<void> {
   if (message.type === "initialize") {
-    driver?.close();
+    stopDriving();
+    pump?.close();
     const blobs = new Map<StemIdentity, Blob>(message.sources.map((source) => [source.identity, source.blob]));
     pump = new CanonicalPcmPump({
       lease: { async read(identity) {
@@ -37,25 +42,69 @@ async function handle(message: PumpWorkerRequest): Promise<void> {
       windowFrames: message.windowFrames,
       generation: message.generation,
     });
-    driver = new SelfDrivingPcmPump(pump, message.idleMs, (error) => {
-      scope.postMessage({ type: "pump-error", error: serialize(error) });
-    });
+    idleMs = message.idleMs;
     scope.postMessage({
       type: "initialized", requestId: message.requestId,
       bounds: { windowBytes: pump.maximumWindowBytes, ringBytes: pump.ringBytes },
     });
-    driver.start();
+    startDriving();
     return;
   }
   if (message.type === "seek") {
-    if (driver === undefined) throw new Error("PCM pump Worker is not initialized");
-    const generation = await driver.seekFrames(message.frame);
+    if (pump === undefined) throw new Error("PCM pump Worker is not initialized");
+    const generation = await pump.seekFrames(message.frame);
     scope.postMessage({ type: "sought", requestId: message.requestId, generation });
+    idleWake?.();
+    startDriving();
     return;
   }
-  driver?.close(); driver = undefined; pump = undefined;
+  stopDriving();
+  pump?.close(); pump = undefined;
   scope.postMessage({ type: "stopped", requestId: message.requestId });
   scope.close?.();
+}
+
+function startDriving(): void {
+  if (driveToken !== undefined || pump === undefined) return;
+  const token = {};
+  driveToken = token;
+  void drive(token).catch((error: unknown) => {
+    if (driveToken === token) {
+      driveToken = undefined;
+      pump?.close(error);
+      scope.postMessage({ type: "pump-error", error: serialize(error) });
+    }
+  }).finally(() => { if (driveToken === token) driveToken = undefined; });
+}
+
+function stopDriving(): void {
+  driveToken = undefined;
+  idleWake?.();
+}
+
+async function drive(token: object): Promise<void> {
+  while (driveToken === token) {
+    // Every tick is appended to the same queue as seek and stop. No cursor,
+    // generation, or window mutation can interleave with an in-flight tick.
+    const outcome = await enqueue(() => driveToken === token ? pump?.pumpUntilBlocked() : undefined);
+    if (driveToken !== token || outcome === undefined) return;
+    if (outcome.finished) { driveToken = undefined; return; }
+    if (outcome.chunks === 0) await sleep(idleMs);
+  }
+}
+
+function enqueue<T>(operation: () => T | Promise<T>): Promise<T> {
+  const queued = tail.then(operation);
+  tail = queued.then(() => undefined, () => undefined);
+  return queued;
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    const finish = () => { clearTimeout(timer); if (idleWake === finish) idleWake = undefined; resolve(); };
+    const timer = setTimeout(finish, milliseconds);
+    idleWake = finish;
+  });
 }
 
 function serialize(error: unknown): { readonly name: string; readonly message: string; readonly code?: string } {

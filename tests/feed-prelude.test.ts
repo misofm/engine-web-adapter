@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 import { Msb1RingWriter, createMsb1Ring } from "../src/stems/index.js";
+import { MSB1_CONTROL } from "../src/stems/index.js";
 
 test("shipped prelude wraps Engine process and submits MSB1 through the synchronous Wasm ABI", async () => {
   const registrations = new Map<string, new () => any>();
@@ -21,6 +22,7 @@ test("shipped prelude wraps Engine process and submits MSB1 through the synchron
   vm.runInNewContext(source, sandbox);
 
   const submissions: Array<{ generation: bigint; start: bigint; frames: number }> = [];
+  const seekResults: number[] = [];
   class EngineProcessor {
     readonly quantumFrames = 4;
     readonly maximumSourceChannels = 1;
@@ -34,7 +36,7 @@ test("shipped prelude wraps Engine process and submits MSB1 through the synchron
     readonly stickyResult = 0;
     readonly exports = {
       memory: { buffer: this.memoryBuffer },
-      miso_engine_web_v1_source_seek: () => 0,
+      miso_engine_web_v1_source_seek: () => seekResults.shift() ?? 0,
       miso_engine_web_v1_source_submit: (_handle: number, _id: number, generation: bigint, start: bigint, _channels: number, frames: number) => {
         submissions.push({ generation, start, frames }); return 0;
       },
@@ -55,4 +57,20 @@ test("shipped prelude wraps Engine process and submits MSB1 through the synchron
   writer.commit({ generation: 1n, startFrame: 0n, frames: 4, endOfRegion: true });
   engine.process([], []);
   assert.deepEqual(submissions, [{ generation: 1n, start: 0n, frames: 4 }]);
+
+  writer.seek(2n, 3n);
+  seekResults.push(6, 0);
+  engine.process([], []);
+  const control = new Int32Array(ring);
+  assert.equal(control[MSB1_CONTROL.SEEKS_APPLIED], 0);
+  assert.equal(control[MSB1_CONTROL.REFUSED], 0, "seek backpressure is not a refusal");
+  engine.process([], []);
+  assert.equal(control[MSB1_CONTROL.SEEKS_APPLIED], 1, "unseen seek retries next process");
+});
+
+test("worklet drain contains no first-use typed-array or tail subview allocation", async () => {
+  const source = await readFile("src/internal/engine-web-feed-worklet.js", "utf8");
+  const drain = source.slice(source.indexOf("drainSharedRing(ring)"), source.indexOf("/** The rings' way in"));
+  assert.equal(/new Uint8Array\s*\(/u.test(drain), false);
+  assert.equal(/\.subarray\s*\(/u.test(drain), false);
 });

@@ -10,6 +10,7 @@ import type { EngineAudioContext, EngineWebSessionOptions } from "../src/session
 import type { StemSessionLease, StemStore } from "../src/stems/index.js";
 
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
+const IDENTITY_Z = `sha256:${"b".repeat(64)}` as const;
 
 test("capabilities refuse before store or resolver work", async () => {
   let opened = false;
@@ -48,12 +49,35 @@ test("every required browser capability has a stable typed refusal", () => {
   );
 });
 
+test("default module Worker handshake fails before store or resolver work", async () => {
+  let storeOpened = false;
+  let resolverCalled = false;
+  const worker = new FailingWorker();
+  const store = {
+    async open() { storeOpened = true; return this; },
+    async openSession() { storeOpened = true; throw new Error("unreachable"); },
+  } as StemStore;
+  const opening = openEngineWebSession({
+    ...baseOptions(), store, capabilityScope: capabilities(),
+    resolver: { async resolve() { resolverCalled = true; throw new Error("unreachable"); } },
+    assets: { createWorker: () => worker as unknown as Worker },
+  });
+  queueMicrotask(() => worker.fail(new Error("module load failed")));
+  await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "capability.module_worker");
+  assert.equal(storeOpened, false);
+  assert.equal(resolverCalled, false);
+  assert.equal(worker.terminated, true);
+});
+
 test("session composes in order and serializes lifecycle with reverse cleanup", async () => {
   const events: string[] = [];
   const context = fakeContext(events);
   const lease: StemSessionLease = {
     leaseId: "lease",
-    stems: [{ sourceId: "source", identity: IDENTITY, bytes: 8 }],
+    stems: [
+      { sourceId: "source-z", identity: IDENTITY_Z, bytes: 8 },
+      { sourceId: "source", identity: IDENTITY, bytes: 8 },
+    ],
     async read() { return new Blob([new Uint8Array(8)]); },
     async close() { events.push("lease.close"); },
   };
@@ -67,19 +91,19 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
   } as unknown as AudioWorkletNode;
   const host = {
     node,
-    async sessionMap() { return { tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }], metersAttached: false }; },
+    async sessionMap() { return { tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }, { id: "source-z", channels: 1, frames: 4n }], metersAttached: false }; },
     async command() { return { ok: true, result: 0, code: "ok", reason: 0, reasonName: "none", rejectedIndex: 0, admitted: 0, appliedAtSample: 0n }; },
     async dispose() { events.push("host.dispose"); },
   } as unknown as BrowserEngine["host"];
   let pumpRings: readonly SharedArrayBuffer[] = [];
   const options: EngineWebSessionOptions = {
     ...baseOptions(), store,
+    sources: [
+      { id: "source-z", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY_Z } },
+      { id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
+    ],
     capabilityScope: capabilities(),
     createContext: () => context,
-    scratchBoot: async () => {
-      events.push("scratch");
-      return { sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128", sources: [{ id: "source", channels: 1, frames: 4n }], tracks: [] };
-    },
     createHost: async ({ context: engineContext }) => {
       assert.deepEqual((engineContext as unknown as typeof context).modules, ["feed-override.js"]);
       events.push("engine-worklet");
@@ -95,6 +119,7 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
     }),
     createPump: async ({ sources }) => {
       events.push("pump.create");
+      assert.deepEqual(sources.map((source) => source.sourceId), ["source", "source-z"]);
       pumpRings = sources.map((source) => source.ring);
       for (const ring of pumpRings) Atomics.store(new Int32Array(ring), MSB1_CONTROL.WROTE, 1);
       return {
@@ -102,18 +127,26 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
         close() { events.push("pump.close"); },
       };
     },
-    assets: { feedWorkletModuleUrl: "feed-override.js" },
+    assets: {
+      feedWorkletModuleUrl: "feed-override.js",
+      createWorker: () => new ScratchWorker(events) as unknown as Worker,
+    },
   };
 
   const session = await openEngineWebSession(options);
   assert.equal(session.state, "ready");
   assert.ok(events.indexOf("store.openSession") < events.indexOf("scratch"));
   assert.ok(events.indexOf("scratch") < events.indexOf("engine-worklet"));
+  assert.ok(events.indexOf("engine-worklet") < events.indexOf("scratch.terminate"));
+  assert.ok(events.indexOf("scratch.terminate") < events.indexOf("pump.create"));
   assert.ok(events.indexOf("engine-worklet") < events.indexOf("pump.create"));
-  assert.equal(pumpRings.length, 1);
+  assert.equal(pumpRings.length, 2);
   const playing = session.play();
   assert.equal(events.at(-1), "context.resume", "resume is invoked synchronously before play yields");
   await playing;
+  await session.pause();
+  await session.play();
+  assert.equal(context.state, "running", "pause then play leaves the last-requested running state");
   await session.seekFrames(2);
   await session.pause();
   assert.equal(session.state, "paused");
@@ -125,6 +158,18 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
     "feed.disconnect", "host.dispose", "context.close", "lease.close",
   ]);
   assert.equal(events.filter((event) => event === "lease.close").length, 1);
+  const resumes = events.filter((event) => event === "context.resume").length;
+  await assert.rejects(session.play(), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+  assert.equal(events.filter((event) => event === "context.resume").length, resumes, "play after close cannot resume");
+
+  const hungContext = fakeContext(events, true);
+  const hung = await openEngineWebSession({ ...options, createContext: () => hungContext });
+  const hungPlay = hung.play();
+  await Promise.race([
+    hung.close(),
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("close waited behind hung resume")), 50)),
+  ]);
+  await assert.rejects(hungPlay, (error: unknown) => error instanceof DOMException && error.name === "AbortError");
 });
 
 function baseOptions(): EngineWebSessionOptions {
@@ -147,17 +192,54 @@ function capabilities(): NonNullable<EngineWebSessionOptions["capabilityScope"]>
   };
 }
 
-function fakeContext(events: string[]): EngineAudioContext & { modules: string[] } {
+function fakeContext(events: string[], hangResume = false): EngineAudioContext & { modules: string[] } {
   const modules: string[] = [];
+  let state = "suspended";
   return {
     sampleRate: 48_000,
     renderQuantumSize: 4,
-    state: "suspended",
+    get state() { return state; },
     destination: {} as AudioNode,
     modules,
     audioWorklet: { async addModule(url) { modules.push(url); events.push("feed-prelude"); } },
-    async resume() { events.push("context.resume"); },
-    async suspend() { events.push("context.suspend"); },
-    async close() { events.push("context.close"); },
+    async resume() {
+      events.push("context.resume");
+      if (hangResume) await new Promise<void>(() => undefined);
+      state = "running";
+    },
+    async suspend() { events.push("context.suspend"); state = "suspended"; },
+    async close() { events.push("context.close"); state = "closed"; },
   };
+}
+
+class FailingWorker extends EventTarget {
+  terminated = false;
+  postMessage() { /* handshake only */ }
+  terminate() { this.terminated = true; }
+  fail(error: Error) {
+    const event = Object.assign(new Event("error"), { error, message: error.message });
+    this.dispatchEvent(event);
+  }
+}
+
+class ScratchWorker extends EventTarget {
+  #terminated = false;
+  constructor(readonly events: string[]) {
+    super();
+    queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: { type: "worker-ready" } })));
+  }
+  postMessage(message: { type?: string; requestId?: number }) {
+    if (message.type !== "scratch") return;
+    this.events.push("scratch");
+    queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: {
+      type: "scratch-result", requestId: message.requestId, ok: true,
+      shape: {
+        sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
+        sources: [{ id: "source", channels: 1, frames: 4n }, { id: "source-z", channels: 1, frames: 4n }], tracks: [],
+      },
+    } })));
+  }
+  terminate() {
+    if (!this.#terminated) { this.#terminated = true; this.events.push("scratch.terminate"); }
+  }
 }
