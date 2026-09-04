@@ -119,7 +119,8 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     } else {
       resolver = options.resolver;
     }
-    const store = options.store ?? new OpfsStemStore();
+    const store = options.store
+      ?? new OpfsStemStore(options.assets === undefined ? {} : { assets: options.assets });
     options.onProgress?.({ stage: "loading", sourcesTotal: requirements.length });
     lease = await store.openSession({
       leaseId: options.leaseId,

@@ -21,6 +21,7 @@ for (const required of [
   "dist/index.js", "dist/index.d.ts", "dist/internal/engine-web-scratch-worker.js",
   "dist/internal/engine-web-pcm-pump-worker.js", "dist/internal/engine-web-flac-worker.js",
   "dist/internal/engine-web-flac-decoder.wasm",
+  "dist/internal/engine-web-opfs-worker.js",
   "dist/internal/engine-web-feed-worklet.js",
   "README.md", "NOTICE", "LICENSE", "vendor/libflac-1.5.0/COPYING.Xiph",
 ]) assert.ok(names.has(required), `packed artifact missing ${required}`);

@@ -38,10 +38,13 @@ export {
   createMsb1Ring,
   msb1RingBytes,
 } from "./ring.js";
+export { OpfsWriteWorkerClient } from "./opfs-worker-client.js";
+export { OPFS_WRITE_METHOD, OPFS_WRITE_REMEDY } from "./opfs-worker-protocol.js";
 export { PcmPumpWorkerClient } from "./worker-client.js";
 export type { PcmPumpOutcome, PcmPumpSource } from "./pump.js";
 export type { EngineSourceSink, Msb1RingCounters, Msb1RingLayout } from "./ring.js";
 export type { PumpWorkerRequest, PumpWorkerResponse } from "./worker-protocol.js";
+export type { OpfsWorkerLike, OpfsWorkerRequest, OpfsWorkerResponse } from "./opfs-worker-protocol.js";
 export type { PumpWorkerLike } from "./worker-client.js";
 export type { StemAdmissionLease } from "./flac-admission.js";
 export type { FlacHttpOptions, FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";

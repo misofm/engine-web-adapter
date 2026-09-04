@@ -2,6 +2,7 @@ export const ADAPTER_ASSET_FILES = Object.freeze({
   scratchWorker: "./internal/engine-web-scratch-worker.js",
   flacWorker: "./internal/engine-web-flac-worker.js",
   flacDecoderWasm: "./internal/engine-web-flac-decoder.wasm",
+  opfsWorker: "./internal/engine-web-opfs-worker.js",
   pumpWorker: "./internal/engine-web-pcm-pump-worker.js",
   feedWorkletModule: "./internal/engine-web-feed-worklet.js",
 } as const);
@@ -11,6 +12,7 @@ export const ADAPTER_ASSETS = Object.freeze({
   scratchWorker: new URL("./internal/engine-web-scratch-worker.js", import.meta.url),
   flacWorker: new URL("./internal/engine-web-flac-worker.js", import.meta.url),
   flacDecoderWasm: new URL("./internal/engine-web-flac-decoder.wasm", import.meta.url),
+  opfsWorker: new URL("./internal/engine-web-opfs-worker.js", import.meta.url),
   pumpWorker: new URL("./internal/engine-web-pcm-pump-worker.js", import.meta.url),
   feedWorkletModule: new URL("./internal/engine-web-feed-worklet.js", import.meta.url),
 });
@@ -19,6 +21,7 @@ export interface AdapterAssetOverrides {
   readonly scratchWorkerUrl?: string | URL;
   readonly flacWorkerUrl?: string | URL;
   readonly flacDecoderWasmUrl?: string | URL;
+  readonly opfsWorkerUrl?: string | URL;
   readonly pumpWorkerUrl?: string | URL;
   readonly feedWorkletModuleUrl?: string | URL;
   readonly engineWasmUrl?: string | URL;
@@ -36,6 +39,14 @@ export function createFlacWorker(overrides: AdapterAssetOverrides = {}): Worker 
   }
   if (overrides.flacWorkerUrl !== undefined) return new Worker(overrides.flacWorkerUrl, { type: "module" });
   return new Worker(new URL("./internal/engine-web-flac-worker.js", import.meta.url), { type: "module" });
+}
+
+export function createOpfsWorker(overrides: AdapterAssetOverrides = {}): Worker {
+  if (overrides.createWorker !== undefined) {
+    return overrides.createWorker(overrides.opfsWorkerUrl ?? ADAPTER_ASSETS.opfsWorker, { type: "module" });
+  }
+  if (overrides.opfsWorkerUrl !== undefined) return new Worker(overrides.opfsWorkerUrl, { type: "module" });
+  return new Worker(new URL("./internal/engine-web-opfs-worker.js", import.meta.url), { type: "module" });
 }
 
 export function createScratchWorker(overrides: AdapterAssetOverrides = {}): Worker {

@@ -50,6 +50,7 @@
     "test": "npm run build && node scripts/clean-test-dist.mjs && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
     "test:browser": "node scripts/browser-packed.mjs",
     "test:browser:live": "node scripts/browser-packed.mjs --live",
+    "test:browser:opfs": "node scripts/browser-opfs.mjs",
     "check:package": "npm run build && node scripts/check-package.mjs",
     "check:decoder": "node scripts/check-flac-decoder.mjs",
     "publish:dry-run": "npm publish --dry-run",
