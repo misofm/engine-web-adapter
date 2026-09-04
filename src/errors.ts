@@ -13,6 +13,8 @@ export type EngineWebAdapterErrorCode =
   | "session.open"
   | "stem.cancelled"
   | "stem.corrupt"
+  | "stem.decode.asset"
+  | "stem.decode.flac"
   | "stem.decode.flac_unsupported"
   | "stem.decode.output"
   | "stem.decode.worker"

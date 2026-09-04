@@ -41,7 +41,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "prepack": "npm run build",
     "format:check": "node scripts/check-format.mjs",
     "lint": "npm run typecheck && node scripts/check-source-policy.mjs",
@@ -50,8 +50,9 @@
     "test:browser": "node scripts/browser-packed.mjs",
     "test:browser:live": "node scripts/browser-packed.mjs --live",
     "check:package": "npm run build && node scripts/check-package.mjs",
+    "check:decoder": "node scripts/check-flac-decoder.mjs",
     "publish:dry-run": "npm publish --dry-run",
-    "check": "npm run format:check && npm run lint && npm test && npm run check:package"
+    "check": "npm run format:check && npm run lint && npm run check:decoder && npm test && npm run check:package"
   },
   "dependencies": {
     "@misofm/engine": "0.1.0",

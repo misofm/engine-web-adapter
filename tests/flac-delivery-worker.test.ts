@@ -246,28 +246,22 @@ test("delivery rejects hidden/malformed/moving headers, encoding, and short bodi
 class FakeWorker implements FlacWorkerLike {
   readonly posted: FlacWorkerRequest[] = [];
   readonly ranges: number[] = [];
+  readonly acceptedInputBytes: number[] = [];
   terminated = false;
   postsAfterTermination = 0;
-  #received = 0;
+  #slot: Extract<FlacWorkerRequest, { type: "start" }>["inputSlot"] | undefined;
   #listeners = new Map<string, Set<(event: any) => void>>();
   postMessage(message: FlacWorkerRequest): void {
     if (this.terminated) { this.postsAfterTermination += 1; return; }
     this.posted.push(message);
-    if (message.type === "start") queueMicrotask(() => this.emit({ type: "input-credit", requestId: message.requestId, maximumBytes: 4, phase: "probe", phaseBytesRemaining: 4 }));
-    if (message.type === "input") {
-      this.#received += message.bytes.byteLength;
-      if (this.#received < message.totalFlacBytes) {
-        const phase = this.#received < 8 ? "metadata" : "audio";
-        queueMicrotask(() => this.emit({ type: "input-credit", requestId: message.requestId, maximumBytes: 4, phase, phaseBytesRemaining: phase === "audio" ? 0 : 4 }));
-      } else {
-        queueMicrotask(() => this.emit({ type: "input-credit", requestId: message.requestId, maximumBytes: 4, phase: "audio", phaseBytesRemaining: 0 }));
-      }
+    if (message.type === "start") {
+      this.#slot = message.inputSlot;
+      queueMicrotask(() => this.emit({ type: "ready", requestId: message.requestId }));
     }
-    if (message.type === "finish") queueMicrotask(() => {
-      const pcm = new Uint8Array([9, 8, 7, 6]).buffer;
-      this.emit({ type: "pcm", requestId: message.requestId, bytes: pcm, frames: 1, totalPcmBytes: 4 });
-      this.emit({ type: "complete", requestId: message.requestId, pcmBytes: 4, frames: 1 });
-    });
+    if (message.type === "initialize") {
+      queueMicrotask(() => this.emit({ type: "input-credit", requestId: message.requestId, maximumBytes: 4, phase: "audio", phaseBytesRemaining: 0 }));
+      this.#pollSlot(message.requestId);
+    }
   }
   terminate(): void { this.terminated = true; }
   addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
@@ -283,10 +277,27 @@ class FakeWorker implements FlacWorkerLike {
     const event = { message: error.message, error };
     for (const listener of this.#listeners.get("error") ?? []) listener(event);
   }
+  #pollSlot(requestId: number): void {
+    if (this.terminated || this.#slot === undefined) return;
+    const control = new Int32Array(this.#slot.control);
+    if (Atomics.load(control, 0) !== 1) { setTimeout(() => this.#pollSlot(requestId), 0); return; }
+    const length = Atomics.load(control, 1);
+    const final = Atomics.load(control, 3) === 1;
+    this.acceptedInputBytes.push(length);
+    Atomics.store(control, 0, 0);
+    if (!final) {
+      this.emit({ type: "input-credit", requestId, maximumBytes: 4, phase: "audio", phaseBytesRemaining: 0 });
+      this.#pollSlot(requestId);
+      return;
+    }
+    const pcm = new Uint8Array([9, 8, 7, 6]).buffer;
+    this.emit({ type: "pcm", requestId, bytes: pcm, frames: 1, totalPcmBytes: 4 });
+    this.emit({ type: "complete", requestId, pcmBytes: 4, frames: 1 });
+  }
 }
 
 test("resolver follows Worker credit with exact nonoverlapping ranges and disposes the one-stem Worker", async () => {
-  const source = new Uint8Array(10);
+  const source = singleFrameFlac();
   const ranges: string[] = [];
   const worker = new FakeWorker();
   const resolver = createFlacStemResolver({
@@ -308,7 +319,7 @@ test("resolver follows Worker credit with exact nonoverlapping ranges and dispos
   const end = await reader.read();
   assert.deepEqual([...first.value!], [9, 8, 7, 6]);
   assert.equal(end.done, true);
-  assert.deepEqual(ranges, ["bytes=0-3", "bytes=4-7", "bytes=8-9"]);
+  assert.deepEqual(ranges, ["bytes=0-41", "bytes=42-45", "bytes=64-67"]);
   assert.equal(worker.terminated, true);
   assert.ok(worker.posted.some((message) => message.type === "output-credit"));
   const start = worker.posted.find((message): message is Extract<FlacWorkerRequest, { type: "start" }> =>
@@ -318,7 +329,7 @@ test("resolver follows Worker credit with exact nonoverlapping ranges and dispos
 });
 
 test("mid-body retry resumes at Worker credit without duplicated accepted bytes", async () => {
-  const source = new Uint8Array(10);
+  const source = singleFrameFlac();
   const ranges: string[] = [];
   let first = true;
   const worker = new FakeWorker();
@@ -353,10 +364,8 @@ test("mid-body retry resumes at Worker credit without duplicated accepted bytes"
   const reader = (await resolver.resolve(IDENTITY)).stream.getReader();
   assert.deepEqual([...(await reader.read()).value!], [9, 8, 7, 6]);
   assert.equal((await reader.read()).done, true);
-  assert.deepEqual(ranges, ["bytes=0-3", "bytes=0-3", "bytes=4-7", "bytes=8-9"]);
-  const accepted = worker.posted.filter((message): message is Extract<FlacWorkerRequest, { type: "input" }> =>
-    message.type === "input");
-  assert.deepEqual(accepted.map((message) => message.bytes.byteLength), [4, 4, 2]);
+  assert.deepEqual(ranges, ["bytes=0-41", "bytes=0-41", "bytes=42-45", "bytes=64-67"]);
+  assert.deepEqual(worker.acceptedInputBytes, [4]);
 });
 
 test("Worker pool removes queued cancellation and terminates before active rejection", async () => {
@@ -407,10 +416,7 @@ test("metadata locator cancellation aborts before Worker termination and rejecti
     override postMessage(message: FlacWorkerRequest): void {
       if (this.terminated) { this.postsAfterTermination += 1; return; }
       this.posted.push(message);
-      if (message.type === "start") queueMicrotask(() => this.emit({
-        type: "input-credit", requestId: message.requestId, maximumBytes: 4,
-        phase: "metadata", phaseBytesRemaining: 4,
-      }));
+      if (message.type === "start") queueMicrotask(() => this.emit({ type: "ready", requestId: message.requestId }));
     }
   }
   const worker = new MetadataWorker();
@@ -445,7 +451,7 @@ test("Worker terminal failure aborts active range input and no continuation post
     start() { requestStarted.resolve(); },
   }), {
     status: 206,
-    headers: { "Content-Range": "bytes 0-3/4", "Content-Length": "4", ETag: '"stable"' },
+    headers: { "Content-Range": "bytes 0-41/100", "Content-Length": "42", ETag: '"stable"' },
   }));
   const resolver = createFlacStemResolver({
     createWorker: () => worker,
@@ -618,80 +624,35 @@ function threeFrameResolver(worker: InProcessFlacWorker) {
   });
 }
 
-test("async decoder error wakes output-credit wait and physically terminates the Worker", async () => {
-  class FakeEncodedAudioChunk {}
-  let lateAudioCloses = 0;
-  class AsyncErrorDecoder {
-    static async isConfigSupported(config: AudioDecoderConfig) { return { supported: true, config }; }
-    readonly error: (error: DOMException) => void;
-    readonly output: (audio: AudioData) => void;
-    decodes = 0;
-    constructor(init: { readonly error: (error: DOMException) => void; readonly output: (audio: AudioData) => void }) {
-      this.error = init.error;
-      this.output = init.output;
+for (const code of ["stem.decode.flac", "stem.decode.output"] as const) {
+  test(`${code} Worker failure terminates before stream rejection`, async () => {
+    class FailingWorker extends FakeWorker {
+      override postMessage(message: FlacWorkerRequest): void {
+        if (this.terminated) { this.postsAfterTermination += 1; return; }
+        this.posted.push(message);
+        if (message.type === "start") queueMicrotask(() => this.emit({ type: "ready", requestId: message.requestId }));
+        if (message.type === "initialize") queueMicrotask(() => this.emit({
+          type: "error", requestId: message.requestId,
+          error: { name: "EngineWebAdapterError", message: "decoder failed closed", code, details: { retryable: false } },
+        }));
+      }
     }
-    configure(): void {}
-    decode(): void {
-      this.decodes += 1;
-      if (this.decodes === 2) setTimeout(() => {
-        this.error(new DOMException("asynchronous decoder failure", "EncodingError"));
-        queueMicrotask(() => this.output({ close: () => { lateAudioCloses += 1; } } as unknown as AudioData));
-      }, 0);
-    }
-    async flush(): Promise<void> {}
-    close(): void {}
-  }
-  const worker = new InProcessFlacWorker({
-    AudioDecoder: AsyncErrorDecoder,
-    EncodedAudioChunk: FakeEncodedAudioChunk,
-  } as unknown as typeof globalThis);
-  const reading = (await threeFrameResolver(worker).resolve(IDENTITY)).stream.getReader().read();
-  await assert.rejects(Promise.race([
-    reading,
-    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("decoder error deadlocked on credit")), 100)),
-  ]), /asynchronous decoder failure/u);
-  assert.equal(worker.terminated, true);
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  assert.equal(lateAudioCloses, 1);
-  assert.equal(worker.lateReplies, 0);
-});
-
-test("PCM conversion failure wakes output-credit wait and physically terminates the Worker", async () => {
-  class FakeEncodedAudioChunk {}
-  let audioCloses = 0;
-  class InvalidOutputDecoder {
-    static async isConfigSupported(config: AudioDecoderConfig) { return { supported: true, config }; }
-    readonly output: (audio: AudioData) => void;
-    decodes = 0;
-    constructor(init: { readonly output: (audio: AudioData) => void }) { this.output = init.output; }
-    configure(): void {}
-    decode(): void {
-      this.decodes += 1;
-      if (this.decodes === 2) setTimeout(() => {
-        this.output({
-          format: "s16", numberOfFrames: 1, numberOfChannels: 1, sampleRate: 48_000,
-          allocationSize: () => 2, copyTo: () => undefined, close: () => { audioCloses += 1; },
-        } as unknown as AudioData);
-        queueMicrotask(() => this.output({ close: () => { audioCloses += 1; } } as unknown as AudioData));
-      }, 0);
-    }
-    async flush(): Promise<void> {}
-    close(): void {}
-  }
-  const worker = new InProcessFlacWorker({
-    AudioDecoder: InvalidOutputDecoder,
-    EncodedAudioChunk: FakeEncodedAudioChunk,
-  } as unknown as typeof globalThis);
-  const reading = (await threeFrameResolver(worker).resolve(IDENTITY)).stream.getReader().read();
-  await assert.rejects(Promise.race([
-    reading,
-    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("PCM failure deadlocked on credit")), 100)),
-  ]), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.decode.output");
-  assert.equal(worker.terminated, true);
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  assert.equal(audioCloses, 2);
-  assert.equal(worker.lateReplies, 0);
-});
+    const worker = new FailingWorker();
+    const source = singleFrameFlac();
+    const resolver = createFlacStemResolver({
+      createWorker: () => worker, hardwareConcurrency: 2, maximumAttempts: 1,
+      locate: () => "https://caller.invalid/failing",
+      httpClient: responseClient((request) => {
+        const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+        return exactResponse(source, Number(match[1]), Number(match[2]));
+      }),
+    });
+    await assert.rejects((await resolver.resolve(IDENTITY)).stream.getReader().read(), (error: unknown) => {
+      assert.equal(worker.terminated, true);
+      return error instanceof EngineWebAdapterError && error.code === code;
+    });
+  });
+}
 
 test("ingest core submits one FLAC frame per EncodedAudioChunk and consumes output credit", async () => {
   const encoded: Array<Readonly<{ data: BufferSource }>> = [];

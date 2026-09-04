@@ -24,3 +24,8 @@ pipeline use issue-authorized implementation evidence from misofm/app commit
 misofm/cli commit 94d94be1e858d01453ad4242e061ef2984502a00. The adapter's parser was
 independently corrected to scan legal intervening metadata through the true
 final metadata boundary.
+
+This product includes libFLAC 1.5.0 from the Xiph.Org Foundation, built from
+the unmodified official release archive under its three-clause BSD license.
+The package-private streaming wrapper and build recipe are in `decoder/`; the
+upstream license is reproduced in `vendor/libflac-1.5.0/COPYING.Xiph`.

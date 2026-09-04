@@ -1,5 +1,6 @@
 import type { CanonicalPcmExpectation, StemIdentity } from "./types.js";
 import type { FlacInputSlotBuffers } from "./flac-input-slot.js";
+import type { NativeFlacStreamInfo } from "./native-flac-metadata.js";
 
 export const FLAC_DECODE_OUTPUT_CREDITS = 2;
 export const MAXIMUM_FLAC_DECODER_SUBMISSIONS = 4;
@@ -12,6 +13,13 @@ export type FlacWorkerRequest =
       readonly decoderWasmUrl: string;
       readonly inputSlot: FlacInputSlotBuffers;
       readonly expected?: CanonicalPcmExpectation;
+    }
+  | {
+      readonly type: "initialize";
+      readonly requestId: number;
+      readonly streamInfo: NativeFlacStreamInfo;
+      readonly expectedFrames: number;
+      readonly totalPcmBytes: number;
     }
   | { readonly type: "input"; readonly requestId: number; readonly bytes: ArrayBuffer; readonly totalFlacBytes: number }
   | { readonly type: "finish"; readonly requestId: number }

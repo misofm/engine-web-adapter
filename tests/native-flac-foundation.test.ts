@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
+import { Worker } from "node:worker_threads";
 
 import {
   FLAC_INPUT_SLOT_BYTES,
@@ -10,6 +12,7 @@ import {
   NativeFlacMetadataScanner,
   parseNativeFlacStreamInfo,
 } from "../src/stems/native-flac-metadata.js";
+import { NativeFlacDecoder } from "../src/stems/native-flac-decoder.js";
 
 function putU64(bytes: Uint8Array, offset: number, input: bigint): void {
   let value = input;
@@ -94,4 +97,85 @@ test("cancellation wakes the synchronous input bridge as ABORT, never EOF", () =
   producer.abort();
   const consumer = new FlacInputSlotConsumer(producer.buffers, () => assert.fail("aborted slot requested a refill"));
   assert.deepEqual(consumer.read(new Uint8Array(1)), { type: "aborted" });
+});
+
+test("real fixed-memory libFLAC Wasm emits exact canonical PCM", async () => {
+  const flac = new Uint8Array(await readFile("tests/fixtures/dense-silence.flac"));
+  let audioOffset = 42;
+  if ((flac[4]! & 0x80) === 0) {
+    for (;;) {
+      const header = flac[audioOffset]!;
+      const length = (flac[audioOffset + 1]! << 16) | (flac[audioOffset + 2]! << 8) | flac[audioOffset + 3]!;
+      audioOffset += 4 + length;
+      if ((header & 0x80) !== 0) break;
+    }
+  }
+  const parsed = parseNativeFlacStreamInfo(flac.subarray(0, 42), {
+    sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 2048, canonicalBytes: 4096,
+  });
+  const producer = new FlacInputSlotProducer();
+  producer.publish(flac.subarray(audioOffset), true);
+  const wasm = await readFile("src/internal/engine-web-flac-decoder.wasm");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(wasm, { headers: { "Content-Type": "application/wasm" } });
+  try {
+    const decoder = await NativeFlacDecoder.load({
+      url: "https://asset.invalid/decoder.wasm", inputSlot: producer.buffers,
+      requestRefill: () => assert.fail("single-frame fixture unexpectedly requested another refill"),
+    });
+    decoder.initialize(parsed.streamInfo, 2048);
+    const output: number[] = [];
+    for (;;) {
+      const block = decoder.processSingle();
+      if (block === "eof") break;
+      if (block !== null) output.push(...block.bytes);
+    }
+    decoder.finish();
+    decoder.destroy();
+    assert.equal(output.length, 4096);
+    assert.ok(output.every((byte) => byte === 0));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("real libFLAC waits through delayed one-byte refills across arbitrary frame splits", async () => {
+  const flac = new Uint8Array(await readFile("tests/fixtures/dense-silence.flac"));
+  let audioOffset = 42;
+  if ((flac[4]! & 0x80) === 0) {
+    for (;;) {
+      const header = flac[audioOffset]!;
+      const length = (flac[audioOffset + 1]! << 16) | (flac[audioOffset + 2]! << 8) | flac[audioOffset + 3]!;
+      audioOffset += 4 + length;
+      if ((header & 0x80) !== 0) break;
+    }
+  }
+  const audio = flac.subarray(audioOffset);
+  const parsed = parseNativeFlacStreamInfo(flac.subarray(0, 42));
+  const producer = new FlacInputSlotProducer();
+  const worker = new Worker(new URL("flac-decoder-thread-runner.js", import.meta.url));
+  const wasm = new Uint8Array(await readFile("src/internal/engine-web-flac-decoder.wasm"));
+  let offset = 0;
+  let refills = 0;
+  const complete = new Promise<Readonly<{ bytes: number; frames: number }>>((resolve, reject) => {
+    worker.on("message", (message: { readonly type: string; readonly bytes?: number; readonly frames?: number; readonly error?: string }) => {
+      if (message.type === "credit") {
+        refills += 1;
+        setTimeout(() => {
+          const next = audio.subarray(offset, offset + 1);
+          offset += next.byteLength;
+          producer.publish(next, offset === audio.byteLength);
+        }, 1);
+      } else if (message.type === "complete") resolve({ bytes: message.bytes!, frames: message.frames! });
+      else reject(new Error(message.error));
+    });
+    worker.on("error", reject);
+  });
+  worker.postMessage({ wasm, inputSlot: producer.buffers, streamInfo: parsed.streamInfo, expectedFrames: 2048 });
+  try {
+    assert.deepEqual(await complete, { bytes: 4096, frames: 2048 });
+    assert.equal(refills, audio.byteLength);
+  } finally {
+    await worker.terminate();
+  }
 });

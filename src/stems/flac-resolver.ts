@@ -6,9 +6,13 @@ import { ADAPTER_ASSETS, type AdapterAssetOverrides } from "../assets.js";
 import type { BoundedStemAdmission } from "./flac-admission.js";
 import { assertStemIdentity } from "./identity.js";
 import { readExactFlacRange, type FlacLocator } from "./flac-delivery.js";
-import { MAXIMUM_DELIVERY_CHUNK_BYTES } from "./flac-metadata.js";
+import { FLAC_INPUT_SLOT_BYTES, FlacInputSlotProducer } from "./flac-input-slot.js";
 import { FlacWorkerPool, type FlacWorkerPoolOptions } from "./flac-worker-pool.js";
-import { FlacInputSlotProducer } from "./flac-input-slot.js";
+import {
+  NativeFlacMetadataScanner,
+  NATIVE_FLAC_STREAMINFO_PROBE_BYTES,
+  parseNativeFlacStreamInfo,
+} from "./native-flac-metadata.js";
 import type { FlacWorkerLike, FlacWorkerResponse } from "./flac-worker-protocol.js";
 import type { ResolvedStem, StemIdentity, StemProgress, StemResolver } from "./types.js";
 
@@ -38,7 +42,7 @@ function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): E
   return new EngineWebAdapterError("stem.decode.worker", message.error.message);
 }
 
-/** Create the advanced low-level dense-FLAC resolver used by session integration. */
+/** Create the advanced low-level native-FLAC resolver used by session integration. */
 export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolver {
   if (typeof options.locate !== "function") throw new TypeError("createFlacStemResolver requires locate");
   const poolOptions: FlacWorkerPoolOptions = {
@@ -89,6 +93,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
           let stopping = false;
           let offset = 0;
           let totalBytes: number | undefined;
+          let decodedBytes = 0;
           const deliveryState: { totalBytes?: number; etag?: string } = {};
           let inputTail = Promise.resolve();
           const cleanup = () => {
@@ -118,49 +123,65 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
             new EngineWebAdapterError("stem.decode.worker", "FLAC Worker reply could not be cloned"),
             false,
           );
+          const range = (phase: "probe" | "metadata" | "audio", start: number, end: number) => readExactFlacRange({
+            locate: options.locate,
+            ...(options.httpClient === undefined ? {} : { httpClient: options.httpClient }),
+            ...(options.httpClientLayer === undefined ? {} : { httpClientLayer: options.httpClientLayer }),
+            ...(options.readDeadlineMs === undefined ? {} : { readDeadlineMs: options.readDeadlineMs }),
+            ...(options.maximumAttempts === undefined ? {} : { maximumAttempts: options.maximumAttempts }),
+            identity, phase, start, end, signal: controller.signal, state: deliveryState,
+            ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
+          });
+          const prepare = async () => {
+            const probe = await range("probe", 0, NATIVE_FLAC_STREAMINFO_PROBE_BYTES - 1);
+            totalBytes = probe.totalBytes;
+            const parsed = parseNativeFlacStreamInfo(probe.bytes, resolveOptions.expected);
+            const scanner = new NativeFlacMetadataScanner(parsed.streamInfoIsFinal);
+            offset = NATIVE_FLAC_STREAMINFO_PROBE_BYTES;
+            while (!scanner.complete) {
+              const header = await range("metadata", scanner.nextHeaderOffset, scanner.nextHeaderOffset + 3);
+              offset = scanner.acceptHeader(header.bytes, header.totalBytes).nextOffset;
+            }
+            if (offset >= totalBytes) throw new EngineWebAdapterError("stem.flac.invalid", "FLAC has no compressed audio suffix");
+            const expectedFrames = resolveOptions.expected?.frames ?? parsed.streamInfo.totalSamples;
+            if (expectedFrames === 0) {
+              throw new EngineWebAdapterError("stem.flac.shape", "Unknown FLAC total samples require a compiled source declaration");
+            }
+            const totalPcmBytes = resolveOptions.expected?.canonicalBytes ??
+              expectedFrames * parsed.streamInfo.channels * (parsed.streamInfo.bitDepth / 8);
+            physical.postMessage({
+              type: "initialize", requestId, streamInfo: parsed.streamInfo, expectedFrames, totalPcmBytes,
+            });
+          };
           const handleCredit = async (message: Extract<FlacWorkerResponse, { type: "input-credit" }>) => {
             if (stopping) return;
-            if (totalBytes !== undefined && offset === totalBytes) {
-              if (stopping) return;
-              physical.postMessage({ type: "finish", requestId });
-              return;
-            }
-            if (!Number.isSafeInteger(message.maximumBytes) || message.maximumBytes < 1 || message.maximumBytes > MAXIMUM_DELIVERY_CHUNK_BYTES) {
+            if (totalBytes === undefined || offset >= totalBytes) throw new EngineWebAdapterError("stem.decode.worker", "FLAC Worker requested input outside the audio suffix");
+            if (!Number.isSafeInteger(message.maximumBytes) || message.maximumBytes < 1 || message.maximumBytes > FLAC_INPUT_SLOT_BYTES) {
               throw new EngineWebAdapterError("stem.decode.worker", "FLAC Worker requested invalid input credit");
             }
-            const length = totalBytes === undefined ? message.maximumBytes : Math.min(message.maximumBytes, totalBytes - offset);
-            const result = await readExactFlacRange({
-              locate: options.locate,
-              ...(options.httpClient === undefined ? {} : { httpClient: options.httpClient }),
-              ...(options.httpClientLayer === undefined ? {} : { httpClientLayer: options.httpClientLayer }),
-              ...(options.readDeadlineMs === undefined ? {} : { readDeadlineMs: options.readDeadlineMs }),
-              ...(options.maximumAttempts === undefined ? {} : { maximumAttempts: options.maximumAttempts }),
-              identity,
-              phase: message.phase,
-              start: offset,
-              end: offset + length - 1,
-              signal: controller.signal,
-              state: deliveryState,
-              ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
-            });
+            const length = Math.min(message.maximumBytes, totalBytes - offset);
+            const result = await range("audio", offset, offset + length - 1);
             if (stopping || controller.signal.aborted) return;
-            totalBytes = result.totalBytes;
             offset += result.bytes.byteLength;
-            const bytes = result.bytes.buffer as ArrayBuffer;
             if (stopping || controller.signal.aborted) return;
-            physical.postMessage({ type: "input", requestId, bytes, totalFlacBytes: totalBytes }, [bytes]);
+            decoderInput!.publish(result.bytes, offset === totalBytes);
           };
           const onMessage = (event: MessageEvent<FlacWorkerResponse>) => {
             const message = event.data;
             if (stopping || message.requestId !== requestId) return;
-            if (message.type === "input-credit") {
+            if (message.type === "ready") {
+              const input = inputTail.then(prepare);
+              inputTail = input.catch(() => undefined);
+              void input.catch((error) => stop(error, true));
+            } else if (message.type === "input-credit") {
               const input = inputTail.then(() => handleCredit(message));
               inputTail = input.catch(() => undefined);
               void input.catch((error) => stop(error, true));
             } else if (message.type === "pcm") {
               blocks.push(message.bytes);
+              decodedBytes += message.bytes.byteLength;
               resolveOptions.onProgress?.({
-                stage: "decoding", identity, bytes: blocks.reduce((sum, block) => sum + block.byteLength, 0),
+                stage: "decoding", identity, bytes: decodedBytes,
                 totalBytes: message.totalPcmBytes,
                 byteKind: "pcm",
               });
