@@ -1,26 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { Effect } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-
 import { ADAPTER_ASSETS, createFlacWorker } from "../src/assets.js";
 import { EngineWebAdapterError } from "../src/errors.js";
-import {
-  FlacWorkerPool,
-  createFlacStemResolver,
-  readExactFlacRange,
-  type FlacWorkerLike,
-  type FlacWorkerRequest,
-  type FlacWorkerResponse,
-} from "../src/stems/index.js";
+import { readExactFlacRange } from "../src/stems/flac-delivery.js";
+import { createFlacStemResolver } from "../src/stems/flac-resolver.js";
+import { FlacWorkerPool } from "../src/stems/flac-worker-pool.js";
+import type {
+  FlacWorkerLike,
+  FlacWorkerRequest,
+  FlacWorkerResponse,
+} from "../src/stems/flac-worker-protocol.js";
 
 const IDENTITY = `sha256:${"b".repeat(64)}` as const;
 
-function responseClient(
-  respond: (request: Parameters<Parameters<typeof HttpClient.make>[0]>[0]) => Response,
-): HttpClient.HttpClient {
-  return HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, respond(request))));
+/** A `fetch` stub shaped like the normalized request the package actually sends. */
+function responseFetch(
+  respond: (request: { readonly url: string; readonly headers: Readonly<Record<string, string>> }) => Response,
+): typeof globalThis.fetch {
+  return (async (input: unknown, init?: RequestInit) => respond({
+    url: String(input),
+    headers: (init?.headers ?? {}) as Readonly<Record<string, string>>,
+  })) as typeof globalThis.fetch;
 }
 
 function exactResponse(bytes: Uint8Array, start: number, end: number, total = bytes.byteLength): Response {
@@ -40,10 +41,10 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-test("Effect HttpClient delivery preserves caller headers and overwrites exact Range", async () => {
+test("delivery preserves caller headers and overwrites exact Range", async () => {
   const source = new Uint8Array([1, 2, 3, 4, 5, 6]);
   const seen: Array<Readonly<Record<string, string>>> = [];
-  const client = responseClient((request) => {
+  const client = responseFetch((request) => {
     seen.push(request.headers);
     return exactResponse(source, 1, 3);
   });
@@ -56,7 +57,7 @@ test("Effect HttpClient delivery preserves caller headers and overwrites exact R
     signal: new AbortController().signal,
     state: {},
     maximumAttempts: 1,
-    httpClient: client,
+    fetch: client,
     locate(_identity, attempt) {
       attempts.push(attempt.attempt);
       return new Request("https://caller.invalid/object", {
@@ -78,7 +79,7 @@ test("HTTP response and body chunks report decoder-watchdog activity", async () 
     signal: new AbortController().signal, state: {}, maximumAttempts: 1,
     locate: () => "https://caller.invalid/stem",
     onActivity: () => { activity += 1; },
-    httpClient: responseClient(() => new Response(new ReadableStream<Uint8Array>({
+    fetch: responseFetch(() => new Response(new ReadableStream<Uint8Array>({
       pull(controller) {
         const chunk = chunks.shift();
         if (chunk === undefined) controller.close(); else controller.enqueue(chunk);
@@ -155,14 +156,14 @@ test("default FetchHttpClient preserves caller Request credentials and mode", as
 
 test("delivery retries only transient failures and re-runs locate per physical attempt", async () => {
   let responses = 0;
-  const client = responseClient(() => {
+  const client = responseFetch(() => {
     responses += 1;
     return responses === 1 ? new Response("busy", { status: 503 }) : exactResponse(new Uint8Array([7, 8]), 0, 1);
   });
   const locates: number[] = [];
   const result = await readExactFlacRange({
     identity: IDENTITY, phase: "probe", start: 0, end: 1,
-    signal: new AbortController().signal, state: {}, maximumAttempts: 2, httpClient: client,
+    signal: new AbortController().signal, state: {}, maximumAttempts: 2, fetch: client,
     locate(_identity, attempt) { locates.push(attempt.attempt); return "https://caller.invalid/stem"; },
   });
   assert.deepEqual([...result.bytes], [7, 8]);
@@ -175,7 +176,7 @@ test("delivery types transient exhaustion, no-progress stall, and cancellation",
     readExactFlacRange({
       identity: IDENTITY, phase: "audio", start: 4, end: 7,
       signal: new AbortController().signal, state: {}, maximumAttempts: 2, readDeadlineMs: 20,
-      httpClient: responseClient(() => new Response("busy", { status: 503 })),
+      fetch: responseFetch(() => new Response("busy", { status: 503 })),
       locate() { exhaustedLocates += 1; return "https://caller.invalid/stem"; },
     }),
     (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.delivery.retry_exhausted",
@@ -187,7 +188,7 @@ test("delivery types transient exhaustion, no-progress stall, and cancellation",
     readExactFlacRange({
       identity: IDENTITY, phase: "probe", start: 0, end: 1,
       signal: new AbortController().signal, state: {}, maximumAttempts: 2, readDeadlineMs: 5,
-      httpClient: responseClient(() => new Response(new ReadableStream({ start() { /* intentionally idle */ } }), {
+      fetch: responseFetch(() => new Response(new ReadableStream({ start() { /* intentionally idle */ } }), {
         status: 206,
         headers: { "Content-Range": "bytes 0-1/2", "Content-Length": "2" },
       })),
@@ -203,7 +204,7 @@ test("delivery types transient exhaustion, no-progress stall, and cancellation",
     readExactFlacRange({
       identity: IDENTITY, phase: "probe", start: 0, end: 1,
       signal: cancelled.signal, state: {}, maximumAttempts: 1,
-      httpClient: responseClient(() => exactResponse(new Uint8Array([1, 2]), 0, 1)),
+      fetch: responseFetch(() => exactResponse(new Uint8Array([1, 2]), 0, 1)),
       locate: () => "https://caller.invalid/stem",
     }),
     (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled",
@@ -216,7 +217,7 @@ test("delivery defaults to four total physical attempts", async () => {
     readExactFlacRange({
       identity: IDENTITY, phase: "audio", start: 0, end: 1,
       signal: new AbortController().signal, state: {}, readDeadlineMs: 20,
-      httpClient: responseClient(() => new Response("busy", { status: 503 })),
+      fetch: responseFetch(() => new Response("busy", { status: 503 })),
       locate() { locates += 1; return "https://caller.invalid/stem"; },
     }),
     (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.delivery.retry_exhausted",
@@ -240,7 +241,7 @@ test("delivery rejects hidden/malformed/moving headers, encoding, and short bodi
       readExactFlacRange({
         identity: IDENTITY, phase: "probe", start: 0, end: 1,
         signal: new AbortController().signal, state: {}, maximumAttempts: 3,
-        httpClient: responseClient(() => response),
+        fetch: responseFetch(() => response),
         locate() { locates += 1; return "https://caller.invalid/stem"; },
       }),
       (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.delivery.range",
@@ -253,7 +254,7 @@ test("delivery rejects hidden/malformed/moving headers, encoding, and short bodi
     readExactFlacRange({
       identity: IDENTITY, phase: "audio", start: 0, end: 1,
       signal: new AbortController().signal, state, maximumAttempts: 1,
-      httpClient: responseClient(() => new Response(new Uint8Array([1, 2]), { status: 206, headers: {
+      fetch: responseFetch(() => new Response(new Uint8Array([1, 2]), { status: 206, headers: {
         "Content-Range": "bytes 0-1/4", "Content-Length": "2", ETag: '"new"',
       } })),
       locate: () => "https://caller.invalid/stem",
@@ -325,7 +326,7 @@ test("resolver follows Worker credit with exact nonoverlapping ranges and dispos
     hardwareConcurrency: 2,
     maximumAttempts: 1,
     locate: () => "https://caller.invalid/stem",
-    httpClient: responseClient((request) => {
+    fetch: responseFetch((request) => {
       const range = request.headers.range!;
       ranges.push(range);
       const match = /^bytes=(\d+)-(\d+)$/u.exec(range)!;
@@ -358,7 +359,7 @@ test("mid-body retry resumes at Worker credit without duplicated accepted bytes"
     maximumAttempts: 2,
     readDeadlineMs: 5,
     locate: () => "https://caller.invalid/stem",
-    httpClient: responseClient((request) => {
+    fetch: responseFetch((request) => {
       const range = request.headers.range!;
       ranges.push(range);
       const match = /^bytes=(\d+)-(\d+)$/u.exec(range)!;
@@ -415,7 +416,7 @@ test("active resolver cancellation terminates its physical Worker before stream 
     createWorker: () => worker,
     hardwareConcurrency: 2,
     locate: () => "https://caller.invalid/unused",
-    httpClient: responseClient(() => assert.fail("idle Worker must not request HTTP")),
+    fetch: responseFetch(() => assert.fail("idle Worker must not request HTTP")),
   });
   const resolved = await resolver.resolve(IDENTITY, { signal: abort.signal });
   const reading = resolved.stream.getReader().read();
@@ -449,7 +450,7 @@ for (const phase of ["decoder-load", "frame"] as const) {
       decodeNoProgressMs: 10,
       maximumAttempts: 1,
       locate: () => "https://caller.invalid/stem",
-      httpClient: responseClient((request) => {
+      fetch: responseFetch((request) => {
         const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
         return exactResponse(source, Number(match[1]), Number(match[2]));
       }),
@@ -487,7 +488,7 @@ test("zero-high-water stream returns credit only after consuming one of exactly 
   const resolver = createFlacStemResolver({
     createWorker: () => worker, hardwareConcurrency: 2, decodeNoProgressMs: 1_000,
     locate: () => "https://caller.invalid/stem",
-    httpClient: responseClient((request) => {
+    fetch: responseFetch((request) => {
       const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
       return exactResponse(source, Number(match[1]), Number(match[2]));
     }),
@@ -538,7 +539,7 @@ test("Worker terminal failure aborts active range input and no continuation post
   const worker = new FakeWorker();
   const requestStarted = deferred<void>();
   let deliveryAborted = false;
-  const client = responseClient(() => new Response(new ReadableStream<Uint8Array>({
+  const client = responseFetch(() => new Response(new ReadableStream<Uint8Array>({
     start() { requestStarted.resolve(); },
   }), {
     status: 206,
@@ -551,7 +552,7 @@ test("Worker terminal failure aborts active range input and no continuation post
       attempt.signal.addEventListener("abort", () => { deliveryAborted = true; }, { once: true });
       return "https://caller.invalid/active-range";
     },
-    httpClient: client,
+    fetch: client,
   });
   const resolved = await resolver.resolve(IDENTITY);
   const reading = resolved.stream.getReader().read();
@@ -640,7 +641,7 @@ for (const code of ["stem.decode.flac", "stem.decode.output"] as const) {
     const resolver = createFlacStemResolver({
       createWorker: () => worker, hardwareConcurrency: 2, maximumAttempts: 1,
       locate: () => "https://caller.invalid/failing",
-      httpClient: responseClient((request) => {
+      fetch: responseFetch((request) => {
         const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
         return exactResponse(source, Number(match[1]), Number(match[2]));
       }),

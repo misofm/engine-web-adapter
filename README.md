@@ -2,7 +2,7 @@
 
 Headless, framework-neutral browser session hosting for
 `@misofm/engine@0.1.0`. Version 0.2 streams standards-compliant native FLAC
-through bounded Effect HTTP ranges and a one-stem universal libFLAC Wasm Worker, verifies
+through bounded HTTP ranges and a one-stem universal libFLAC Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
 rings. URL, authentication, and request mapping remain caller-owned.
 
@@ -21,8 +21,6 @@ import { openEngineWebSession } from "@misofm/engine-web-adapter"
 
 const engine = await openEngineWebSession({
   document: sessionBuilder,
-  leaseId: crypto.randomUUID(),
-  sources: declaredSources,
   flac: {
     // Called for every physical range attempt. Return a URL or a bodyless GET
     // Request carrying caller-owned credentials and authentication headers.
@@ -39,15 +37,41 @@ const engine = await openEngineWebSession({
 await engine.play()
 await engine.seekFrames(48_000)
 await engine.pause()
+
+// One transaction. A fader drag stages latest-wins, so what lands is the
+// position the hand stopped at; engine backpressure never reaches the caller.
+const kick = engine.console.edit.track("kick")
+await engine.console.submit(kick.faderDb(-6), kick.mute(false))
+
+// A subscription, keyed by track id. The returned function unsubscribes; the
+// lease is taken on the first listener and released after the last.
+const stopMeters = await engine.meters((update) => {
+  for (const [trackId, meter] of update.tracks) draw(trackId, meter.peak)
+  draw("master", update.master.peak)
+})
+
+stopMeters()
 await engine.close()
 ```
 
+That is the whole documented path. `leaseId` is generated per open, the stem
+declarations are derived from the session document that already states them,
+and the Engine's published default console words are attached, so a first
+console command and a first meter subscription both work immediately and in
+either order. Everything remains overridable: pass `sources` to assert the
+declarations a second time, `leaseId` to name the store pin, and `policy` to
+set boot words -- an explicit `policy.console` size wins field by field over the
+default.
+
+For a playback-only session, opt out with `console: false`. Accessing
+`console`, `meters` or `telemetry` on one then reports `console.not_attached`
+with a remedy, rather than letting an ordinary command look like an unknown
+command kind.
+
 The adapter overwrites `Range`, owns the operation signal, and otherwise
-preserves applicable caller `Request` policy on its default
-`FetchHttpClient.layer`. Callers may inject an Effect `HttpClient` or layer;
-an injected client owns transport-specific policy beyond normalized GET URL
-and headers. The package never derives a filename, embeds a host, or owns
-credentials.
+preserves applicable caller `Request` policy on the platform `fetch`. Pass
+`flac.fetch` to supply a different one; no Effect type appears in the public
+API. The package never derives a filename, embeds a host, or owns credentials.
 
 For already-decoded canonical PCM, explicitly select the advanced escape hatch:
 
@@ -60,16 +84,24 @@ const resolver: StemResolver = {
   },
 }
 
-await openEngineWebSession({
-  document: sessionBuilder,
-  leaseId: crypto.randomUUID(),
-  sources: declaredSources,
-  resolver,
-})
+await openEngineWebSession({ document: sessionBuilder, resolver })
 ```
 
 Exactly one of `flac` or `resolver` is required. TypeScript rejects both/neither,
 and JavaScript receives `session.input_path`.
+
+## Failures
+
+Every rejection a consumer can observe is `EngineWebAdapterError`. It carries a
+stable `code`, the `phase` the adapter was in, a nonempty `remedy`, whether the
+identical operation is `transient`, frozen `details`, and the underlying
+`cause`. No Engine host object, Worker message or Effect value reaches a caller
+through it.
+
+Console refusals split along the line the Engine itself draws: flow-control
+backpressure is absorbed and coalesced, and a semantic refusal -- an unknown
+address, a malformed record -- rejects with `console.refused`, because it will
+not succeed on retry.
 
 ## Deployment requirements
 
@@ -112,8 +144,11 @@ asset fields without discarding the other common fields; the low-level
 - Canonical PCM is headerless interleaved little-endian PCM16 or PCM24 at
   44.1, 48, 88.2, or 96 kHz; there is no implicit sample-rate conversion.
 
-`close()` is idempotent. The `./stems` entry exports the FLAC resolver,
-admission, verified-store, lease, ring, and pump contracts for advanced use.
+`close()` is idempotent. The `./stems` entry exports what a caller can supply
+or replace: the canonical-PCM resolver seam, the verified store and its storage
+backends, the FLAC resolver, the pump, and the ring control words a `createPump`
+override reads. Ring arithmetic, digests, admission width, the decoder pool and
+the Worker wire protocols are package-owned and are not exported.
 
 ## Verification
 

@@ -5,11 +5,8 @@ import test from "node:test";
 import { ADAPTER_ASSETS, createPumpWorker, createScratchWorker } from "../src/assets.js";
 import { EngineWebAdapterError } from "../src/errors.js";
 import { ADAPTER_PROVENANCE } from "../src/index.js";
-import {
-  MemoryStemResolver,
-  assertStemIdentity,
-  canonicalPcmBytes,
-} from "../src/stems/index.js";
+import { assertStemIdentity, canonicalPcmBytes } from "../src/stems/identity.js";
+import { MemoryStemResolver } from "../src/stems/memory-resolver.js";
 
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
 

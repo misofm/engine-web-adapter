@@ -23,7 +23,7 @@ import {
   FLAC_WORKER_RESERVATION_BYTES,
   defaultFlacMemoryBudgetBytes,
   flacAdmissionWidth,
-} from "../src/stems/index.js";
+} from "../src/stems/flac-admission.js";
 
 function putU64(bytes: Uint8Array, offset: number, input: bigint): void {
   let value = input;

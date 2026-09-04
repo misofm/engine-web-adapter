@@ -54,7 +54,125 @@ Coordinate with the Engine request-id/error work tracked in
 alter FLAC preparation/delivery, or fold this API redesign into the universal
 Wasm decoder successor issue.
 
+## What was implemented
+
+Points 1-4 are implemented. Point 5 is unchanged and already held before this
+slice; point 6 remains deliberately deferred.
+
+1. **Zero configuration.** `leaseId` and `sources` are optional.
+   `leaseId` is generated per open with `crypto.randomUUID()`; the store pin is
+   per-session and warm reuse is keyed by content identity, so a generated pin
+   costs nothing. Declarations are derived from the canonical Session V1
+   document, which already states every source's id, digest, channels, bit depth
+   and frame count -- the same five fields the adapter was already parsing to
+   cross-check a caller's copy. Explicit `sources` and `leaseId` remain
+   supported and are still cross-checked against the document and the compiled
+   shape. The console default is issue #9's decision.
+
+2. **Subscriptions, and no caller-visible identifiers.** `session.meters(fn)`
+   and `session.telemetry(fn)` resolve to an unsubscribe function. One lease is
+   shared: the first listener takes it, the last one out releases it. Meter
+   updates arrive keyed by track id (`update.tracks: ReadonlyMap<string,
+   TrackMeter>`) with the master fold separated (`update.master`), replacing the
+   flat `[t0L, t0R, .., masterL, masterR]` array a caller had to index by
+   ordinal. `host`, `context` and `output` remain exposed.
+
+   The adapter owns one request-identifier ledger per session, seeded from the
+   identifier the host consumed answering `sessionMap()` and allocated inside a
+   serialized chain. This is the actual cause of the "first host call always
+   rejects `invalidArgument`" workaround: the Engine's own console counter and
+   an app's hand-written meter-lease counter both start from one and collide on
+   the host's monotonic ledger. With one allocator the collision cannot occur,
+   and a first console command and a first meter subscription succeed in either
+   order with no retry.
+
+3. **One error class.** `EngineWebAdapterError` carries `code`, `phase`,
+   `remedy`, `transient`, frozen `details` and `cause`. Phase, remedy and
+   transience come from one `Record<EngineWebAdapterErrorCode, ...>` table, so a
+   code added to the union without a remedy does not compile; a delivery layer's
+   own `details.retryable` verdict outranks the table's transience.
+
+   Console backpressure is absorbed by binding the Engine's own `ConsoleWriter`
+   -- latest-wins coalescing, adaptive batch splitting, serialized flushes --
+   to the shipped worklet host. The writer speaks 48-byte records and the host
+   speaks command objects, so the adapter decodes the block back through the
+   same generated `ABI_LAYOUT.commandRecord` table the encoder reads; the
+   round trip is pinned by test. A queue that stays full past one drain's
+   attempt budget is handed to a background flusher rather than blocking the
+   caller, because a full queue with a paused transport is a legitimate steady
+   state. Semantic refusal is not absorbed: it rejects as `console.refused`.
+
+   `session.console` is `{ edit: ConsoleEdits; submit(...edits): Promise<void> }`
+   rather than the Engine's `EngineConsole`, because `EngineConsole.submit`
+   enforces `admitted === edits.length` for one transaction, which a coalescing
+   writer structurally cannot honour. `edit` is still the Engine's own
+   catalog-derived builder, unwrapped: duplicating it would be the "third
+   hand-written copy" the Engine SDK explicitly warns against.
+
+4. **Effect is internal.** `FlacDeliveryOptions.httpClient` and
+   `.httpClientLayer` are replaced by `fetch?: typeof globalThis.fetch`, which
+   overrides only the platform fetch reference the package's own client uses.
+   `FlacHttpOptions` loses the same two fields. No Effect type is reachable from
+   `@misofm/engine-web-adapter` or `@misofm/engine-web-adapter/stems`.
+
+   Bundle cost is not separately measured in this slice: `effect` remains a
+   runtime dependency for the delivery pipeline, which the mission statement
+   requires, and this change moves no code across that boundary. Recording the
+   measurement is a remaining item on this issue.
+
+### Point 5, restated for this package
+
+The adapter has no float-to-integer conversion path to protect. A `32f` source
+is refused at two boundaries -- document-derived declarations
+(`declaredSourcesFrom`) and canonical byte accounting (`canonicalPcmBytes`) --
+both as `stem.invalid_declaration`, and web launch bit depths are integer-only
+by the Engine's own `WEB_LAUNCH_BIT_DEPTHS`. The exact-conversion rule therefore
+binds whoever produces canonical PCM, not this package, and this slice adds no
+corpus here because there is no conversion to cover.
+
+### Surface prune
+
+`./stems` exported 38 names, most of them package mechanics. It now exports what
+a caller can legitimately supply or replace -- the resolver seam, the verified
+store and storage backends, the FLAC resolver, the pump, the admission handle
+`FlacDeliveryOptions` names, and `MSB1_CONTROL`, which a `createPump` override
+needs to read the rings it is handed. Ring arithmetic, `IncrementalSha256`,
+admission-width constants, the decoder pool, `readExactFlacRange`, the session
+gate and the Worker wire protocols are no longer exported. This is gate 7's
+"public types agree", taken at the only moment it is free: npm still carries
+0.1.0, so nothing published depends on the removed names.
+
+## Evidence
+
+- `npm run check` (format, lint/typecheck, decoder, 93 unit tests, package
+  policy) passes.
+- `npm run test:browser` passes against the packed tarball in Chromium with the
+  real Engine worklet: a zero-configuration open (no `leaseId`, no `sources`, no
+  `policy`), console transactions and meter subscriptions in both orders with no
+  retry, meters keyed by track id with a master fold, and
+  `console.not_attached` on a `console: false` session. Warm reuse still makes
+  zero additional locator, Worker or network calls across three further opens
+  under generated lease ids.
+- `tests/console.test.ts` covers the console words, the opt-out, either-order
+  first control call, request-id distinctness and monotonicity, meter keying and
+  lease release, backpressure coalescing, the background flusher, semantic
+  refusal, a refused lease, derived declarations and generated lease ids, the
+  record round trip for every builtin lane kind, and the remedy/phase totality
+  of the error table.
+- Integration check: `src/lib/mixer-engine.ts` in `misofm/website` was rewritten
+  against this surface and measures 80 code lines against a 188-line baseline
+  (same counting method). Every block the baseline named a workaround is gone;
+  what remains is the site's own dB/peak formatting, its rAF meter decay, its
+  DOM mask wiring, and the try/catch fallback to the visual mock.
+
+## Remaining on this issue
+
+- Point 4's measured bundle cost is not recorded.
+- Point 6's declarative strip-state facade is not started, as specified.
+- The Engine-side request-id/error work in `misofm/engine#379` is untouched;
+  the adapter now hides the collision rather than fixing the host's diagnostic.
+
 ## Status
 
-Open and unimplemented. This local spec synchronizes the pre-existing GitHub
-issue at the issue boundary.
+Points 1-4 implemented on `feat/zero-config-console-and-feeds`; points 5-6 as
+noted above.

@@ -1,53 +1,27 @@
-export { assertStemIdentity, canonicalPcmBytes } from "./identity.js";
+/**
+ * The advanced entry.
+ *
+ * What is here is what a caller can legitimately supply or replace: the
+ * canonical-PCM resolver seam, the verified store, the FLAC resolver the
+ * default path builds, the pump a `createPump` override returns, and the ring
+ * control words that override needs to read. Ring layout arithmetic, the
+ * incremental digest, the admission width rule, the Worker wire protocols and
+ * the decoder pool are the package's own mechanics and are not exported: they
+ * are reachable only through the contracts above, which is the whole point of
+ * the package owning them.
+ */
 export { MemoryStemResolver } from "./memory-resolver.js";
-export { IncrementalSha256, sha256Stream } from "./sha256.js";
 export { MemoryStemStorageBackend, OpfsStorageBackend } from "./storage.js";
 export { OpfsStemStore, VerifiedStemStore } from "./store.js";
-export { StemSessionGate } from "./gate.js";
-export {
-  DEFAULT_FLAC_MEMORY_BUDGET_BYTES,
-  DEFAULT_MAXIMUM_ACTIVE_FLAC_WORKERS,
-  FLAC_ACCOUNTED_FIXED_BUFFER_BYTES,
-  FLAC_ACCOUNTING_HEADROOM_BYTES,
-  FLAC_PACKAGE_MEMORY_COMPONENTS,
-  FLAC_WORKER_RESERVATION_BYTES,
-  MAXIMUM_FLAC_MEMORY_BUDGET_BYTES,
-  MINIMUM_FLAC_MEMORY_BUDGET_BYTES,
-  BoundedStemAdmission,
-  defaultFlacMemoryBudgetBytes,
-  flacAdmissionWidth,
-} from "./flac-admission.js";
-export { readExactFlacRange } from "./flac-delivery.js";
+export { BoundedStemAdmission } from "./flac-admission.js";
 export { createFlacStemResolver } from "./flac-resolver.js";
-export { FlacWorkerPool } from "./flac-worker-pool.js";
-export {
-  CanonicalPcmPump,
-  SelfDrivingPcmPump,
-  deinterleaveCanonicalPcm,
-} from "./pump.js";
-export {
-  MSB1_CONTROL,
-  MSB1_CONTROL_BYTES,
-  MSB1_FLAG_END_OF_REGION,
-  MSB1_HEADER_OFFSET,
-  MSB1_MAGIC,
-  MSB1_SLOT_HEADER_BYTES,
-  MSB1_VERSION,
-  Msb1RingReader,
-  Msb1RingWriter,
-  createMsb1Ring,
-  msb1RingBytes,
-} from "./ring.js";
+export { MSB1_CONTROL } from "./ring.js";
 export { PcmPumpWorkerClient } from "./worker-client.js";
-export type { PcmPumpOutcome, PcmPumpSource } from "./pump.js";
-export type { EngineSourceSink, Msb1RingCounters, Msb1RingLayout } from "./ring.js";
-export type { PumpWorkerRequest, PumpWorkerResponse } from "./worker-protocol.js";
-export type { PumpWorkerLike } from "./worker-client.js";
+export type { PcmPumpSource } from "./pump.js";
+export type { Msb1RingCounters } from "./ring.js";
 export type { StemAdmissionLease } from "./flac-admission.js";
-export type { FlacHttpOptions, FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";
+export type { FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";
 export type { FlacDeliveryOptions } from "./flac-resolver.js";
-export type { FlacWorkerPoolOptions } from "./flac-worker-pool.js";
-export type { FlacWorkerLike, FlacWorkerRequest, FlacWorkerResponse } from "./flac-worker-protocol.js";
 export type {
   StemStorageBackend,
   StemStorageWriter,
