@@ -424,5 +424,6 @@ function capabilities() {
     AudioWorkletNode: class {} as unknown as typeof AudioWorkletNode,
     navigator: { storage: { getDirectory() {} }, locks: { request() {} } },
     WebAssembly: { validate: () => true },
+    FileSystemFileHandle: class { getFile() {} },
   } as unknown as NonNullable<EngineWebSessionCommonOptions["capabilityScope"]>;
 }
