@@ -20,8 +20,11 @@ export class PcmPumpWorkerClient {
   readonly #onMessageError = () => this.#terminate(new EngineWebAdapterError("session.open", "PCM pump Worker message could not be cloned"));
   readonly #requestDeadlineMs: number;
   #detachAbort: (() => void) | undefined;
+  #failureReason: unknown;
   #requestId = 1;
   #closed = false;
+  #closing = false;
+  #closePromise: Promise<void> | undefined;
 
   private constructor(worker: PumpWorkerLike, requestDeadlineMs: number) {
     this.#worker = worker;
@@ -58,6 +61,7 @@ export class PcmPumpWorkerClient {
         options.signal?.throwIfAborted();
         blobs.set(source.identity, blobs.get(source.identity) ?? await options.lease.read(source.identity));
       }
+      options.signal?.throwIfAborted();
       const requestId = client.#next();
       await client.#request({
         type: "initialize",
@@ -75,15 +79,23 @@ export class PcmPumpWorkerClient {
   }
 
   async seekFrames(frame: number | bigint): Promise<bigint> {
-    if (this.#closed) throw new EngineWebAdapterError("session.closed", "PCM pump Worker is closed");
+    if (this.#closed || this.#closing) throw new EngineWebAdapterError("session.closed", "PCM pump Worker is closed");
     const reply = await this.#request({ type: "seek", requestId: this.#next(), frame: BigInt(frame) });
     if (reply.type !== "sought") throw new Error("PCM pump Worker returned the wrong seek reply");
     return reply.generation;
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (this.#closePromise === undefined) {
+      const operation = this.#closeOnce();
+      this.#closing = true;
+      this.#closePromise = operation;
+    }
+    return this.#closePromise;
+  }
+
+  async #closeOnce(): Promise<void> {
     if (this.#closed) return;
-    this.#closed = true;
     try {
       await this.#request({ type: "stop", requestId: this.#next() });
     } catch {
@@ -95,21 +107,22 @@ export class PcmPumpWorkerClient {
 
   #next(): number { return this.#requestId++; }
   #request(message: PumpWorkerRequest): Promise<PumpWorkerResponse> {
+    if (this.#closed) return Promise.reject(this.#failureReason ?? new EngineWebAdapterError("session.closed", "PCM pump Worker is closed"));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         const error = new EngineWebAdapterError("stem.read_deadline", "PCM pump Worker request timed out", {
           requestId: message.requestId,
           milliseconds: this.#requestDeadlineMs,
         });
-        this.#pending.delete(message.requestId);
-        reject(error);
+        this.#terminate(error);
       }, this.#requestDeadlineMs);
       this.#pending.set(message.requestId, { resolve, reject, timer });
       try { this.#worker.postMessage(message); }
-      catch (error) { clearTimeout(timer); this.#pending.delete(message.requestId); reject(error); }
+      catch (error) { this.#terminate(error); }
     });
   }
   #receive(message: PumpWorkerResponse): void {
+    if (this.#closed) return;
     if (message.type === "progress") return;
     if (message.type === "pump-error") {
       const error = new Error(message.error.message);
@@ -124,14 +137,18 @@ export class PcmPumpWorkerClient {
     if (pending !== undefined) { clearTimeout(pending.timer); this.#pending.delete(message.requestId); pending.resolve(message); }
   }
   #terminate(reason: unknown): void {
+    this.#failureReason ??= reason;
+    const authoritative = this.#failureReason;
+    if (this.#closed) return;
     this.#closed = true;
+    this.#closing = true;
     this.#detachAbort?.();
     this.#detachAbort = undefined;
     this.#worker.removeEventListener("message", this.#onMessage);
     this.#worker.removeEventListener("error", this.#onWorkerError);
     this.#worker.removeEventListener("messageerror", this.#onMessageError);
-    this.#worker.terminate();
-    for (const pending of this.#pending.values()) { clearTimeout(pending.timer); pending.reject(reason); }
+    try { this.#worker.terminate(); } catch { /* pending callers still receive the authoritative cause */ }
+    for (const pending of this.#pending.values()) { clearTimeout(pending.timer); pending.reject(authoritative); }
     this.#pending.clear();
   }
 }

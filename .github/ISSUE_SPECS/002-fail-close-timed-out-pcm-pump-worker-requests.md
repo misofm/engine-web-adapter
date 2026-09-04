@@ -61,3 +61,23 @@ BigInt allocation work, or broader lifecycle redesign.
 Sol produced this stateless successor brief after issue #1 exhausted its three
 implementation attempts. Sol implements the bounded correction, and a fresh
 Sol review verifies the immutable checkpoint against these gates.
+
+## Implementation evidence
+
+The client now records the first terminal cause, removes all Worker listeners,
+terminates the Worker, and only then rejects every pending request with that
+same cause. Timeout, constructor-signal cancellation, Worker errors, and
+message-clone errors share this fail-close path. Closed clients refuse new
+requests with the preserved cause, and late replies return before inspecting
+pending state. Successful seek and idempotent close retain their prior public
+behavior.
+
+Deterministic tests cover termination-before-timeout rejection, a delayed seek
+that cannot apply after termination, forced late replies through a retained
+listener callback, two in-flight seeks rejected exactly once by constructor
+signal cancellation with the identical abort reason, and successful seek plus
+concurrent idempotent close. `npm run check` passes 32 tests and package policy
+over 100 files. The packed Chromium gate passes cold/warm reuse with 32 accepted
+submissions, one applied unaligned seek, and zero refused, torn, or feed errors.
+Offline `npm publish --dry-run` passes with a 66.2 kB/100-file tarball (SHA-1
+`7a8d0888c3cb82bc28c3c72e9cdca610f4b182cc`), and `git diff --check` passes.

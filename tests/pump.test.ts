@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 
+import { EngineWebAdapterError } from "../src/errors.js";
 import {
   CanonicalPcmPump,
   MSB1_CONTROL,
@@ -183,6 +184,82 @@ test("pump Worker client bounds requests and terminates on close/error/messageer
   }
 });
 
+test("timed-out seek fail-closes before rejection and makes delayed work inert", async () => {
+  const shared = ring("timeout", 1, 4, 2);
+  let applied = 0;
+  const worker = new FakePumpWorker(true, (message, self) => {
+    if (message.type !== "seek") return;
+    setTimeout(() => {
+      if (!self.terminated) applied += 1;
+      self.forceLate({ type: "sought", requestId: message.requestId, generation: 2n });
+    }, 25);
+  });
+  const client = await PcmPumpWorkerClient.create({
+    lease: { read: async () => new Blob([new Uint8Array(8)]) },
+    sources: [{ sourceId: "timeout", identity: IDENTITY, channels: 1, bitDepth: 16, frames: 4, ring: shared }],
+    worker, requestDeadlineMs: 5,
+  });
+  let settlements = 0;
+  const seeking = client.seekFrames(3).then(
+    () => { settlements += 1; throw new Error("timed-out seek resolved"); },
+    (error: unknown) => {
+      settlements += 1;
+      assert.equal(worker.terminated, true, "termination must be visible before public rejection");
+      throw error;
+    },
+  );
+  await assert.rejects(seeking, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.read_deadline");
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.equal(applied, 0, "terminated Worker cannot apply the rejected seek");
+  assert.equal(settlements, 1, "late reply cannot settle the public promise again");
+  assert.equal(worker.terminateCount, 1);
+});
+
+test("cancellation rejects every pending request once with one authoritative reason", async () => {
+  const shared = ring("cancel-client", 1, 4, 2);
+  const worker = new FakePumpWorker(true);
+  const controller = new AbortController();
+  const client = await PcmPumpWorkerClient.create({
+    lease: { read: async () => new Blob([new Uint8Array(8)]) },
+    sources: [{ sourceId: "cancel-client", identity: IDENTITY, channels: 1, bitDepth: 16, frames: 4, ring: shared }],
+    worker, signal: controller.signal, requestDeadlineMs: 100,
+  });
+  let settlements = 0;
+  const first = client.seekFrames(1).catch((error: unknown) => { settlements += 1; assert.equal(worker.terminated, true); throw error; });
+  const second = client.seekFrames(2).catch((error: unknown) => { settlements += 1; assert.equal(worker.terminated, true); throw error; });
+  const reason = new DOMException("cancelled by caller", "AbortError");
+  controller.abort(reason);
+  const results = await Promise.allSettled([first, second]);
+  assert.equal(worker.terminateCount, 1);
+  assert.equal(settlements, 2);
+  for (const result of results) {
+    assert.equal(result.status, "rejected");
+    if (result.status === "rejected") assert.equal(result.reason, reason);
+  }
+  worker.forceLate({ type: "sought", requestId: 2, generation: 2n });
+  worker.forceLate({ type: "sought", requestId: 3, generation: 3n });
+  await Promise.resolve();
+  assert.equal(settlements, 2, "late replies after cancellation are inert");
+});
+
+test("successful Worker seek and close remain unchanged", async () => {
+  const shared = ring("success-client", 1, 4, 2);
+  const worker = new FakePumpWorker(true, (message, self) => {
+    if (message.type === "seek") self.reply({ type: "sought", requestId: message.requestId, generation: 7n });
+    if (message.type === "stop") self.reply({ type: "stopped", requestId: message.requestId });
+  });
+  const client = await PcmPumpWorkerClient.create({
+    lease: { read: async () => new Blob([new Uint8Array(8)]) },
+    sources: [{ sourceId: "success-client", identity: IDENTITY, channels: 1, bitDepth: 16, frames: 4, ring: shared }],
+    worker, requestDeadlineMs: 100,
+  });
+  assert.equal(await client.seekFrames(2), 7n);
+  const closing = client.close();
+  await assert.rejects(client.seekFrames(3), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+  await Promise.all([closing, client.close()]);
+  assert.equal(worker.terminateCount, 1);
+});
+
 function counter(shared: SharedArrayBuffer, word: number): number {
   return Atomics.load(new Int32Array(shared, 0, MSB1_CONTROL_BYTES / 4), word);
 }
@@ -207,23 +284,31 @@ class TrackingBlob extends Blob {
 
 class FakePumpWorker implements PumpWorkerLike {
   readonly listeners = new Map<string, Set<(event: any) => void>>();
+  readonly historicalMessages = new Set<(event: any) => void>();
   terminated = false;
-  constructor(readonly answerInitialize = false) {}
+  terminateCount = 0;
+  constructor(
+    readonly answerInitialize = false,
+    readonly onPost?: (message: PumpWorkerRequest, worker: FakePumpWorker) => void,
+  ) {}
   postMessage(message: PumpWorkerRequest): void {
     if (this.answerInitialize && message.type === "initialize") {
-      queueMicrotask(() => this.emit("message", {
-        data: { type: "initialized", requestId: message.requestId, bounds: { windowBytes: 8, ringBytes: message.sources[0]!.ring.byteLength } } satisfies PumpWorkerResponse,
-      }));
+      this.reply({ type: "initialized", requestId: message.requestId, bounds: { windowBytes: 8, ringBytes: message.sources[0]!.ring.byteLength } });
+      return;
     }
+    this.onPost?.(message, this);
   }
-  terminate(): void { this.terminated = true; }
+  terminate(): void { this.terminated = true; this.terminateCount += 1; }
   addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
     const listeners = this.listeners.get(type) ?? new Set(); listeners.add(listener); this.listeners.set(type, listeners);
+    if (type === "message") this.historicalMessages.add(listener);
   }
   removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
     this.listeners.get(type)?.delete(listener);
   }
   emit(type: string, event: any): void { for (const listener of this.listeners.get(type) ?? []) listener(event); }
+  reply(message: PumpWorkerResponse): void { queueMicrotask(() => this.emit("message", { data: message })); }
+  forceLate(message: PumpWorkerResponse): void { for (const listener of this.historicalMessages) listener({ data: message }); }
 }
 
 function deferred<T>() {
