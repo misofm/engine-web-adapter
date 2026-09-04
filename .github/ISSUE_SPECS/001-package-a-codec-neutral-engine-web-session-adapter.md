@@ -18,8 +18,9 @@ the generic `StemResolver` contract.
   vendor provenance.
 - Browser feed/composition lessons: `misofm/app` commit
   `7485693e9bbcf2f65a91a4e5950e22d678d99062`.
-- Engine browser contracts/assets: exact `@misofm/engine` version used for
-  qualification.
+- Engine browser contracts/assets: `@misofm/engine@0.1.0`, published through
+  GitHub OIDC from `misofm/engine` commit
+  `5360874854f47e3dbfa2279ec6c57174e5ca018e` and released as `sdk-v0.1.0`.
 
 Engine issue #352 commits `3ab49a3d`, `bf1a6672`, and `6a08315c` are explicitly
 quarantined and must not be copied. Parallel/off-main-thread warm verification
@@ -62,8 +63,9 @@ bundler-recognizable `new Worker(new URL(..., import.meta.url), { type:
 - Depend on one exact compatible `@misofm/engine` release; do not embed its
   tarball or copy a second host implementation unless packed-consumer evidence
   proves its exported host asset cannot load.
-- `@misofm/engine@0.1.0` is not currently in npm. Engine-first, adapter-second
-  release sequencing is an explicit publication dependency.
+- Depend exactly on the now-public `@misofm/engine@0.1.0`; its npm integrity,
+  provenance, public entry imports, and `enginectl` executable passed release
+  workflow `33867057291`. Engine-first sequencing is satisfied.
 - ESM only, Apache-2.0, Node-supported build/test tooling, reproducible lockfile,
   explicit `files`/exports, side-effect declarations for deployable assets, and
   provenance/NOTICE for copied source.
