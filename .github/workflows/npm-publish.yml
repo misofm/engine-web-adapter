@@ -3,6 +3,11 @@ name: Publish @misofm/engine-web-adapter
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Publish once, or safely verify an already-published version
+        required: true
+        type: choice
+        options: [publish, verify]
       expected_sha:
         description: Exact 40-character lowercase main commit SHA
         required: true
@@ -23,7 +28,7 @@ env:
 
 jobs:
   publish:
-    name: Publish @misofm/engine-web-adapter 0.1.0
+    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.1.0
     runs-on: ubuntu-24.04
     steps:
       - name: Refuse a non-main or mismatched dispatch
@@ -67,6 +72,7 @@ jobs:
           npm run check
 
       - name: Refuse an existing immutable version
+        if: inputs.mode == 'publish'
         run: |
           set -euo pipefail
           if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
@@ -75,6 +81,7 @@ jobs:
           fi
 
       - name: Publish through OIDC only
+        if: inputs.mode == 'publish'
         run: |
           set -euo pipefail
           for fallback in NODE_AUTH_TOKEN NPM_TOKEN NPM_CONFIG__AUTH_TOKEN; do
@@ -88,11 +95,11 @@ jobs:
       - name: Verify the public registry artifact
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 12); do
+          for attempt in $(seq 1 60); do
             if [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version 2>/dev/null || true)" == "$PACKAGE_VERSION" ]]; then
               break
             fi
-            [[ "$attempt" == 12 ]] && { echo "registry did not converge" >&2; exit 1; }
+            [[ "$attempt" == 60 ]] && { echo "registry did not converge" >&2; exit 1; }
             sleep 5
           done
           [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dependencies.@misofm/engine)" == "0.1.0" ]]
