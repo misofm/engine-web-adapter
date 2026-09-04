@@ -23,7 +23,7 @@ concurrency:
 
 env:
   PACKAGE_NAME: "@misofm/engine-web-adapter"
-  PACKAGE_VERSION: "0.1.0"
+  PACKAGE_VERSION: "0.2.0"
   NPM_CONFIG_REGISTRY: "https://registry.npmjs.org"
 
 jobs:
