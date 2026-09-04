@@ -237,6 +237,15 @@ export class DenseFlacMetadataParser {
     return this.#streamInfo === undefined ? "probe" : "metadata";
   }
 
+  get phaseBytesRemaining(): number {
+    if (this.#complete) return 0;
+    if (this.#pending.byteLength < 4) return 4 - this.#pending.byteLength;
+    if (this.#pending.byteLength < this.#nextHeader + 4) {
+      return this.#nextHeader + 4 - this.#pending.byteLength;
+    }
+    return this.#nextHeader + 4 + u24(this.#pending, this.#nextHeader + 1) - this.#pending.byteLength;
+  }
+
   push(chunk: Uint8Array): DenseFlacMetadataResult | null {
     if (this.#complete) throw flacFailure("stem.flac.invalid", "Metadata parser is already complete");
     if (chunk.byteLength > MAXIMUM_DELIVERY_CHUNK_BYTES) {

@@ -53,12 +53,13 @@
     "check": "npm run format:check && npm run lint && npm test && npm run check:package"
   },
   "dependencies": {
-    "@misofm/engine": "0.1.0"
+    "@misofm/engine": "0.1.0",
+    "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
     "playwright-core": "1.62.1",
-    "vite": "8.2.2",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vite": "8.2.2"
   }
 }

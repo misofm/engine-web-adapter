@@ -254,7 +254,9 @@ export class VerifiedStemStore implements StemStore {
       const observed = await sha256Stream(blob.stream(), {
         ...(signal === undefined ? {} : { signal }),
         readDeadlineMs: this.#readDeadlineMs,
-        onChunk: (count) => onProgress?.({ stage: "verifying", identity, bytes: count, totalBytes: bytes }),
+        onChunk: (count) => onProgress?.({
+          stage: "verifying", identity, bytes: count, totalBytes: bytes, byteKind: "pcm",
+        }),
       });
       return observed.bytes === bytes && observed.hex === digest(identity);
     } catch (error) {
@@ -295,7 +297,10 @@ export class VerifiedStemStore implements StemStore {
         if (bytes > stem.bytes) throw integrity(stem, bytes, "byte count exceeds declaration");
         hash.update(result.value);
         await deadline(writer.write(result.value), this.#readDeadlineMs, signal);
-        onProgress?.({ stage: "ingesting", sourceId: stem.sourceId, identity: stem.identity, bytes, totalBytes: stem.bytes });
+        onProgress?.({
+          stage: "ingesting", sourceId: stem.sourceId, identity: stem.identity,
+          bytes, totalBytes: stem.bytes, byteKind: "pcm",
+        });
       }
       const observed = hash.digestHex();
       if (bytes !== stem.bytes || observed !== digest(stem.identity)) {

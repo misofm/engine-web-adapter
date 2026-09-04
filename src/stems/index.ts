@@ -23,6 +23,11 @@ export {
 } from "./flac-metadata.js";
 export { DenseFlacFramePacketizer } from "./flac-packetizer.js";
 export { MAXIMUM_CANONICAL_OUTPUT_BYTES, audioDataToCanonicalPcm } from "./flac-pcm.js";
+export { readExactFlacRange } from "./flac-delivery.js";
+export { runFlacIngest } from "./flac-ingest.js";
+export { createFlacStemResolver } from "./flac-resolver.js";
+export { FlacWorkerPool } from "./flac-worker-pool.js";
+export { FLAC_DECODE_OUTPUT_CREDITS, MAXIMUM_FLAC_DECODER_SUBMISSIONS } from "./flac-worker-protocol.js";
 export {
   CanonicalPcmPump,
   SelfDrivingPcmPump,
@@ -50,6 +55,10 @@ export type { StemAdmissionLease } from "./flac-admission.js";
 export type { DenseFlacMetadata, DenseFlacMetadataResult, DenseFlacSeekPoint } from "./flac-metadata.js";
 export type { FlacFramePacket } from "./flac-packetizer.js";
 export type { WebCodecsAudioDataLike, WebCodecsAudioFormat } from "./flac-pcm.js";
+export type { FlacHttpOptions, FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";
+export type { FlacDeliveryOptions } from "./flac-resolver.js";
+export type { FlacWorkerPoolOptions } from "./flac-worker-pool.js";
+export type { FlacWorkerLike, FlacWorkerRequest, FlacWorkerResponse } from "./flac-worker-protocol.js";
 export type {
   StemStorageBackend,
   StemStorageWriter,
@@ -58,6 +67,7 @@ export type {
 export type { VerifiedStemStoreOptions, WebLockProvider } from "./store.js";
 export type {
   DeclaredStemSource,
+  CanonicalPcmExpectation,
   ResolvedStem,
   StemIdentity,
   StemProgress,
