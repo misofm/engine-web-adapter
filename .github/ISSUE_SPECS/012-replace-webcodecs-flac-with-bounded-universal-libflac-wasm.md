@@ -1,154 +1,162 @@
 # Replace WebCodecs FLAC with bounded universal libFLAC Wasm decoding
 
+GitHub: https://github.com/misofm/engine-web-adapter/issues/12
+
 ## Objective
 
-Make dense-FLAC ingestion work consistently in Chromium, macOS Safari, and
-mobile Safari by replacing the adapter's WebCodecs FLAC decoder with one
+Make ordinary standards-compliant native FLAC ingestion work consistently in
+Chromium, macOS Safari, and mobile Safari by replacing WebCodecs with one
 package-owned, bounded libFLAC WebAssembly decoder.
 
-Preserve the existing architecture:
+The adapter must validate STREAMINFO early through bounded exact-range probes,
+skip irrelevant metadata without downloading or retaining its payload, stream
+the compressed suffix through sequential Effect HTTP ranges, let libFLAC find
+frame boundaries and variable block sizes, and emit bounded canonical PCM into
+the existing OPFS verification path.
 
-`caller locator -> Effect exact-range HTTP -> bounded metadata validation ->`
-`dense frame packetizer -> one decoder Worker per admitted stem -> OPFS staging`
-`+ incremental SHA-256 -> verified promotion/lease -> bounded PCM pump -> Engine`
+Preserve:
 
-No stage may buffer a whole compressed or decoded stem. The Engine consumes
-only a fully verified OPFS lease. The existing prepared stems and object keys
-are unchanged and require no reupload.
+`caller locator -> Effect exact ranges -> STREAMINFO admission -> fixed`
+`compressed-input slot -> one Wasm Worker/admitted stem -> OPFS staging +`
+`incremental SHA-256 -> verified promotion/lease -> PCM pump -> Engine`
 
-This issue succeeds #8 and begins a fresh three-attempt workflow. It is not a
-fourth revision of #8. `@misofm/engine-web-adapter@0.2.0` must not publish until
-this issue passes.
+No stage buffers a whole compressed frame, compressed stem, or decoded stem.
+The Engine consumes only a fully verified OPFS lease.
 
-## Evidence and release blocker
+Existing CLI-prepared dense files remain valid because they are ordinary FLAC
+with extra standard metadata; they require no re-encoding or reupload. Future
+files need neither a dense SEEKTABLE nor fixed block sizes. The object identity
+remains `pcmSha256`, and URL/key mapping remains caller-owned.
 
-Baseline: merged `main` commit `25a278c10b132846ec869204a0aa7d02799825a1`
-from PR #10.
+This issue succeeds #8 with a fresh three-attempt workflow. It is not a fourth
+#8 revision. Unpublished `0.2.0` must not ship until this issue passes.
 
-Issue #8 qualified packed Chromium against the local fixture and live
-`stems.miso.fm`, including exact Effect HTTP ranges, metadata/declaration
-validation, dense packetization, OPFS staging, SHA-256 promotion, warm reuse,
-cancellation, and pumping. Native Safari 26.3.1 reaches the Worker and reports
-the standard FLAC `AudioDecoderConfig` supported, but asynchronously closes
-the decoder before emitting PCM for both the packaged 206-byte fixture and the
-live 4,198,461-byte object. The identical W3C STREAMINFO description and
-one-frame-per-chunk contract passes in Chromium. A product integration also
-reproduced no mixer output in Safari.
+## Baseline and blocker
+
+Baseline is merged main `25a278c10b132846ec869204a0aa7d02799825a1`.
+Issue #8 qualified packed Chromium and live `stems.miso.fm`, including Effect
+ranges, early shape checks, OPFS staging, SHA-256 promotion, warm reuse,
+cancellation, and pumping. Native Safari 26.3.1 reports the standard FLAC
+WebCodecs configuration supported but closes `AudioDecoder` before PCM for
+both the package fixture and live object. A product Safari run likewise
+produces no mixer output.
 
 ## Architecture ruling
 
-Use universal Wasm decoding. Remove WebCodecs rather than keeping it as a
-preferred path or fallback.
+Use universal Wasm. Remove WebCodecs rather than retaining a fast path or
+fallback. Each admitted stem owns one module Worker and one single-threaded
+libFLAC instance. Separate stems run concurrently through the existing bounded
+admission pool; a stem is never split across Workers. No Wasm threads, pthreads,
+nested Worker, filesystem, network, WASI, or decode on the main/AudioWorklet
+thread is permitted.
 
-Each admitted stem owns one ordinary module Worker and one single-threaded
-libFLAC Wasm instance. Concurrency occurs across stems through the existing
-bounded Worker admission pool. The decoder uses no Wasm threads, pthreads,
-shared Wasm memory, nested Worker, filesystem, network, or WASI.
+This trades a small fixed asset and possibly lower peak Chromium throughput for
+identical WebKit/Chromium behavior, bit-exact integer PCM, enforceable memory,
+and one error/cancellation/conformance matrix. A future WebCodecs path needs a
+separate measured issue.
 
-This deliberately trades a small fixed asset and possibly lower peak Chromium
-throughput for identical Chromium/WebKit behavior, bit-exact integer PCM, an
-enforceable memory ceiling, and one decode/error/cancellation matrix. A
-WebCodecs fast path requires a future issue backed by measured need and fixed
-Safari conformance.
+## Decoder source and provenance
 
-## Decoder source, provenance, and build
-
-Build a narrow private wrapper around official libFLAC 1.5.0 stream decoding.
-Pin the release source and official `flac-1.5.0.tar.xz` SHA-256:
+Build a narrow private wrapper around official libFLAC 1.5.0. Pin the release
+source and official `flac-1.5.0.tar.xz` SHA-256:
 
 `f2c1c76592a82ffff8413ba3c4a1299b6c7ab06c734dee03fd88630485c2b920`
 
-Keep the required source, wrapper, reproducible toolchain/build command, and
-generated Wasm provenance in this repository. Include Xiph's license and
-attribution in NOTICE. Ordinary TypeScript/package builds must not download a
-compiler or source. A focused rebuild gate compares the generated artifact to
-the checked-in pin.
+Keep required source, wrapper, pinned/reproducible Emscripten build, generated
+Wasm provenance, Xiph license, and attribution in this repository. Ordinary
+TypeScript/npm builds use the checked-in artifact and perform no download or
+compiler install. A focused gate rebuilds and compares the artifact pin.
 
-Compile only the native FLAC decoder subset: no encoder, CLI, Ogg, metadata
-editor, stdio filesystem, sockets, or pthreads. Do not depend on a generic
-browser-decoder npm package or restore `engine/sidecars/flac-decoder`.
+Compile only native stream decoding: no encoder, CLI, Ogg, metadata editor,
+stdio filesystem, sockets, or pthreads. Do not use a generic decoder npm
+package or restore `engine/sidecars/flac-decoder`.
 
 Primary references:
 
 - https://xiph.org/flac/api/group__flac__stream__decoder.html
 - https://github.com/xiph/flac/releases/tag/1.5.0
-- https://www.w3.org/TR/webcodecs-flac-codec-registration/
 - https://emscripten.org/docs/tools_reference/settings_reference.html
 
-## Private frame decoder contract
+## Early metadata admission
 
-The Wasm wrapper is package-internal, not a public npm ABI. It must:
+1. Request bytes `0-41`; require native `fLaC`, a first/unique 34-byte
+   STREAMINFO, supported sample rate, mono/stereo, and PCM16/24.
+2. If total samples is nonzero, validate it and derived PCM bytes against the
+   compiled source before requesting audio. A legal zero total or zero MD5 is
+   allowed; exact session counts and PCM SHA-256 remain mandatory at finish.
+3. Walk later metadata with exact four-byte header requests, checked offsets,
+   and at most 128 blocks. Do not fetch comments, pictures, padding,
+   SEEKTABLE, or application payloads. Stop at the final-block flag.
+4. Require the calculated audio offset inside the stable Content-Range total.
 
-1. Initialize from the normalized terminal STREAMINFO already validated by
-   `DenseFlacMetadataParser` and enable libFLAC MD5 checking.
-2. Accept at most one complete packetized FLAC frame per decode call and use
-   `FLAC__stream_decoder_process_single()`.
-3. Keep one bounded input arena, libFLAC state, and one canonical output block
-   in fixed non-shared linear memory.
-4. Handle read/write/error callbacks in C; never cross into JavaScript per
-   sample.
-5. Interleave signed libFLAC integer channels directly into canonical
-   little-endian PCM16/PCM24 without float conversion or rounding.
-6. Return exactly one output block for one accepted frame and invalidate its
-   view before the next call.
-7. Validate callback rate, channels, bit depth, block size, frame/sample
-   position, output length, cumulative frames, and bytes against STREAMINFO and
-   the dense SEEKTABLE.
-8. Treat decoder error callbacks, CRC failure, invalid state, allocation
-   failure, trap, unexpected callbacks/counts, or MD5 mismatch as terminal.
-   Corrupted-frame concealment/silence is never accepted.
-9. Verify final counts and decoded MD5, then destroy state. Destroy is safe
-   after partial initialization or failure.
+Accept no, sparse, ordinary, or dense SEEKTABLE; fixed or variable blocks;
+legal zero STREAMINFO frame-size fields; and legal optional metadata. Retain
+only normalized STREAMINFO plus one header. Synthesize `fLaC` plus a terminal
+copy of STREAMINFO for libFLAC, then supply the original audio suffix.
 
-The Worker copies one compressed frame into Wasm, decodes synchronously, copies
-the exact PCM block into one transferable buffer, and posts only after checks
-pass.
+## Synchronous compressed-input bridge
 
-## Streaming, concurrency, and backpressure
+libFLAC's synchronous read callback cannot use zero bytes for temporary network
+starvation: zero means true EOF or abort. Use one 256-KiB `SharedArrayBuffer`
+input slot with atomic state between the Effect HTTP owner and decoder Worker.
+The Wasm memory itself remains non-shared.
 
-Retain the metadata parser, dense SEEKTABLE validator, Effect `HttpClient`
-ranges, verified store, and PCM pump.
+The libFLAC C read callback calls one synchronous JavaScript import:
 
-Within one Worker: instantiate the decoder before stem input credit; validate
-metadata and compiled declarations; initialize STREAMINFO; request audio only
-after those checks; packetize at dense offsets; acquire one PCM output credit;
-decode exactly one frame; post exact PCM; finish MD5/count verification; emit
-completion. Do not request more compressed input while a complete frame waits
-for output credit.
+1. Copy available slot bytes into Wasm memory, at most the requested count.
+2. If empty and not final, post one input-credit, block only the decoder Worker
+   with `Atomics.wait`, then recheck after notification.
+3. The main-thread owner performs the next sequential exact-range request,
+   copies it into the slot, atomically publishes length/final state, and
+   notifies.
+4. The Worker returns a drained slot to EMPTY.
+5. Return EOF only after the exact stable remote total is reached and the final
+   slot is fully drained. Cancellation sets ABORTED and notifies; only this
+   terminal state returns abort.
 
-Remove the four-entry asynchronous WebCodecs submission queue. Exactly one
-decoder call is active per Worker. Decode never runs on the window/main or
-AudioWorklet thread. One Worker uses one core; multiple admitted stems run on
-separate Workers using the existing `hardwareConcurrency - 1`, memory-budget,
-and configured-maximum admission formula. The browser value remains a
-privacy-reduced hint. Do not split a frame/stem or add Wasm threads. Warm OPFS
-hits construct no FLAC Worker and perform no decode.
+Acquire one PCM output credit, call `FLAC__stream_decoder_process_single()`,
+and let it consume as many slot refills as the next frame needs. Once one frame
+is emitted, copy exact canonical PCM into one transferable buffer and return to
+the Worker loop. A main-thread watchdog physically terminates CPU/no-progress
+stalls. This permits frames to span arbitrary range boundaries without false
+EOF, replay, or whole-frame allocation.
 
-## Frozen bounds
+## Private decoder contract
 
-- delivery chunk: 256 KiB;
-- compressed frame: 524,320 bytes;
-- canonical output block: 384 KiB;
-- decoded output credits: 2;
-- active decoder Worker reservation: 8 MiB;
-- decoder linear memory: exactly 32 initial and maximum 64-KiB pages (2 MiB),
-  non-shared, growth disabled;
-- decoder `.wasm`: at most 256 KiB uncompressed.
+The internal Wasm wrapper must enable libFLAC MD5 when available; handle C
+read/write/error callbacks without crossing JS per sample; interleave signed
+integer channel buffers directly into little-endian PCM16/24; emit exactly one
+bounded PCM block per successful output cycle; and validate rate, channel,
+depth, block size, sample position, cumulative frames, and bytes against
+STREAMINFO/session declarations.
 
-Replace 2,097,280 bytes of WebCodecs submission accounting with 2,097,152
-fixed Wasm bytes. Existing non-decoder buffers are 5,767,206 bytes, total
-accounted memory is 7,864,358 bytes, and reservation headroom is 524,250 bytes.
-Browser Worker/compiler/network internals remain opaque and separately stated.
-The maximum stereo PCM24 frame must fit. If libFLAC cannot meet the 2-MiB bound,
-stop and amend/rebrief rather than enabling growth or silently enlarging it.
+Every libFLAC error callback, CRC/lost-sync/missing-frame error, invalid state,
+allocation failure, trap, unexpected callback/output count, shape mismatch, or
+final MD5 mismatch is terminal. Concealed/corrupt silence is never accepted.
+Finish verifies final counts/MD5 and destroy is safe after partial init/failure.
+
+## Bounds and concurrency
+
+The 8-MiB Worker reservation remains. Directly named storage is approximately
+3.26 MiB: one 256-KiB Effect result, one 256-KiB shared input slot, fixed 2-MiB
+non-growing Wasm memory, two PCM output credits totaling 768 KiB, at most 4 KiB
+metadata/control scratch, and a maximum 393,210-byte PCM block (within the
+384-KiB/393,216-byte ceiling). Browser networking, Worker/runtime, and compiled
+code are opaque and reported separately.
+
+The Wasm module has exactly 32 initial/maximum 64-KiB pages, non-shared memory,
+growth disabled, and an uncompressed artifact no larger than 256 KiB. Remove
+dense seek arrays, packetizer buffers, and four WebCodecs submissions. Memory
+high-water must be independent of song duration and track count.
+
+Retain admission based on `hardwareConcurrency - 1`, caller memory budget, and
+configured maximum. The browser value is a privacy-reduced hint. At least two
+admitted stems must overlap across Workers; one stem stays single-threaded.
 
 ## Assets and public API
 
-Keep the public session choice unchanged: normal `{ flac }`, advanced
-`{ resolver }`, caller-owned `locate(identity, attempt)`, and no host/key/auth/
-R2/UI/React policy.
-
-Add:
+Keep normal `{ flac }`, advanced `{ resolver }`, caller `locate(identity,
+attempt)`, and no host/key/auth/R2/UI policy. Add package assets:
 
 ```ts
 ADAPTER_ASSET_FILES.flacDecoderWasm
@@ -156,95 +164,91 @@ ADAPTER_ASSETS.flacDecoderWasm
 AdapterAssetOverrides.flacDecoderWasmUrl
 ```
 
-The default Worker resolves the package asset without configuration. Overrides
-reach both `openEngineWebSession()` and `createFlacStemResolver()`. The packed
-consumer serves it as `application/wasm`. There is no public backend switch.
+Defaults work without configuration; overrides reach high- and low-level FLAC
+paths. Packed consumers serve `application/wasm`. No backend selector exists.
 
-## Failures, cancellation, and cleanup
+## Failures and cleanup
 
-Retain existing transport/parser/store/pump errors. Add/normalize:
+Retain delivery/parser/store/pump failures and add/normalize:
 
 - `stem.decode.asset`: load/MIME/compile/instantiate/ABI failure;
 - `stem.decode.flac`: libFLAC init/process/CRC/state/MD5 failure;
-- `stem.decode.output`: shape/count/canonical byte mismatch;
-- `stem.decode.stall`: no Worker progress before deadline;
+- `stem.decode.output`: shape/count/canonical-byte mismatch;
+- `stem.decode.stall`: decoder makes no progress before deadline;
 - `stem.decode.worker`: crash/clone/unexpected termination.
 
-Where applicable details include identity, phase (`decoder-load`, `metadata`,
-`frame`, `finish`), frame index/sample number, decoder state, expected/actual
-counts, and `retryable: false`, never credentials or signed URLs. Remove
-WebCodecs-only capability/failure codes from unpublished 0.2.0.
+Details may include identity, phase (`decoder-load`, `metadata`, `frame`,
+`finish`), decoder state, expected/actual counts, and `retryable: false`, never
+credentials/signed URLs. Remove WebCodecs-only failures.
 
-Retain #8's resolving mailbox and terminal race. Cover cancellation while
-queued, loading/compiling Wasm, probing metadata, downloading, waiting for
-output credit, between bounded synchronous calls, writing OPFS, finishing MD5,
-and closing. On terminal paths: stop admission, abort Effect HTTP, ignore late
-output, physically terminate Worker, reject consumer, and delete staging. No
-failure promotes, leases, pins, or pumps PCM.
+Retain #8's terminal race. Cover cancellation while queued, loading Wasm,
+probing metadata, fetching/refilling, blocked in `Atomics.wait`, waiting output
+credit, between bounded Wasm calls, writing OPFS, finishing, and closing.
+Terminal order is: stop admission; set ABORTED/notify; abort Effect HTTP; ignore
+late output; physically terminate Worker; reject; delete staging. No failure
+promotes, leases, pins, or pumps PCM.
 
 ## Migration/removal
 
-Remove all dormant WebCodecs alternatives: `AudioDecoder`,
-`EncodedAudioChunk`, probing/configuration, async submission accounting,
-`audioDataToCanonicalPcm`, public WebCodecs audio types, WebCodecs-only tests,
-capability text, failures, and provenance. Replace them with the private
-libFLAC wrapper/asset, direct integer output, tests, attribution, and browser
-qualification. Update AGENTS.md/README to the canonical sequence:
+Remove `AudioDecoder`, `EncodedAudioChunk`, WebCodecs probing/submission queues,
+`audioDataToCanonicalPcm`, public WebCodecs types, `DenseFlacFramePacketizer`,
+dense SEEKTABLE admission/types, fixed-block requirements, related tests/text/
+errors/provenance, and any statement that CLI-specific preparation is required.
+Rename public comments/source concepts to native FLAC. Update AGENTS/README to:
 
-`dense FLAC -> bounded universal Wasm -> canonical PCM -> verified OPFS -> Engine`
+`native FLAC -> bounded universal Wasm -> canonical PCM -> verified OPFS -> Engine`
 
 ## Objective gates
 
-1. Pinned libFLAC 1.5.0 source rebuilds reproducibly to the checked-in artifact;
-   upstream checksum, license, and attribution are present.
-2. Static inspection proves exactly 32 initial/maximum non-shared pages, no
-   growth, and no WASI/filesystem/network/pthread or encoder/Ogg/CLI surface.
-3. Packed decoder asset is at most 256 KiB and served as `application/wasm`.
-4. Real Wasm fixtures cover mono/stereo, PCM16/24, 44.1/48/88.2/96 kHz,
-   one frame, exact and partial final blocks, and maximum supported output.
-5. Every fixture produces exact canonical bytes and PCM SHA-256.
-6. Corrupt header/CRC, truncation, reorder/duplication, unexpected callbacks,
-   wrong shape, memory exhaustion, trap, and final MD5 mismatch fail closed
-   without OPFS promotion.
-7. Wrong declared rate/channels/depth/frames still rejects before any requested
-   audio range.
-8. Instrumented long streams prove package memory/queues independent of duration
-   and forbid whole-FLAC/PCM `arrayBuffer()` paths.
-9. At least two admitted stems demonstrably overlap across Workers; one Worker
-   has only one decode call and at most two transferable PCM outputs.
-10. Cancellation covers every named phase; physical termination precedes
+1. Pinned libFLAC 1.5.0 source reproducibly builds the checked-in asset; upstream
+   checksum, license, attribution, and artifact digest are present.
+2. Static inspection proves 32 initial/maximum non-shared pages, no growth, and
+   no WASI/filesystem/network/pthread or encoder/Ogg/CLI surface.
+3. Packed Wasm is at most 256 KiB and served as `application/wasm`.
+4. Real fixtures cover no/sparse/dense SEEKTABLE, fixed/variable blocks, zero
+   frame-size fields, no/large optional metadata, mono/stereo PCM16/24 at all
+   supported rates, single/partial/long streams, and exact canonical hashes.
+5. Metadata range traces fetch only STREAMINFO, later four-byte headers, and
+   audio; wrong known rate/channels/depth/frames rejects before audio.
+6. Accepted audio ranges are sequential/non-overlapping; retry repeats only an
+   unaccepted range.
+7. Splits around frame headers/subframes/CRCs and a frame larger than the input
+   slot decode exactly across refills. Delayed refill waits/resumes.
+8. EOF occurs only after exact total/final drain; truncation fails rather than
+   hanging. Variable blocks remain within PCM/output/cumulative bounds.
+9. Corrupt header/CRC, lost sync, truncation, replay/reorder, bad callbacks,
+   trap, shape/count/MD5/SHA mismatch fail without OPFS promotion.
+10. Instrumentation proves one compressed slot, one decoder call, at most two
+    pending PCM outputs, duration-independent memory, and two-stem overlap.
+11. Cancellation covers every named phase; physical termination precedes
     rejection and late work is inert.
-11. Asset 404/wrong MIME/malformed Wasm/wrong ABI or memory/load stall/Worker
-    crash produce stable typed errors.
-12. Packed current Chromium passes cold decode/play/pause/unaligned seek/close
-    and warm reuse with zero refused/torn/feed errors.
-13. Native macOS Safari 26.3.1 passes the same packed cold/warm flow.
-14. Current physical-iPhone mobile Safari passes one-stem cold decode, canonical
-    verification, play/pause/seek/close, and warm zero-network reuse.
-15. Warm reuse makes zero locator/stem-network/FLAC-Worker/decoder-asset work
-    while fully verifying OPFS before leasing.
-16. Live caller-derived `https://stems.miso.fm/<identity>.flac` acceptance passes
-    in Chromium and macOS Safari with exact 206/range/ETag and warm zero-network.
-17. Packed consumer observes decoder Wasm, FLAC/pump/scratch Workers, feed and
-    Engine worklets, and Engine Wasm at package URLs with correct MIME.
-18. `npm run check`, browser/live/reproducibility gates, publish dry-run, and
+12. Asset 404/MIME/malformed ABI/memory/import/load stall and Worker crash yield
+    stable typed failures.
+13. Packed Chromium and native macOS Safari 26.3.1 pass cold decode/play/pause/
+    unaligned seek/close and warm zero-network reuse.
+14. Current mobile Safari on a physical iPhone passes the same functional path.
+15. Existing dense live `stems.miso.fm` objects pass Chromium/macOS Safari 206,
+    stable length/ETag, exact PCM hash, and warm reuse without reupload.
+16. Warm reuse constructs no decoder Worker and performs no stem/decoder-asset
+    request while fully verifying OPFS.
+17. Packed consumer observes decoder Wasm, all Workers/worklets, and Engine Wasm
+    at package URLs with correct MIME.
+18. Policy proves no SEEKTABLE/fixed-block dependency, WebCodecs,
+    whole-file/frame `arrayBuffer()`, `decodeAudioData`, or hidden fallback.
+19. `npm run check`, browser/live/rebuild gates, publish dry-run, and
     `git diff --check` pass from an immutable clean commit.
-
-Decode throughput/cold timing on Chromium, macOS Safari, and physical iPhone is
-descriptive unless a named product budget exists, but overlap across two stems
-is mandatory.
 
 ## Non-goals
 
-No WebCodecs path, Engine/CLI/stem/reupload change, fixed delivery host/key,
-credentials, React/UI/app state machine, pre-verification playback,
-`decodeAudioData`, Wasm threads, SIMD optimization pass, Worker reuse, service
-worker cache, prefetch, SRC, or other codec. App upgrade and npm publication
-remain separate synchronized release steps after Sol PASS.
+No Engine change, CLI implementation (tracked by `misofm/cli#18`), stem
+reupload, fixed host/key, credentials, React/UI/app state machine,
+pre-verification playback, other codec, Wasm threads/SIMD optimization, Worker
+reuse, service-worker cache, prefetch, or SRC. App upgrade and npm publication
+follow only after Sol PASS.
 
-## Review workflow
+## Workflow
 
-A fresh Sol-high agent produced and approved this brief. A fresh Sol-medium
-agent implements attempt 1. A separate fresh Sol-high agent adversarially
-reviews an immutable checkpoint. This issue has its own three-attempt budget;
-gates are not weakened to preserve #8's merged implementation.
+Fresh Sol-high produced and approved the brief and this ordinary-FLAC
+amendment. Fresh Sol-medium implements attempt 1; separate fresh Sol-high
+adversarially reviews the immutable checkpoint. This issue owns a fresh
+three-attempt budget and does not weaken gates to preserve #8.
