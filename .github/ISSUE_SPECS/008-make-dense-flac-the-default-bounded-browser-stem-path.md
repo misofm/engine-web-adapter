@@ -306,14 +306,24 @@ requests and one Worker ingest the 4,198,461-byte object with ETag
 applied seek and zero refusals, torn feeds, or errors. The number of pump
 submissions is scheduling-dependent and is not an acceptance claim.
 
-Native Safari remains unrun because Safari Remote Automation is disabled on
-the available Mac. Its status is therefore still an environmental evidence
-gap, not a claimed pass and not grounds for adding an unbriefed codec fallback.
+Native Safari 26.3.1 (WebKit 21623.2.7.11.7) was exercised through SafariDriver
+after Remote Automation was enabled. Both the 206-byte packaged fixture and
+the live 4,198,461-byte `stems.miso.fm` object reach the FLAC Worker, pass
+`AudioDecoder.isConfigSupported`, and configure the decoder, but Safari then
+invokes the decoder error callback with `AudioDecoder is closed` before
+emitting PCM. The same standard FLAC `description` and per-frame
+`EncodedAudioChunk` contract passes in Chrome; the W3C FLAC registration
+requires exactly this STREAMINFO description and one FLAC frame per chunk.
+This is recorded as the explicit native-Safari platform blocker permitted by
+gate 10. It is not attributed to CORS, the tiny fixture, or stem preparation,
+and no unbriefed codec-Wasm fallback is added.
 
 Fresh Sol-high adversarial review of immutable commit
 `cc835ec7797fc5b148d0f2cedf1cc486dd2776de` returned PASS with no code or test
 findings. The reviewer independently passed 78/78 deterministic tests, the
 packed fresh-consumer Chrome flow, the live `stems.miso.fm` flow, the isolated-
 cache npm publish dry-run, and `git diff --check`; HEAD and the worktree remained
-exact and clean. The implementation is publish-ready subject only to the
-explicit native-Safari evidence gate above.
+exact and clean. The native-Safari gate is now resolved as a reproducible
+platform blocker rather than an environmental evidence gap. The reviewed
+implementation remains publish-ready for its qualified Chrome path, with
+Safari support explicitly not claimed by this release.

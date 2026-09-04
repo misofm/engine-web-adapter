@@ -87,6 +87,12 @@ fallback. The server must expose exact `Content-Range` and `Content-Length`,
 return status 206, avoid `Content-Encoding`, and keep total size and any visible
 ETag stable across attempts.
 
+Chrome is the qualified browser for version 0.2. Safari 26.3.1 advertises the
+required FLAC `AudioDecoder` configuration but closes the decoder when standard
+per-frame chunks are submitted, for both the package fixture and a live stem.
+Safari is therefore not supported by this release; the failure is surfaced to
+the caller and no hidden whole-file or codec-Wasm fallback is used.
+
 Package-relative asset URLs and overrides are exported from
 `@misofm/engine-web-adapter/assets`. They cover the scratch Worker, FLAC Worker,
 PCM pump Worker, feed worklet, and Engine assets.
