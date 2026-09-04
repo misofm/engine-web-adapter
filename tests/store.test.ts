@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { EngineWebAdapterError } from "../src/errors.js";
 import {
+  BoundedStemAdmission,
   MemoryStemResolver,
   MemoryStemStorageBackend,
   StemSessionGate,
@@ -119,7 +120,7 @@ test("recovery without lock query keeps ambiguous final and staging files", asyn
   assert.equal(backend.files.has(`staging-tab-${digest}`), true);
 });
 
-test("duplicate content single-flights and distinct source IDs share one verified Blob", async () => {
+test("duplicate content locks once and distinct source IDs share one verified Blob", async () => {
   const item = fixture([2, 4, 6, 8, 10, 12, 14, 16]);
   const backend = new MemoryStemStorageBackend();
   const resolver = new MemoryStemResolver({ [item.identity]: item.bytes }, { chunkBytes: 1 });
@@ -138,6 +139,80 @@ test("duplicate content single-flights and distinct source IDs share one verifie
   assert.equal((await b.read(item.identity)).size, item.bytes.length);
   assert.equal([...backend.files.keys()].filter((name) => name.startsWith("sha256-")).length, 1);
   await Promise.all([a.close(), b.close()]);
+});
+
+test("cancelling one open cannot contaminate or deadlock an independent same-stem open", async () => {
+  const item = fixture([71, 72, 73, 74]);
+  const backend = new MemoryStemStorageBackend();
+  const store = new VerifiedStemStore({ backend, readDeadlineMs: 100 });
+  const stems = [requirement("source", item.identity, item.bytes.length)];
+  const firstStarted = deferred<void>();
+  let firstCancelled = false;
+  const firstResolver: StemResolver = {
+    async resolve(_identity, options) {
+      firstStarted.resolve();
+      options?.signal?.addEventListener("abort", () => { firstCancelled = true; }, { once: true });
+      return { stream: new ReadableStream<Uint8Array>({
+        pull: () => new Promise<void>(() => undefined),
+      }) };
+    },
+  };
+  const firstAbort = new AbortController();
+  const first = store.openSession({ leaseId: "cancelled", stems, resolver: firstResolver, signal: firstAbort.signal });
+  await firstStarted.promise;
+  const secondResolver = new MemoryStemResolver({ [item.identity]: item.bytes });
+  const second = store.openSession({ leaseId: "independent", stems, resolver: secondResolver });
+  firstAbort.abort(new DOMException("cancel first", "AbortError"));
+  await assert.rejects(
+    first,
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled",
+  );
+  const lease = await Promise.race([
+    second,
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("independent open deadlocked")), 100)),
+  ]);
+  assert.equal(firstCancelled, true);
+  assert.equal(secondResolver.requests.length, 1);
+  assert.deepEqual(new Uint8Array(await (await lease.read(item.identity)).arrayBuffer()), item.bytes);
+  await lease.close();
+});
+
+test("cancellation during OPFS write awaits writer abort and removes staging", async () => {
+  const item = fixture([81, 82, 83, 84]);
+  const storage = new MemoryStemStorageBackend();
+  const writeStarted = deferred<void>();
+  const writeStopped = deferred<void>();
+  let writerAborted = false;
+  const backend: StemStorageBackend = {
+    ...backendView(storage),
+    async createWriter(name) {
+      if (!name.startsWith("staging-")) return storage.createWriter(name);
+      return {
+        async write() {
+          writeStarted.resolve();
+          await writeStopped.promise;
+          if (writerAborted) throw new DOMException("write aborted", "AbortError");
+        },
+        async close() { assert.fail("cancelled staging writer closed"); },
+        async abort() { writerAborted = true; writeStopped.resolve(); },
+      };
+    },
+  };
+  const abort = new AbortController();
+  const opening = new VerifiedStemStore({ backend }).openSession({
+    leaseId: "opfs-cancel",
+    stems: [requirement("source", item.identity, item.bytes.length)],
+    resolver: new MemoryStemResolver({ [item.identity]: item.bytes }),
+    signal: abort.signal,
+  });
+  await writeStarted.promise;
+  abort.abort(new DOMException("cancel OPFS write", "AbortError"));
+  await assert.rejects(
+    opening,
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled",
+  );
+  assert.equal(writerAborted, true);
+  assert.equal([...storage.files.keys()].some((name) => name.startsWith("staging-") || name.startsWith("sha256-")), false);
 });
 
 test("Web Locks serialize separate tab/store instances into one resolve", async () => {
@@ -183,6 +258,111 @@ test("late-opening store preserves a live promoted final until its index commit"
   const warmResolver = new MemoryStemResolver({});
   await (await late.openSession({ leaseId: "warm", stems, resolver: warmResolver })).close();
   assert.equal(warmResolver.requests.length, 0);
+});
+
+test("warm verification uses bounded task and admission width", async () => {
+  const items = [
+    fixture([1, 1, 1, 1]),
+    fixture([2, 2, 2, 2]),
+    fixture([3, 3, 3, 3]),
+    fixture([4, 4, 4, 4]),
+  ];
+  const stems = items.map((item, index) => requirement(`source-${index}`, item.identity, item.bytes.length));
+  const storage = new MemoryStemStorageBackend();
+  const resolver = new MemoryStemResolver(Object.fromEntries(items.map((item) => [item.identity, item.bytes])));
+  await (await new VerifiedStemStore({ backend: storage }).openSession({ leaseId: "seed", stems, resolver })).close();
+
+  let active = 0;
+  let maximum = 0;
+  const delayed = backendView(storage);
+  const read = delayed.read;
+  delayed.read = async (name) => {
+    if (!name.startsWith("sha256-")) return read(name);
+    active += 1;
+    maximum = Math.max(maximum, active);
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      return await read(name);
+    } finally { active -= 1; }
+  };
+  const warmResolver = new MemoryStemResolver({});
+  const warm = new VerifiedStemStore({ backend: delayed });
+  await (await warm.openSession({
+    leaseId: "warm",
+    stems,
+    resolver: warmResolver,
+    admission: new BoundedStemAdmission(2),
+  })).close();
+  assert.equal(warmResolver.requests.length, 0);
+  assert.equal(maximum, 2);
+});
+
+test("bounded open aborts sibling work and awaits cleanup before rejecting", async () => {
+  const failed = fixture([41, 42, 43, 44]);
+  const sibling = fixture([51, 52, 53, 54]);
+  const queued = fixture([61, 62, 63, 64]);
+  const siblingStarted = deferred<void>();
+  const cancellationObserved = deferred<void>();
+  const cleanupRelease = deferred<void>();
+  const authoritative = new EngineWebAdapterError("stem.corrupt", "authoritative first failure");
+  const started: StemIdentity[] = [];
+  let cleanupFinished = false;
+  const resolver: StemResolver = {
+    async resolve(identity) {
+      started.push(identity);
+      if (identity === failed.identity) {
+        await siblingStarted.promise;
+        throw authoritative;
+      }
+      if (identity === queued.identity) throw new Error("queued work must not start after failure");
+      siblingStarted.resolve();
+      let emitted = false;
+      return {
+        stream: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (!emitted) {
+              emitted = true;
+              controller.enqueue(sibling.bytes.subarray(0, 1));
+              return;
+            }
+            return new Promise<void>(() => undefined);
+          },
+          async cancel() {
+            cancellationObserved.resolve();
+            await cleanupRelease.promise;
+            cleanupFinished = true;
+          },
+        }),
+      };
+    },
+  };
+  const backend = new MemoryStemStorageBackend();
+  const opening = new VerifiedStemStore({ backend }).openSession({
+    leaseId: "fail-close",
+    stems: [
+      requirement("failed", failed.identity, failed.bytes.length),
+      requirement("sibling", sibling.identity, sibling.bytes.length),
+      requirement("queued", queued.identity, queued.bytes.length),
+    ],
+    resolver,
+    admission: new BoundedStemAdmission(2),
+  });
+  let publiclyRejected = false;
+  const observed = opening.catch((error: unknown) => {
+    publiclyRejected = true;
+    return error;
+  });
+
+  await cancellationObserved.promise;
+  assert.equal(publiclyRejected, false);
+  assert.deepEqual(started, [failed.identity, sibling.identity]);
+  cleanupRelease.resolve();
+  assert.equal(await observed, authoritative);
+  assert.equal(cleanupFinished, true);
+  assert.equal([...backend.files.keys()].some((name) => name.startsWith("staging-") || name.startsWith("sha256-")), false);
+  const settledFiles = [...backend.files.keys()].sort();
+  await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual([...backend.files.keys()].sort(), settledFiles);
 });
 
 test("quota, integrity, cancellation, and no-progress deadline are typed", async () => {

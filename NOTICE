@@ -17,3 +17,10 @@ issue-authorized misofm/app browser composition baseline at commit
 The AudioWorklet feed prelude and its attach-port mechanism were adapted from
 that same authorized misofm/app commit. The prelude retains the Engine worklet
 module unchanged and drains MSB1 through its existing synchronous Wasm ABI.
+
+The dense-FLAC parser, packetizer, WebCodecs conversion, and bounded Worker
+pipeline use issue-authorized implementation evidence from misofm/app commit
+7485693e9bbcf2f65a91a4e5950e22d678d99062 and the preparation contract from
+misofm/cli commit 94d94be1e858d01453ad4242e061ef2984502a00. The adapter's parser was
+independently corrected to scan legal intervening metadata through the true
+final metadata boundary.

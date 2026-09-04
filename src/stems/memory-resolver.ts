@@ -56,10 +56,11 @@ export class MemoryStemResolver implements StemResolver {
           controller.enqueue(bytes.slice(offset, end));
           offset = end;
           options.onProgress?.({
-            stage: "resolving",
+            stage: "fetching",
             identity,
             bytes: offset,
             totalBytes: bytes.byteLength,
+            byteKind: "pcm",
           });
         },
       }),

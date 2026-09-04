@@ -11,6 +11,7 @@ import type { AudioWorkletNodeLike, EngineFeed } from "./feed.js";
 import type { PcmPumpSource } from "./stems/pump.js";
 import type {
   DeclaredStemSource,
+  FlacDeliveryOptions,
   StemProgress,
   StemResolver,
   StemStore,
@@ -30,11 +31,10 @@ export interface EnginePump {
   close(): Promise<void> | void;
 }
 
-export interface EngineWebSessionOptions {
+export interface EngineWebSessionCommonOptions {
   readonly document: EngineSessionDocument;
   readonly leaseId: string;
   readonly sources: readonly DeclaredStemSource[];
-  readonly resolver: StemResolver;
   readonly signal?: AbortSignal;
   readonly onProgress?: (progress: StemProgress) => void;
   readonly policy?: BrowserBootPolicy;
@@ -65,6 +65,15 @@ export interface EngineWebSessionOptions {
     readonly engineNode: AudioNode;
   }) => AudioNode;
 }
+
+export type EngineWebSessionOptions = EngineWebSessionCommonOptions & (
+  | { readonly flac: FlacDeliveryOptions; readonly resolver?: never }
+  | {
+      /** Advanced escape hatch: already-decoded canonical PCM. */
+      readonly resolver: StemResolver;
+      readonly flac?: never;
+    }
+);
 
 export interface EngineWebSession {
   readonly shape: SessionShape;

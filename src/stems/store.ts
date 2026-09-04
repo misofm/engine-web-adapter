@@ -1,6 +1,7 @@
 import { EngineWebAdapterError } from "../errors.js";
 import { assertStemIdentity } from "./identity.js";
 import { deadline, IncrementalSha256, sha256Stream } from "./sha256.js";
+import type { BoundedStemAdmission } from "./flac-admission.js";
 import { OpfsStorageBackend } from "./storage.js";
 import type { StemStorageBackend, StemStorageWriter } from "./storage.js";
 import type {
@@ -20,13 +21,13 @@ const INDEX_VERSION = 1;
 
 interface IndexRow { bytes: number; pins: string[]; lastUsedAt: number }
 interface StoreIndex { version: 1; stems: Record<string, IndexRow> }
-interface SharedState { locks: Map<string, Promise<void>>; flights: Map<string, Promise<void>> }
+interface SharedState { locks: Map<string, Promise<void>> }
 const SHARED = new WeakMap<object, SharedState>();
 
 function sharedFor(backend: StemStorageBackend): SharedState {
   let shared = SHARED.get(backend as object);
   if (shared === undefined) {
-    shared = { locks: new Map(), flights: new Map() };
+    shared = { locks: new Map() };
     SHARED.set(backend as object, shared);
   }
   return shared;
@@ -89,6 +90,7 @@ export class VerifiedStemStore implements StemStore {
     readonly leaseId: string;
     readonly stems: readonly StemRequirement[];
     readonly resolver: StemResolver;
+    readonly admission?: BoundedStemAdmission;
     readonly signal?: AbortSignal;
     readonly onProgress?: (progress: StemProgress) => void;
   }): Promise<StemSessionLease> {
@@ -104,12 +106,12 @@ export class VerifiedStemStore implements StemStore {
     const controller = new AbortController();
     const detach = forwardAbort(options.signal, controller);
     try {
-      await Promise.all(unique.map((stem) =>
-        this.#ensure(stem, options.resolver, controller.signal, options.onProgress).catch((error) => {
-          controller.abort(error);
-          throw error;
-        }),
-      ));
+      await runBounded(
+        unique,
+        options.admission?.limit ?? 1,
+        (stem) => this.#ensure(stem, options.resolver, controller.signal, options.onProgress, options.admission),
+        (error) => controller.abort(error),
+      );
     } catch (error) {
       if (options.signal?.aborted || isAbort(error)) {
         throw new EngineWebAdapterError("stem.cancelled", "Stem session open was cancelled", {}, error);
@@ -203,19 +205,15 @@ export class VerifiedStemStore implements StemStore {
     resolver: StemResolver,
     signal: AbortSignal,
     onProgress?: (progress: StemProgress) => void,
+    admission?: BoundedStemAdmission,
   ): Promise<void> {
-    const prior = this.#shared.flights.get(stem.identity);
-    if (prior !== undefined) return prior;
-    const flight = this.#withLock(this.#stemLock(stem.identity), signal, async () => {
-      if (await this.#verifyIndexed(stem, signal, onProgress)) return;
+    await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
+      const verified = admission === undefined
+        ? await this.#verifyIndexed(stem, signal, onProgress)
+        : await admission.run(() => this.#verifyIndexed(stem, signal, onProgress), signal);
+      if (verified) return;
       await this.#ingest(stem, resolver, signal, onProgress);
     });
-    this.#shared.flights.set(stem.identity, flight);
-    try {
-      await flight;
-    } finally {
-      if (this.#shared.flights.get(stem.identity) === flight) this.#shared.flights.delete(stem.identity);
-    }
   }
 
   async #verifyIndexed(
@@ -254,7 +252,9 @@ export class VerifiedStemStore implements StemStore {
       const observed = await sha256Stream(blob.stream(), {
         ...(signal === undefined ? {} : { signal }),
         readDeadlineMs: this.#readDeadlineMs,
-        onChunk: (count) => onProgress?.({ stage: "verifying", identity, bytes: count, totalBytes: bytes }),
+        onChunk: (count) => onProgress?.({
+          stage: "verifying", identity, bytes: count, totalBytes: bytes, byteKind: "pcm",
+        }),
       });
       return observed.bytes === bytes && observed.hex === digest(identity);
     } catch (error) {
@@ -295,7 +295,10 @@ export class VerifiedStemStore implements StemStore {
         if (bytes > stem.bytes) throw integrity(stem, bytes, "byte count exceeds declaration");
         hash.update(result.value);
         await deadline(writer.write(result.value), this.#readDeadlineMs, signal);
-        onProgress?.({ stage: "ingesting", sourceId: stem.sourceId, identity: stem.identity, bytes, totalBytes: stem.bytes });
+        onProgress?.({
+          stage: "ingesting", sourceId: stem.sourceId, identity: stem.identity,
+          bytes, totalBytes: stem.bytes, byteKind: "pcm",
+        });
       }
       const observed = hash.digestHex();
       if (bytes !== stem.bytes || observed !== digest(stem.identity)) {
@@ -326,7 +329,7 @@ export class VerifiedStemStore implements StemStore {
       }
       throw error;
     } finally {
-      if (signal.aborted) void reader?.cancel(signal.reason).catch(() => undefined);
+      if (signal.aborted) await reader?.cancel(signal.reason).catch(() => undefined);
       try { reader?.releaseLock(); } catch { /* deadline may leave a read pending */ }
     }
   }
@@ -505,6 +508,33 @@ function uniqueRequirements(stems: readonly StemRequirement[]): StemRequirement[
     unique.set(stem.identity, prior ?? stem);
   }
   return [...unique.values()];
+}
+async function runBounded<T>(
+  values: readonly T[],
+  width: number,
+  work: (value: T) => Promise<void>,
+  onFirstError: (error: unknown) => void,
+): Promise<void> {
+  let cursor = 0;
+  let failed = false;
+  let firstError: unknown;
+  const next = async () => {
+    while (!failed && cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      try {
+        await work(values[index]!);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          firstError = error;
+          onFirstError(error);
+        }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(width, values.length) }, next));
+  if (failed) throw firstError;
 }
 function integrity(stem: StemRequirement, observedBytes: number, reason: string): EngineWebAdapterError {
   return new EngineWebAdapterError("stem.corrupt", `Resolved stem failed verification: ${reason}`, {
