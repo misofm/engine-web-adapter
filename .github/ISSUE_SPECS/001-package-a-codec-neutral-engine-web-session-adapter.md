@@ -170,6 +170,12 @@ terminating the Worker, so the delayed Worker could still apply the rejected
 seek. The three-attempt stop is binding. No fourth correction belongs to this
 issue; the single remaining invariant is split into issue #2.
 
+Issue #2 closed that successor invariant at commit `f871c4c`: every terminal
+timeout or cancellation now terminates the pump Worker before rejecting, and
+the same-task initialize/abort boundary cannot expose a closed client. Fresh
+Sol high review recorded PASS with no findings. Together, the issue #1 slice
+and its bounded successor satisfy the publishable V0.1 contract.
+
 `BigInt` is a JavaScript primitive and the language specification does not
 promise whether a particular engine allocates for its operations. No parallel
 ABI was invented. Measuring the shipping worklet's BigInt behavior under the

@@ -90,3 +90,9 @@ constructor signal after initialization settles but before returning. A
 deterministic same-task reply-then-abort regression proves `create()` rejects
 with the identical abort reason, after Worker termination, and no client
 escapes.
+
+Fresh Sol high review of immutable commit `f871c4c` recorded PASS with no
+findings. `npm run check` passed 33 tests plus format, type, source, build, and
+100-file package-policy gates; `git diff --check` passed. The previously green
+packed Chromium evidence remains proportional because attempt 2 only adds a
+terminal check at the successful initialize return boundary.
