@@ -105,3 +105,12 @@ PCM pump Worker, feed worklet, and Engine assets.
 
 `close()` is idempotent. The `./stems` entry exports the FLAC resolver,
 admission, verified-store, lease, ring, and pump contracts for advanced use.
+
+## Verification
+
+`npm run test:browser` builds a fresh consumer from the packed tarball and runs
+the deterministic local FLAC fixture in Chromium. `npm run test:browser:live`
+is the explicit networked acceptance profile: it binds the configured CORS
+origin at `http://127.0.0.1:5173`, performs a cold packed-package ingest, and
+then proves that a warm reopen uses no additional locator, Worker, or network
+work. The live profile is intentionally not part of `npm run check`.
