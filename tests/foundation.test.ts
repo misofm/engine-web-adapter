@@ -25,6 +25,7 @@ test("foundation is pinned to the exact public Engine release", () => {
 test("documented package gates are fresh-checkout safe", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   assert.match(packageJson.scripts["check:package"], /^npm run build && /u);
+  assert.equal(packageJson.scripts.prepack, "npm run build");
   assert.doesNotMatch(packageJson.scripts.lint, /check-package/u);
 });
 

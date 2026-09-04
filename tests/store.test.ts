@@ -66,6 +66,29 @@ test("corruption and truncation are removed then self-healed", async () => {
   assert.deepEqual(backend.files.get(final), item.bytes);
 });
 
+test("conflicting byte count cannot demote valid cached content or live pins", async () => {
+  const item = fixture([31, 32, 33, 34, 35, 36]);
+  const backend = new MemoryStemStorageBackend();
+  const resolver = new MemoryStemResolver({ [item.identity]: item.bytes });
+  const store = new VerifiedStemStore({ backend, instanceId: "conflict" });
+  const valid = requirement("source-a", item.identity, item.bytes.length);
+  const leaseA = await store.openSession({ leaseId: "a", stems: [valid], resolver });
+  const conflictingResolver = new MemoryStemResolver({});
+  await assert.rejects(
+    store.openSession({
+      leaseId: "b", stems: [requirement("source-b", item.identity, item.bytes.length + 2)], resolver: conflictingResolver,
+    }),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration",
+  );
+  assert.equal(conflictingResolver.requests.length, 0);
+  assert.deepEqual(new Uint8Array(await (await leaseA.read(item.identity)).arrayBuffer()), item.bytes);
+  const index = JSON.parse(new TextDecoder().decode(backend.files.get("index.json")!));
+  assert.equal(index.stems[item.identity].bytes, item.bytes.length);
+  assert.deepEqual(index.stems[item.identity].pins, ["session:conflict:a"]);
+  assert.equal(backend.files.has(`sha256-${item.identity.slice(7)}`), true);
+  await leaseA.close();
+});
+
 test("missing or malformed index recovers verified finals without resolving", async () => {
   const item = fixture([1, 3, 3, 7]);
   const backend = new MemoryStemStorageBackend();

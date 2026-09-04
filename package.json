@@ -38,6 +38,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "format:check": "node scripts/check-format.mjs",
     "lint": "npm run typecheck && node scripts/check-source-policy.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",

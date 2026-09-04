@@ -226,7 +226,16 @@ export class VerifiedStemStore implements StemStore {
     const index = await this.#readIndex();
     const row = index.stems[stem.identity];
     if (row === undefined) return false;
-    if (row.bytes !== stem.bytes || !(await this.#verifyFile(stem.identity, stem.bytes, signal, onProgress))) {
+    if (row.bytes !== stem.bytes) {
+      if (await this.#verifyFile(stem.identity, row.bytes, signal, onProgress)) {
+        throw new EngineWebAdapterError("stem.invalid_declaration", "Declared byte count conflicts with verified cached content", {
+          identity: stem.identity, cachedBytes: row.bytes, declaredBytes: stem.bytes,
+        });
+      }
+      await this.#demote(stem.identity);
+      return false;
+    }
+    if (!(await this.#verifyFile(stem.identity, stem.bytes, signal, onProgress))) {
       await this.#demote(stem.identity);
       return false;
     }

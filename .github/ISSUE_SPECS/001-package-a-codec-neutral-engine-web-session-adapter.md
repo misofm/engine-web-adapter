@@ -157,6 +157,13 @@ Locks recovery keeps ambiguous staging and final files, and the prepared
 scratch Worker is terminated immediately after Engine construction instead of
 living for the playback session.
 
+Final revision attempt 3 closed the remaining review findings: the exported
+`SelfDrivingPcmPump` now serializes its drive ticks and seeks on one queue; the
+package `prepack` lifecycle always builds before pack, publish, and the browser
+harness; and a conflicting byte count cannot demote verified cached content or
+its live pins. Clean-`dist` runs of check, packed Chromium, and publish dry-run
+exercise those contracts.
+
 `BigInt` is a JavaScript primitive and the language specification does not
 promise whether a particular engine allocates for its operations. No parallel
 ABI was invented. Measuring the shipping worklet's BigInt behavior under the

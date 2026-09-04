@@ -164,6 +164,7 @@ export class SelfDrivingPcmPump {
   readonly #idleMs: number;
   #token: object | undefined;
   #wake: (() => void) | undefined;
+  #tail: Promise<void> = Promise.resolve();
   readonly #onError: ((error: unknown) => void) | undefined;
   constructor(pump: CanonicalPcmPump, idleMs = 4, onError?: (error: unknown) => void) {
     this.#pump = pump;
@@ -180,7 +181,7 @@ export class SelfDrivingPcmPump {
     });
   }
   async seekFrames(frame: number | bigint): Promise<bigint> {
-    const generation = await this.#pump.seekFrames(frame);
+    const generation = await this.#enqueue(() => this.#pump.seekFrames(frame));
     this.#wake?.(); this.start();
     return generation;
   }
@@ -190,7 +191,9 @@ export class SelfDrivingPcmPump {
   async #drive(token: object): Promise<void> {
     try {
       while (this.#token === token) {
-        const outcome = await this.#pump.pumpUntilBlocked();
+        const outcome = await this.#enqueue(() => this.#token === token
+          ? this.#pump.pumpUntilBlocked()
+          : { chunks: 0, frames: 0, finished: this.#pump.finished });
         if (outcome.finished || this.#token !== token) break;
         if (outcome.chunks === 0) await new Promise<void>((resolve) => {
           const timer = setTimeout(finish, this.#idleMs);
@@ -203,6 +206,11 @@ export class SelfDrivingPcmPump {
     } finally {
       if (this.#token === token) this.#token = undefined;
     }
+  }
+  #enqueue<T>(operation: () => T | Promise<T>): Promise<T> {
+    const queued = this.#tail.then(operation);
+    this.#tail = queued.then(() => undefined, () => undefined);
+    return queued;
   }
 }
 

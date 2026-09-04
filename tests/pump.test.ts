@@ -6,8 +6,11 @@ import {
   CanonicalPcmPump,
   MSB1_CONTROL,
   MSB1_CONTROL_BYTES,
+  MSB1_HEADER_OFFSET,
+  MSB1_SLOT_HEADER_BYTES,
   Msb1RingReader,
   PcmPumpWorkerClient,
+  SelfDrivingPcmPump,
   createMsb1Ring,
 } from "../src/stems/index.js";
 import type { EngineSourceSink, PumpWorkerRequest, StemIdentity } from "../src/stems/index.js";
@@ -60,6 +63,33 @@ test("one pass services multiple sources fairly", async () => {
   assert.equal(counter(first, MSB1_CONTROL.WROTE), 1);
   assert.equal(counter(second, MSB1_CONTROL.WROTE), 1);
   pump.close();
+});
+
+test("exported self-driver orders a delayed Blob tick before seek", async () => {
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  const bytes = pcm16(Array.from({ length: 16 }, (_, index) => index));
+  const delayedBlob = {
+    slice(first: number, last: number) {
+      return { async arrayBuffer() { entered.resolve(); await release.promise; return bytes.slice(first, last).buffer; } };
+    },
+  } as unknown as Blob;
+  const shared = ring("self-driver", 1, 4, 4);
+  const pump = new CanonicalPcmPump({
+    lease: { read: async () => delayedBlob },
+    sources: [{ sourceId: "self-driver", identity: IDENTITY, channels: 1, bitDepth: 16, frames: 16, ring: shared }],
+    windowFrames: 4,
+  });
+  const driver = new SelfDrivingPcmPump(pump, 1);
+  driver.start();
+  await entered.promise;
+  const sought = driver.seekFrames(5);
+  release.resolve();
+  assert.equal(await sought, 2n);
+  const headersI64 = new BigInt64Array(shared, MSB1_HEADER_OFFSET, 4 * MSB1_SLOT_HEADER_BYTES / 8);
+  assert.equal(headersI64[2], 1n, "delayed old PCM must commit under its old generation");
+  assert.equal(headersI64[3], 0n, "the old cursor must not be relabelled as the seek target");
+  driver.close();
 });
 
 test("seek drops stale slots, emits quantum slots and retries ordinary backpressure", async () => {
@@ -194,4 +224,10 @@ class FakePumpWorker implements PumpWorkerLike {
     this.listeners.get(type)?.delete(listener);
   }
   emit(type: string, event: any): void { for (const listener of this.listeners.get(type) ?? []) listener(event); }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
 }
