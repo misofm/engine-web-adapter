@@ -19,6 +19,11 @@ export { MSB1_CONTROL } from "./ring.js";
 export { PcmPumpWorkerClient } from "./worker-client.js";
 export type { PcmPumpSource } from "./pump.js";
 export type { Msb1RingCounters } from "./ring.js";
+// The OPFS write Worker's own mechanics stay unexported like every other Worker
+// wire protocol here; this one type is the exception because
+// `OpfsStorageBackend`'s `createWorker` override is a contract a caller can
+// legitimately supply.
+export type { OpfsWorkerLike } from "./opfs-worker-protocol.js";
 export type { StemAdmissionLease } from "./flac-admission.js";
 export type { FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";
 export type { FlacDeliveryOptions } from "./flac-resolver.js";

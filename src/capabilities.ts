@@ -1,4 +1,5 @@
 import { EngineWebAdapterError } from "./errors.js";
+import { OPFS_WRITE_REMEDY } from "./stems/opfs-worker-protocol.js";
 
 const SIMD128_PROBE = new Uint8Array([
   0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
@@ -18,6 +19,8 @@ export interface WebCapabilityScope {
     readonly storage?: { readonly getDirectory?: unknown };
     readonly locks?: { readonly request?: unknown };
   };
+  /** The OPFS handle interface. Its write method is Worker-only; see below. */
+  readonly FileSystemFileHandle?: unknown;
 }
 
 /** Synchronous, allocation-small gates that run before resolver/network work. */
@@ -26,7 +29,24 @@ export function assertEngineWebCapabilities(scope: WebCapabilityScope = globalTh
   requireCapability(typeof scope.SharedArrayBuffer === "function", "capability.shared_array_buffer", "SharedArrayBuffer is required");
   requireCapability(typeof scope.Worker === "function", "capability.module_worker", "Module Worker support is required");
   requireCapability(typeof scope.AudioContext === "function" && typeof scope.AudioWorkletNode === "function", "capability.audio_worklet", "AudioWorklet is required");
-  requireCapability(typeof scope.navigator?.storage?.getDirectory === "function", "capability.opfs", "Origin-private file storage is required");
+  requireCapability(
+    typeof scope.navigator?.storage?.getDirectory === "function",
+    "capability.opfs",
+    "Origin-private file storage is required",
+    { missing: "navigator.storage.getDirectory", remedy: OPFS_WRITE_REMEDY },
+  );
+  // getDirectory alone is not enough: it predates every usable OPFS write
+  // method. The method the store calls, createSyncAccessHandle(), is
+  // [Exposed=DedicatedWorker] in every engine, so no synchronous main-thread
+  // probe can see it; this gate checks the strongest window-visible signal and
+  // OpfsStorageBackend.open() refuses on the Worker's own probe, still before
+  // any resolver or network work.
+  requireCapability(
+    typeof scope.FileSystemFileHandle === "function",
+    "capability.opfs",
+    "Origin-private file handles are required",
+    { missing: "FileSystemFileHandle", remedy: OPFS_WRITE_REMEDY },
+  );
   requireCapability(typeof scope.navigator?.locks?.request === "function", "capability.web_locks", "Web Locks are required");
   requireCapability(scope.WebAssembly?.validate(SIMD128_PROBE) === true, "capability.simd128", "WebAssembly SIMD128 is required");
 }
@@ -35,6 +55,7 @@ function requireCapability(
   condition: boolean,
   code: ConstructorParameters<typeof EngineWebAdapterError>[0],
   message: string,
+  details: Readonly<Record<string, unknown>> = {},
 ): void {
-  if (!condition) throw new EngineWebAdapterError(code, message);
+  if (!condition) throw new EngineWebAdapterError(code, message, details);
 }

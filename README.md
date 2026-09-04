@@ -113,13 +113,36 @@ Cross-Origin-Embedder-Policy: require-corp
 ```
 
 The browser must provide OPFS, Web Locks, module Workers, AudioWorklet,
-WebAssembly SIMD128, and WebAssembly for a cold FLAC open. The package-owned
+WebAssembly SIMD128, and WebAssembly for a cold FLAC open. Canonical PCM is
+written to OPFS through `FileSystemFileHandle.createSyncAccessHandle()` in a
+package-owned Worker, never `createWritable()`. The package-owned
 libFLAC module is the only decoder path. The server must expose exact `Content-Range` and `Content-Length`,
 return status 206, avoid `Content-Encoding`, and keep total size and any visible
 ETag stable across attempts.
 
-Chromium, macOS Safari, and mobile Safari share the same decoder and error path;
-there is no platform codec fallback.
+### Safari floor
+
+The **decoder** is universal: Chromium, macOS Safari, and mobile Safari run the
+same libFLAC Wasm module and the same error path, with no platform codec
+fallback, from Safari 15.
+
+The **session** floor is higher, and it is the one that decides whether
+`openEngineWebSession` succeeds. It is set by the strictest capability gate,
+not by the decoder:
+
+| Requirement | Safari / iOS Safari |
+| --- | --- |
+| OPFS write (`createSyncAccessHandle`) | 15.2 |
+| `SharedArrayBuffer`, cross-origin isolation | 15.2 |
+| Web Locks | 15.4 |
+| WebAssembly SIMD128 (Engine `simd128` backend) | **16.4** |
+
+**A session therefore requires Safari 16.4 or newer**, on macOS and iOS.
+Chromium requires 102 or newer and Firefox 111 or newer, both for the same
+OPFS write method. Any browser that cannot write to OPFS is refused at the
+capability boundary with `EngineWebAdapterError` code `capability.opfs`, whose
+`details.missing` and `details.remedy` name the missing method and the versions
+that provide it; it is never an untyped `TypeError` from inside the store.
 
 Package-relative asset URLs and overrides are exported from
 `@misofm/engine-web-adapter/assets`. They cover the scratch Worker, FLAC Worker,
@@ -158,3 +181,12 @@ is the explicit networked acceptance profile: it binds the configured CORS
 origin at `http://127.0.0.1:5173`, performs a cold packed-package ingest, and
 then proves that a warm reopen uses no additional locator, Worker, or network
 work. The live profile is intentionally not part of `npm run check`.
+
+`npm run test:browser:opfs` runs the packed OPFS write path in **both** Chromium
+and WebKit. It proves a cold ingest verifies into OPFS, that the same ingest
+still verifies with `FileSystemFileHandle.prototype.createWritable` deleted (the
+Safari 17/18 shape), that the store never calls `createWritable`, and that a
+browser without OPFS handles is refused with a typed `capability.opfs` error
+carrying a remedy. It needs a Chromium binary plus
+`node node_modules/playwright-core/cli.js install webkit`, so like the browser
+gates above it is not part of `npm run check`.

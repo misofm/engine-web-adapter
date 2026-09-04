@@ -1,3 +1,8 @@
+import type { AdapterAssetOverrides } from "../assets.js";
+import { EngineWebAdapterError } from "../errors.js";
+import { OpfsWriteWorkerClient } from "./opfs-worker-client.js";
+import { OPFS_WRITE_REMEDY } from "./opfs-worker-protocol.js";
+import type { OpfsWorkerLike } from "./opfs-worker-protocol.js";
 import { deadline } from "./sha256.js";
 
 export interface StemStorageWriter {
@@ -19,12 +24,6 @@ export interface StemStorageBackend {
   estimate?(): Promise<{ readonly quota?: number; readonly usage?: number }>;
 }
 
-interface WritableLike {
-  write(data: Uint8Array | string): Promise<void>;
-  close(): Promise<void>;
-  abort(reason?: unknown): Promise<void>;
-}
-
 interface FileLike {
   stream(): ReadableStream<Uint8Array>;
   text(): Promise<string>;
@@ -32,7 +31,6 @@ interface FileLike {
 
 interface FileHandleLike {
   getFile(): Promise<FileLike>;
-  createWritable(): Promise<WritableLike>;
   move?: (directory: DirectoryHandleLike, name: string) => Promise<void>;
 }
 
@@ -48,17 +46,26 @@ export interface StorageManagerLike {
   estimate?(): Promise<{ readonly quota?: number; readonly usage?: number }>;
 }
 
-/** Flat OPFS directory backend. All large-file operations are streamed. */
+/**
+ * Flat OPFS directory backend. All large-file operations are streamed.
+ *
+ * Reads run on the calling thread. Writes run through one OPFS Worker because
+ * `createSyncAccessHandle()` is the only write API every target engine ships
+ * and its handle is synchronous, so it cannot be created on the main thread.
+ */
 export class OpfsStorageBackend implements StemStorageBackend {
   readonly #folderName: string;
   readonly #storage: StorageManagerLike | undefined;
   readonly #readDeadlineMs: number;
+  readonly #writes: OpfsWriteWorkerClient;
   #directory: DirectoryHandleLike | undefined;
 
   constructor(options: {
     readonly folderName?: string;
     readonly storage?: StorageManagerLike;
     readonly readDeadlineMs?: number;
+    readonly assets?: AdapterAssetOverrides;
+    readonly createWorker?: () => OpfsWorkerLike;
   } = {}) {
     this.#folderName = options.folderName ?? "miso-engine-web-stems-v1";
     if (this.#folderName.length === 0 || this.#folderName === "." || this.#folderName === ".." || this.#folderName.includes("/")) {
@@ -66,14 +73,29 @@ export class OpfsStorageBackend implements StemStorageBackend {
     }
     this.#storage = options.storage ?? browserStorage();
     this.#readDeadlineMs = options.readDeadlineMs ?? 15_000;
+    this.#writes = new OpfsWriteWorkerClient({
+      ...(options.assets === undefined ? {} : { assets: options.assets }),
+      ...(options.createWorker === undefined ? {} : { createWorker: options.createWorker }),
+    });
   }
 
   async open(): Promise<void> {
     if (this.#directory !== undefined) return;
-    if (this.#storage === undefined) throw new DOMException("Origin-private storage is unavailable", "NotSupportedError");
+    if (this.#storage === undefined) {
+      throw new EngineWebAdapterError("capability.opfs", "Origin-private storage is unavailable", {
+        missing: "navigator.storage.getDirectory",
+        remedy: OPFS_WRITE_REMEDY,
+      });
+    }
+    // The Worker is the only scope that can see the write method, so the
+    // refusal happens here: still before any resolver, network, or decode work.
+    await deadline(this.#writes.assertWriteSupport(), this.#readDeadlineMs);
     const root = await deadline(this.#storage.getDirectory(), this.#readDeadlineMs);
     this.#directory = await deadline(root.getDirectoryHandle(this.#folderName, { create: true }), this.#readDeadlineMs);
   }
+
+  /** Release the OPFS write Worker. Idempotent; the backend stays usable. */
+  close(): void { this.#writes.close(); }
 
   async list(): Promise<readonly string[]> {
     const directory = this.#opened();
@@ -107,8 +129,13 @@ export class OpfsStorageBackend implements StemStorageBackend {
   }
 
   async createWriter(name: string): Promise<StemStorageWriter> {
-    const handle = await deadline(this.#opened().getFileHandle(name, { create: true }), this.#readDeadlineMs);
-    return deadline(handle.createWritable(), this.#readDeadlineMs);
+    this.#opened();
+    const writer = await deadline(this.#writes.createWriter(this.#folderName, name), this.#readDeadlineMs);
+    return {
+      write: (chunk) => deadline(writer.write(chunk), this.#readDeadlineMs),
+      close: () => deadline(writer.close(), this.#readDeadlineMs),
+      abort: (reason) => deadline(writer.abort(reason), this.#readDeadlineMs),
+    };
   }
 
   async move(from: string, to: string): Promise<void> {

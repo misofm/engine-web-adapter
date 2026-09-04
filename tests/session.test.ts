@@ -33,6 +33,7 @@ test("every required browser capability has a stable typed refusal", () => {
     ["AudioContext", "capability.audio_worklet"],
     ["AudioWorkletNode", "capability.audio_worklet"],
     ["navigator", "capability.opfs"],
+    ["FileSystemFileHandle", "capability.opfs"],
     ["WebAssembly", "capability.simd128"],
   ];
   for (const [missing, code] of cases) {
@@ -47,6 +48,27 @@ test("every required browser capability has a stable typed refusal", () => {
     () => assertEngineWebCapabilities(noLocks),
     (error: unknown) => error instanceof EngineWebAdapterError && error.code === "capability.web_locks",
   );
+});
+
+test("OPFS refusals name what is missing and carry a remedy", () => {
+  // Safari 17/18 shape: OPFS handles present, createWritable absent. It must
+  // pass, because the store no longer uses createWritable.
+  assert.doesNotThrow(() => assertEngineWebCapabilities({
+    ...capabilities(), FileSystemFileHandle: class { getFile() {} },
+  }));
+  for (const [scope, missing] of [
+    [{ ...capabilities(), navigator: { locks: { request() {} } } }, "navigator.storage.getDirectory"],
+    [{ ...capabilities(), FileSystemFileHandle: undefined }, "FileSystemFileHandle"],
+  ] as const) {
+    assert.throws(
+      () => assertEngineWebCapabilities(scope),
+      (error: unknown) => error instanceof EngineWebAdapterError
+        && error.code === "capability.opfs"
+        && error.details["missing"] === missing
+        && typeof error.details["remedy"] === "string"
+        && (error.details["remedy"] as string).includes("15.2"),
+    );
+  }
 });
 
 test("default module Worker handshake fails before store or resolver work", async () => {
@@ -508,6 +530,7 @@ function capabilities(): NonNullable<EngineWebSessionOptions["capabilityScope"]>
     AudioWorkletNode: class {} as unknown as typeof AudioWorkletNode,
     WebAssembly: { validate: () => true },
     navigator: { storage: { getDirectory() {} }, locks: { request() {} } },
+    FileSystemFileHandle: class { getFile() {} },
   };
 }
 
