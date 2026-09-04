@@ -2,11 +2,11 @@
 
 ## Mission
 
-Build a headless, framework-neutral browser host for `@misofm/engine`. Dense,
-fixed-block FLAC prepared by the Miso CLI is the first-party browser delivery
-format. The adapter streams it through bounded HTTP ranges, Worker-side
-WebCodecs decode, canonical PCM verification and OPFS caching, then feeds the
-engine through bounded browser primitives. An already-decoded canonical-PCM
+Build a headless, framework-neutral browser host for `@misofm/engine`. Native
+FLAC is the first-party browser delivery format. The adapter streams it through
+bounded Effect HTTP ranges, a single fixed shared input slot, and package-owned
+universal libFLAC Wasm, verifies canonical PCM into OPFS, then feeds the engine
+through bounded browser primitives. An already-decoded canonical-PCM
 resolver remains an explicit lower-level escape hatch.
 
 The package owns browser delivery mechanics, not product delivery policy. Do

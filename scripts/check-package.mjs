@@ -20,10 +20,14 @@ const names = new Set(report.files.map((file) => file.path));
 for (const required of [
   "dist/index.js", "dist/index.d.ts", "dist/internal/engine-web-scratch-worker.js",
   "dist/internal/engine-web-pcm-pump-worker.js", "dist/internal/engine-web-flac-worker.js",
+  "dist/internal/engine-web-flac-decoder.wasm",
   "dist/internal/engine-web-feed-worklet.js",
-  "README.md", "NOTICE", "LICENSE",
+  "README.md", "NOTICE", "LICENSE", "vendor/libflac-1.5.0/COPYING.Xiph",
 ]) assert.ok(names.has(required), `packed artifact missing ${required}`);
 assert.ok([...names].every((name) => !name.startsWith("tests/") && !name.startsWith("src/")), "source/tests leaked into tarball");
+for (const removed of ["dist/stems/flac-packetizer.js", "dist/stems/flac-ingest.js", "dist/stems/flac-pcm.js", "dist/stems/flac-metadata.js"]) {
+  assert.ok(!names.has(removed), `packed artifact retained obsolete decoder path ${removed}`);
+}
 
 const sourceFiles = [...names].filter((name) => name.endsWith(".js") && name.startsWith("dist/"));
 for (const file of sourceFiles) {

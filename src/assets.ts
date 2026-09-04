@@ -1,6 +1,7 @@
 export const ADAPTER_ASSET_FILES = Object.freeze({
   scratchWorker: "./internal/engine-web-scratch-worker.js",
   flacWorker: "./internal/engine-web-flac-worker.js",
+  flacDecoderWasm: "./internal/engine-web-flac-decoder.wasm",
   pumpWorker: "./internal/engine-web-pcm-pump-worker.js",
   feedWorkletModule: "./internal/engine-web-feed-worklet.js",
 } as const);
@@ -9,6 +10,7 @@ export const ADAPTER_ASSET_FILES = Object.freeze({
 export const ADAPTER_ASSETS = Object.freeze({
   scratchWorker: new URL("./internal/engine-web-scratch-worker.js", import.meta.url),
   flacWorker: new URL("./internal/engine-web-flac-worker.js", import.meta.url),
+  flacDecoderWasm: new URL("./internal/engine-web-flac-decoder.wasm", import.meta.url),
   pumpWorker: new URL("./internal/engine-web-pcm-pump-worker.js", import.meta.url),
   feedWorkletModule: new URL("./internal/engine-web-feed-worklet.js", import.meta.url),
 });
@@ -16,6 +18,7 @@ export const ADAPTER_ASSETS = Object.freeze({
 export interface AdapterAssetOverrides {
   readonly scratchWorkerUrl?: string | URL;
   readonly flacWorkerUrl?: string | URL;
+  readonly flacDecoderWasmUrl?: string | URL;
   readonly pumpWorkerUrl?: string | URL;
   readonly feedWorkletModuleUrl?: string | URL;
   readonly engineWasmUrl?: string | URL;

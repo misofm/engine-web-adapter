@@ -1,7 +1,7 @@
 {
   "name": "@misofm/engine-web-adapter",
   "version": "0.2.0",
-  "description": "Bounded dense-FLAC browser session adapter for @misofm/engine",
+  "description": "Bounded native-FLAC browser session adapter for @misofm/engine",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -15,7 +15,8 @@
     "dist",
     "LICENSE",
     "NOTICE",
-    "README.md"
+    "README.md",
+    "vendor/libflac-1.5.0/COPYING.Xiph"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -41,17 +42,18 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "prepack": "npm run build",
     "format:check": "node scripts/check-format.mjs",
     "lint": "npm run typecheck && node scripts/check-source-policy.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "test": "npm run build && node scripts/clean-test-dist.mjs && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
     "test:browser": "node scripts/browser-packed.mjs",
     "test:browser:live": "node scripts/browser-packed.mjs --live",
     "check:package": "npm run build && node scripts/check-package.mjs",
+    "check:decoder": "node scripts/check-flac-decoder.mjs",
     "publish:dry-run": "npm publish --dry-run",
-    "check": "npm run format:check && npm run lint && npm test && npm run check:package"
+    "check": "npm run format:check && npm run lint && npm run check:decoder && npm test && npm run check:package"
   },
   "dependencies": {
     "@misofm/engine": "0.1.0",

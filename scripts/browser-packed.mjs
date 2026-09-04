@@ -22,7 +22,7 @@ const profile = live ? {
   etag: '"5cc22b5075610fc68f75247c7d135dd9"',
 } : {
   name: "fixture",
-  url: "/dense-silence.flac",
+  url: "/native-silence.flac",
   identity: "sha256:ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
   sampleRateHz: 48_000,
   channels: 1,
@@ -30,7 +30,7 @@ const profile = live ? {
   frames: 2_048,
   canonicalBytes: 4_096,
   remoteBytes: 206,
-  etag: '"dense-silence-v1"',
+  etag: '"native-silence-v1"',
 };
 const chrome = resolveChromeExecutable();
 const root = await mkdtemp(join(tmpdir(), "engine-web-adapter-browser-"));
@@ -47,7 +47,7 @@ for (const dependency of ["fast-check", "pure-rand", "msgpackr", "msgpackr-extra
   await cp(join(process.cwd(), "node_modules", dependency), join(consumer, "node_modules", dependency), { recursive: true });
 }
 await mkdir(join(consumer, "public"));
-await cp(join(process.cwd(), "tests", "fixtures", "dense-silence.flac"), join(consumer, "public", "dense-silence.flac"));
+await cp(join(process.cwd(), "tests", "fixtures", "native-silence.flac"), join(consumer, "public", "native-silence.flac"));
 await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
 await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><script type="module" src="/src/main.ts"></script>\n');
 await mkdir(join(consumer, "src"));
@@ -80,8 +80,8 @@ const server = createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url ?? "/", "http://local").pathname;
     if (pathname === "/favicon.ico") { response.statusCode = 204; response.end(); return; }
-    if (pathname === "/dense-silence.flac") {
-      const bytes = await readFile(join(dist, "dense-silence.flac"));
+    if (pathname === "/native-silence.flac") {
+      const bytes = await readFile(join(dist, "native-silence.flac"));
       const match = /^bytes=(\d+)-(\d+)$/u.exec(String(request.headers.range ?? ""));
       if (match === null) { response.statusCode = 400; response.end("exact range required"); return; }
       const start = Number(match[1]);
@@ -95,7 +95,7 @@ const server = createServer(async (request, response) => {
       response.setHeader("Content-Type", "audio/flac");
       response.setHeader("Content-Range", `bytes ${start}-${end}/${bytes.byteLength}`);
       response.setHeader("Content-Length", String(end - start + 1));
-      response.setHeader("ETag", '"dense-silence-v1"');
+      response.setHeader("ETag", '"native-silence-v1"');
       response.end(bytes.subarray(start, end + 1));
       return;
     }
@@ -144,7 +144,8 @@ try {
   assert.equal(result.result?.warmClosed, true);
   assert.deepEqual(consoleErrors, []);
   const requested = [...requests.entries()];
-  assert.ok(requested.some(([path, mime]) => path.endsWith(".wasm") && mime === "application/wasm"), "Wasm asset/MIME not observed");
+  assert.ok(requested.some(([path, mime]) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm") && mime === "application/wasm"), "decoder Wasm asset/MIME not observed");
+  assert.ok(requested.some(([path, mime]) => path.includes("miso-engine") && path.endsWith(".wasm") && mime === "application/wasm"), "Engine Wasm asset/MIME not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("scratch-worker") && mime.includes("javascript")), "scratch Worker asset not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("flac-worker") && mime.includes("javascript")), "FLAC Worker asset not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("pcm-pump-worker") && mime.includes("javascript")), "pump Worker asset not observed");
