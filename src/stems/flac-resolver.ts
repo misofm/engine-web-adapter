@@ -2,12 +2,13 @@ import type { Layer } from "effect";
 import type { HttpClient } from "effect/unstable/http";
 
 import { EngineWebAdapterError } from "../errors.js";
-import type { AdapterAssetOverrides } from "../assets.js";
+import { ADAPTER_ASSETS, type AdapterAssetOverrides } from "../assets.js";
 import type { BoundedStemAdmission } from "./flac-admission.js";
 import { assertStemIdentity } from "./identity.js";
 import { readExactFlacRange, type FlacLocator } from "./flac-delivery.js";
 import { MAXIMUM_DELIVERY_CHUNK_BYTES } from "./flac-metadata.js";
 import { FlacWorkerPool, type FlacWorkerPoolOptions } from "./flac-worker-pool.js";
+import { FlacInputSlotProducer } from "./flac-input-slot.js";
 import type { FlacWorkerLike, FlacWorkerResponse } from "./flac-worker-protocol.js";
 import type { ResolvedStem, StemIdentity, StemProgress, StemResolver } from "./types.js";
 
@@ -56,6 +57,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
       const controller = new AbortController();
       const requestId = nextRequestId++;
       let worker: FlacWorkerLike | undefined;
+      let decoderInput: FlacInputSlotProducer | undefined;
       let ended = false;
       let failure: unknown;
       const blocks: ArrayBuffer[] = [];
@@ -70,6 +72,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
       );
       const cancel = (reason: unknown) => {
         const error = cancelled(reason);
+        decoderInput?.abort();
         if (stopActive === undefined) controller.abort(error);
         else stopActive(error, true);
       };
@@ -82,6 +85,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
         ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
         work: (physical) => new Promise<void>((resolve, reject) => {
           worker = physical;
+          decoderInput = new FlacInputSlotProducer();
           let stopping = false;
           let offset = 0;
           let totalBytes: number | undefined;
@@ -97,6 +101,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
             stopping = true;
             stopActive = undefined;
             cleanup();
+            if (!successful) decoderInput?.abort();
             if (sendCancel) {
               try { physical.postMessage({ type: "cancel", requestId }); } catch { /* termination is authoritative */ }
             }
@@ -172,6 +177,8 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
           try {
             physical.postMessage({
               type: "start", requestId, identity,
+              decoderWasmUrl: String(options.assets?.flacDecoderWasmUrl ?? ADAPTER_ASSETS.flacDecoderWasm),
+              inputSlot: decoderInput!.buffers,
               ...(resolveOptions.expected === undefined ? {} : { expected: resolveOptions.expected }),
             });
           } catch (error) { stop(error, false); }

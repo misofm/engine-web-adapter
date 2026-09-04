@@ -291,6 +291,7 @@ test("resolver follows Worker credit with exact nonoverlapping ranges and dispos
   const worker = new FakeWorker();
   const resolver = createFlacStemResolver({
     createWorker: () => worker,
+    assets: { flacDecoderWasmUrl: "https://caller.invalid/decoder.wasm" },
     hardwareConcurrency: 2,
     maximumAttempts: 1,
     locate: () => "https://caller.invalid/stem",
@@ -310,6 +311,10 @@ test("resolver follows Worker credit with exact nonoverlapping ranges and dispos
   assert.deepEqual(ranges, ["bytes=0-3", "bytes=4-7", "bytes=8-9"]);
   assert.equal(worker.terminated, true);
   assert.ok(worker.posted.some((message) => message.type === "output-credit"));
+  const start = worker.posted.find((message): message is Extract<FlacWorkerRequest, { type: "start" }> =>
+    message.type === "start")!;
+  assert.equal(start.decoderWasmUrl, "https://caller.invalid/decoder.wasm");
+  assert.equal(start.inputSlot.bytes.byteLength, 256 * 1024);
 });
 
 test("mid-body retry resumes at Worker credit without duplicated accepted bytes", async () => {
@@ -793,4 +798,5 @@ test("FLAC Worker package asset has a literal URL and honors override factories"
   }), fake);
   assert.deepEqual(calls, ["https://caller.invalid/custom-worker.js"]);
   assert.match(ADAPTER_ASSETS.flacWorker.href, /engine-web-flac-worker\.js$/u);
+  assert.match(ADAPTER_ASSETS.flacDecoderWasm.href, /engine-web-flac-decoder\.wasm$/u);
 });
