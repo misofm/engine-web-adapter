@@ -6,6 +6,9 @@ import type {
 } from "@misofm/engine/browser";
 
 import type { AdapterAssetOverrides } from "./assets.js";
+import type { WebCapabilityScope } from "./capabilities.js";
+import type { AudioWorkletNodeLike, EngineFeed } from "./feed.js";
+import type { PcmPumpSource } from "./stems/pump.js";
 import type {
   DeclaredStemSource,
   StemProgress,
@@ -16,6 +19,17 @@ import type {
 export type EngineSessionDocument = Uint8Array | string | { toJson(): string };
 export type EngineWebSessionState = "opening" | "ready" | "playing" | "paused" | "closed";
 
+export interface EngineAudioContext extends AudioContextLike {
+  readonly destination: AudioNode;
+  resume(): Promise<void>;
+  suspend(): Promise<void>;
+}
+
+export interface EnginePump {
+  seekFrames(frame: number | bigint): Promise<bigint>;
+  close(): Promise<void> | void;
+}
+
 export interface EngineWebSessionOptions {
   readonly document: EngineSessionDocument;
   readonly leaseId: string;
@@ -25,11 +39,27 @@ export interface EngineWebSessionOptions {
   readonly onProgress?: (progress: StemProgress) => void;
   readonly policy?: BrowserBootPolicy;
   readonly assets?: AdapterAssetOverrides;
+  readonly capabilityScope?: WebCapabilityScope;
   readonly store?: StemStore;
   readonly createContext?: (options: {
     readonly sampleRate: number;
     readonly renderSizeHint: number;
-  }) => AudioContextLike;
+  }) => EngineAudioContext;
+  readonly scratchBoot?: (request: {
+    readonly document: Uint8Array;
+    readonly options: import("@misofm/engine").BootOptions;
+  }) => Promise<SessionShape>;
+  readonly createHost?: import("@misofm/engine/browser").CreateEngineOptions["createHost"];
+  readonly createAttachNode?: (
+    context: BaseAudioContext,
+    name: string,
+    options: AudioWorkletNodeOptions,
+  ) => AudioWorkletNodeLike;
+  readonly createPump?: (options: {
+    readonly lease: import("./stems/index.js").StemSessionLease;
+    readonly sources: readonly PcmPumpSource[];
+    readonly signal: AbortSignal;
+  }) => Promise<EnginePump>;
   readonly createOutput?: (options: {
     readonly context: AudioContextLike;
     readonly engineNode: AudioNode;
@@ -38,7 +68,7 @@ export interface EngineWebSessionOptions {
 
 export interface EngineWebSession {
   readonly shape: SessionShape;
-  readonly context: AudioContextLike;
+  readonly context: EngineAudioContext;
   readonly host: BrowserEngine["host"];
   readonly console: EngineConsole;
   readonly output: AudioNode;

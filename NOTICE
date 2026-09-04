@@ -12,3 +12,7 @@ The bounded PCM pump and MSB1 writer were adapted from that same authorized
 Engine baseline. The MSB1 allocation/reader contract was adapted from the
 issue-authorized misofm/app browser composition baseline at commit
 7485693e9bbcf2f65a91a4e5950e22d678d99062.
+
+The AudioWorklet feed prelude and its attach-port mechanism were adapted from
+that same authorized misofm/app commit. The prelude retains the Engine worklet
+module unchanged and drains MSB1 through its existing synchronous Wasm ABI.

@@ -1,0 +1,58 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import vm from "node:vm";
+
+import { Msb1RingWriter, createMsb1Ring } from "../src/stems/index.js";
+
+test("shipped prelude wraps Engine process and submits MSB1 through the synchronous Wasm ABI", async () => {
+  const registrations = new Map<string, new () => any>();
+  class AudioWorkletProcessorFake {
+    readonly port = { onmessage: null as ((event: { data: unknown }) => void) | null };
+  }
+  const sandbox = {
+    SharedArrayBuffer, Int32Array, BigInt64Array, Uint8Array, Float32Array, Atomics,
+    TextDecoder,
+    AudioWorkletProcessor: AudioWorkletProcessorFake,
+    registerProcessor(name: string, constructor: new () => any) { registrations.set(name, constructor); },
+  };
+  Object.assign(sandbox, { globalThis: sandbox });
+  const source = await readFile("src/internal/engine-web-feed-worklet.js", "utf8");
+  vm.runInNewContext(source, sandbox);
+
+  const submissions: Array<{ generation: bigint; start: bigint; frames: number }> = [];
+  class EngineProcessor {
+    readonly quantumFrames = 4;
+    readonly maximumSourceChannels = 1;
+    readonly memoryBuffer = new ArrayBuffer(65_536);
+    readonly sourceIdPointer = 0;
+    readonly sourceIdCapacity = 128;
+    readonly sourcePcm = new Float32Array(this.memoryBuffer, 1024, 4);
+    readonly handle = 1;
+    readonly ready = true;
+    readonly disposed = false;
+    readonly stickyResult = 0;
+    readonly exports = {
+      memory: { buffer: this.memoryBuffer },
+      miso_engine_web_v1_source_seek: () => 0,
+      miso_engine_web_v1_source_submit: (_handle: number, _id: number, generation: bigint, start: bigint, _channels: number, frames: number) => {
+        submissions.push({ generation, start, frames }); return 0;
+      },
+    };
+    process() { return true; }
+  }
+  sandbox.registerProcessor("miso-engine-v1-audio-worklet", EngineProcessor);
+  const Wrapped = registrations.get("miso-engine-v1-audio-worklet")!;
+  const Attach = registrations.get("miso-sab-feed-attach")!;
+  const engine = new Wrapped() as any;
+  const attach = new Attach() as InstanceType<typeof AudioWorkletProcessorFake>;
+  const ring = createMsb1Ring({ sourceId: "source", channels: 1, frameCapacity: 4, capacity: 2 });
+  attach.port.onmessage?.({ data: { op: "attach", rings: [ring] } });
+  const writer = new Msb1RingWriter(ring);
+  writer.engage(1n);
+  const planes = writer.reserve(4)!;
+  planes[0]!.set([0, 0.25, -0.25, 1]);
+  writer.commit({ generation: 1n, startFrame: 0n, frames: 4, endOfRegion: true });
+  engine.process([], []);
+  assert.deepEqual(submissions, [{ generation: 1n, start: 0n, frames: 4 }]);
+});

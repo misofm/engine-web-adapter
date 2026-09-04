@@ -15,6 +15,9 @@ export interface AdapterAssetOverrides {
   readonly scratchWorkerUrl?: string | URL;
   readonly pumpWorkerUrl?: string | URL;
   readonly feedWorkletModuleUrl?: string | URL;
+  readonly engineWasmUrl?: string | URL;
+  readonly engineWorkletModuleUrl?: string | URL;
+  readonly engineHostModuleUrl?: string | URL;
   readonly createWorker?: (
     url: string | URL,
     options: WorkerOptions & { readonly type: "module" },
