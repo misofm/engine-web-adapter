@@ -18,8 +18,9 @@ the generic `StemResolver` contract.
   vendor provenance.
 - Browser feed/composition lessons: `misofm/app` commit
   `7485693e9bbcf2f65a91a4e5950e22d678d99062`.
-- Engine browser contracts/assets: exact `@misofm/engine` version used for
-  qualification.
+- Engine browser contracts/assets: `@misofm/engine@0.1.0`, published through
+  GitHub OIDC from `misofm/engine` commit
+  `5360874854f47e3dbfa2279ec6c57174e5ca018e` and released as `sdk-v0.1.0`.
 
 Engine issue #352 commits `3ab49a3d`, `bf1a6672`, and `6a08315c` are explicitly
 quarantined and must not be copied. Parallel/off-main-thread warm verification
@@ -38,8 +39,9 @@ host, semantic console, output node, state, and serialized `play`, `pause`,
 `seekFrames`, and idempotent `close` operations. A caller closes and constructs a
 new instance to switch sessions in v0.1.
 
-Open order is validate/capabilities; OPFS verify-or-ingest and lease; scratch
-boot; rate-matched AudioContext; adapter feed prelude before engine worklet;
+Open order is validate/capabilities; load and handshake the scratch module
+Worker; OPFS verify-or-ingest and lease; scratch boot; rate-matched
+AudioContext; adapter feed prelude before engine worklet;
 engine host; one MSB1 ring per compiled source; self-driving PCM pump; bounded
 prefill; output connection; semantic console; ready. Failure cleanup and close
 run in reverse, keeping the lease until all readers stop. `play()` invokes
@@ -62,8 +64,9 @@ bundler-recognizable `new Worker(new URL(..., import.meta.url), { type:
 - Depend on one exact compatible `@misofm/engine` release; do not embed its
   tarball or copy a second host implementation unless packed-consumer evidence
   proves its exported host asset cannot load.
-- `@misofm/engine@0.1.0` is not currently in npm. Engine-first, adapter-second
-  release sequencing is an explicit publication dependency.
+- Depend exactly on the now-public `@misofm/engine@0.1.0`; its npm integrity,
+  provenance, public entry imports, and `enginectl` executable passed release
+  workflow `33867057291`. Engine-first sequencing is satisfied.
 - ESM only, Apache-2.0, Node-supported build/test tooling, reproducible lockfile,
   explicit `files`/exports, side-effect declarations for deployable assets, and
   provenance/NOTICE for copied source.
@@ -121,3 +124,60 @@ pumping; postMessage fallback; and Firefox/WebKit/iOS qualification.
 A fresh Sol xhigh produced this brief. Sol medium implements the smallest
 publishable vertical slice. A fresh Sol high then reviews it adversarially.
 Failed gates are recorded; no gate is weakened to declare readiness.
+
+## Attempt evidence and decisions
+
+Attempt 1 (`8fea81a`) failed adversarial review. The release blockers were
+real implementation gaps, not qualification exceptions: pump ticks could race
+seek, worklet seek backpressure was marked applied, lifecycle close could sit
+behind a hung operation, Worker RPCs had no failure/deadline path, crash
+recovery ignored live Web Locks, a typed-array view and tail subview could be
+created in `process()`, declarations were order-coupled, and the packed browser
+path had not been exercised.
+
+Revision attempt 2 fixes those findings with one serialized Worker queue;
+retry-without-mutation for seek backpressure; synchronously aborting close and
+last-call lifecycle ordering; bounded Worker RPC; an early scratch Worker
+handshake; held/pending Web Locks recovery protection with conservative
+query-unavailable behavior; attach-time views and full pre-zeroed plane copies;
+ID-based compiled ordering; and a persistent extracted-tarball Vite/Chromium
+COOP/COEP harness. Live browser qualification also found that the low-level
+Engine host asset requires `toWebBootOptions(request.options)`; the adapter now
+uses the Engine package's own conversion, matching the authorized app
+baseline. The harness records cold/warm cache reuse, play/pause, an unaligned
+seek, close, accepted submissions, zero refused/torn/feed errors, and emitted
+asset MIME.
+
+The subsequent clean-checkout audit made the package gate build before
+inventory, separated source lint from built-artifact policy, and pinned Vite
+plus Playwright Core as development-only harness dependencies. The browser
+gate now resolves those tools locally and discovers Chrome/Chromium from an
+explicit environment override or standard installation paths. Query-less Web
+Locks recovery keeps ambiguous staging and final files, and the prepared
+scratch Worker is terminated immediately after Engine construction instead of
+living for the playback session.
+
+Final revision attempt 3 closed the remaining review findings: the exported
+`SelfDrivingPcmPump` now serializes its drive ticks and seeks on one queue; the
+package `prepack` lifecycle always builds before pack, publish, and the browser
+harness; and a conflicting byte count cannot demote verified cached content or
+its live pins. Clean-`dist` runs of check, packed Chromium, and publish dry-run
+exercise those contracts.
+
+Attempt 3 nevertheless received a final FAIL: a timed-out
+`PcmPumpWorkerClient.seekFrames()` rejected its public promise without first
+terminating the Worker, so the delayed Worker could still apply the rejected
+seek. The three-attempt stop is binding. No fourth correction belongs to this
+issue; the single remaining invariant is split into issue #2.
+
+Issue #2 closed that successor invariant at commit `f871c4c`: every terminal
+timeout or cancellation now terminates the pump Worker before rejecting, and
+the same-task initialize/abort boundary cannot expose a closed client. Fresh
+Sol high review recorded PASS with no findings. Together, the issue #1 slice
+and its bounded successor satisfy the publishable V0.1 contract.
+
+`BigInt` is a JavaScript primitive and the language specification does not
+promise whether a particular engine allocates for its operations. No parallel
+ABI was invented. Measuring the shipping worklet's BigInt behavior under the
+qualified Chromium runtime remains a performance follow-up; it is not asserted
+as allocation evidence by source inspection.
