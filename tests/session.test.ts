@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { BrowserEngine } from "@misofm/engine/browser";
+import { Effect } from "effect";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { EngineWebAdapterError, openEngineWebSession } from "../src/index.js";
 import { assertEngineWebCapabilities } from "../src/capabilities.js";
 import { MSB1_CONTROL } from "../src/stems/index.js";
+import { runFlacIngest } from "../src/stems/flac-ingest.js";
+import { FlacWorkerMailbox } from "../src/stems/flac-worker-mailbox.js";
 import type { EngineAudioContext, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
-import type { StemResolver, StemSessionLease, StemStore } from "../src/stems/index.js";
+import type { FlacWorkerRequest, FlacWorkerResponse, StemResolver, StemSessionLease, StemStore } from "../src/stems/index.js";
 
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
 const IDENTITY_Z = `sha256:${"b".repeat(64)}` as const;
@@ -259,12 +263,222 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
   await assert.rejects(hungPlay, (error: unknown) => error instanceof DOMException && error.name === "AbortError");
 });
 
+test("session snapshots document and source declarations before deferred scratch work", async () => {
+  const originalSources = [{
+    id: "source",
+    spec: { channels: 1 as const, bitDepth: 16 as const, frames: 4, content: IDENTITY },
+  }];
+  const document = new TextEncoder().encode(documentFor(originalSources));
+  const snapshot = new Uint8Array(document);
+  const scratchStarted = deferred<void>();
+  const releaseScratch = deferred<void>();
+  let scratchDocument: Uint8Array | undefined;
+  let hostDocument: Uint8Array | undefined;
+  let storeStem: unknown;
+  const events: string[] = [];
+  const context = fakeContext(events);
+  const host = {
+    node: { connect() {}, disconnect() {} },
+    async sessionMap() { return { tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }], metersAttached: false }; },
+    async command() { return { ok: true, result: 0, code: "ok", reason: 0, reasonName: "none", rejectedIndex: 0, admitted: 0, appliedAtSample: 0n }; },
+    async dispose() {},
+  } as unknown as BrowserEngine["host"];
+  const lease: StemSessionLease = {
+    leaseId: "snapshot", stems: [{ sourceId: "source", identity: IDENTITY, bytes: 8 }],
+    async read() { return new Blob([new Uint8Array(8)]); }, async close() {},
+  };
+  const opening = openEngineWebSession({
+    document,
+    leaseId: "snapshot",
+    sources: originalSources as EngineWebSessionCommonOptions["sources"],
+    resolver: { async resolve() { throw new Error("warm fixture must not resolve"); } },
+    capabilityScope: capabilities(),
+    store: {
+      async open() { return this; },
+      async openSession(request) { storeStem = request.stems[0]; return lease; },
+    },
+    scratchBoot: async (request) => {
+      scratchDocument = request.document;
+      scratchStarted.resolve();
+      await releaseScratch.promise;
+      return {
+        sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
+        sources: [{ id: "source", channels: 1, frames: 4n }], tracks: [],
+      };
+    },
+    createContext: () => context,
+    createHost: async (request) => { hostDocument = request.document; return host; },
+    createAttachNode: () => ({
+      port: { postMessage(message: unknown) {
+        const value = message as { op: string; rings?: SharedArrayBuffer[] };
+        if (value.op === "attach") for (const ring of value.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+      } },
+      disconnect() {},
+    }),
+    createPump: async ({ sources }) => {
+      for (const source of sources) Atomics.store(new Int32Array(source.ring), MSB1_CONTROL.WROTE, 1);
+      return { async seekFrames() { return 0n; }, close() {} };
+    },
+    createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+  });
+  await scratchStarted.promise;
+  document.fill(0x78);
+  const mutable = originalSources[0]! as any;
+  mutable.id = "mutated";
+  mutable.spec.channels = 2;
+  mutable.spec.bitDepth = "32f";
+  mutable.spec.frames = 99;
+  mutable.spec.content = IDENTITY_Z;
+  releaseScratch.resolve();
+  const session = await opening;
+  assert.deepEqual(scratchDocument, snapshot, "scratch sees owned document snapshot A");
+  assert.deepEqual(hostDocument, snapshot, "createEngine host sees the same document snapshot A");
+  assert.deepEqual(storeStem, { sourceId: "source", identity: IDENTITY, bytes: 8 });
+  assert.deepEqual(session.shape.sources, [{ id: "source", channels: 1, frames: 4n }]);
+  await session.close();
+});
+
+test("high-level FLAC path honors common Worker assets with nested FLAC precedence", async () => {
+  for (const nested of [false, true]) {
+    const urls: string[] = [];
+    const workers: ErrorOnStartWorker[] = [];
+    const base = baseOptions();
+    const { resolver: _resolver, ...common } = base;
+    await assert.rejects(openEngineWebSession({
+      ...common,
+      capabilityScope: capabilities(),
+      assets: {
+        flacWorkerUrl: "https://caller.invalid/common-flac-worker.js",
+        createWorker(url) {
+          urls.push(String(url));
+          const worker = new ErrorOnStartWorker();
+          workers.push(worker);
+          return worker as unknown as Worker;
+        },
+      },
+      flac: {
+        locate: () => "https://caller.invalid/stem.flac",
+        ...(nested ? { assets: { flacWorkerUrl: "https://caller.invalid/nested-flac-worker.js" } } : {}),
+      },
+      scratchBoot: async () => ({
+        sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
+        sources: [{ id: "source", channels: 1, frames: 4n }], tracks: [],
+      }),
+      store: {
+        async open() { return this; },
+        async openSession(request) {
+          const reader = (await request.resolver.resolve(IDENTITY)).stream.getReader();
+          await reader.read();
+          throw new Error("unreachable");
+        },
+      },
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.decode.worker");
+    assert.deepEqual(urls, [nested
+      ? "https://caller.invalid/nested-flac-worker.js"
+      : "https://caller.invalid/common-flac-worker.js"]);
+    assert.equal(workers[0]?.terminated, true);
+  }
+});
+
+test("session FLAC expectations reject wrong STREAMINFO before any audio-byte range", async () => {
+  const cases = [
+    { field: "sample rate", sampleRateHz: 44_100, channels: 1, bitDepth: 16, frames: 4 },
+    { field: "channels", sampleRateHz: 48_000, channels: 2, bitDepth: 16, frames: 4 },
+    { field: "bit depth", sampleRateHz: 48_000, channels: 1, bitDepth: 24, frames: 4 },
+    { field: "frames", sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 5 },
+  ] as const;
+  for (const mismatch of cases) {
+    const fixture = denseFlac(mismatch);
+    const requested: Array<readonly [number, number]> = [];
+    const client = HttpClient.make((request) => {
+      const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+      const start = Number(match[1]);
+      const end = Number(match[2]);
+      requested.push([start, end]);
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(fixture.bytes.slice(start, end + 1), {
+        status: 206,
+        headers: {
+          "Content-Range": `bytes ${start}-${end}/${fixture.bytes.byteLength}`,
+          "Content-Length": String(end - start + 1),
+          ETag: '"shape-fixture"',
+        },
+      })));
+    });
+    const worker = new ValidationWorker();
+    const base = baseOptions();
+    const { resolver: _resolver, ...common } = base;
+    await assert.rejects(openEngineWebSession({
+      ...common,
+      capabilityScope: capabilities(),
+      scratchBoot: async () => ({
+        sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
+        sources: [{ id: "source", channels: 1, frames: 4n }], tracks: [],
+      }),
+      flac: {
+        locate: () => "https://caller.invalid/shape.flac",
+        httpClient: client,
+        createWorker: () => worker,
+        maximumAttempts: 1,
+      },
+      store: {
+        async open() { return this; },
+        async openSession(request) {
+          await (await request.resolver.resolve(IDENTITY)).stream.getReader().read();
+          throw new Error("unreachable");
+        },
+      },
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.flac.shape", mismatch.field);
+    assert.ok(requested.length > 0, `${mismatch.field}: metadata was requested`);
+    assert.ok(requested.every(([start, end]) => start < fixture.audioStart && end < fixture.audioStart),
+      `${mismatch.field}: no range touched audio bytes`);
+    assert.equal(worker.terminated, true);
+  }
+});
+
 function baseOptions(): EngineWebSessionCommonOptions & { readonly resolver: StemResolver; readonly flac?: never } {
   const sources = [{ id: "source", spec: { channels: 1 as const, bitDepth: 16 as const, frames: 4, content: IDENTITY } }];
   return {
     document: documentFor(sources), leaseId: "lease", sources,
     resolver: { async resolve() { throw new Error("resolver must not run in this test"); } },
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function putU64(bytes: Uint8Array, offset: number, input: bigint): void {
+  let value = input;
+  for (let index = 7; index >= 0; index -= 1) {
+    bytes[offset + index] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+}
+
+function denseFlac(shape: { readonly sampleRateHz: number; readonly channels: number; readonly bitDepth: number; readonly frames: number }) {
+  const seekBytes = shape.frames * 18;
+  const audioStart = 46 + seekBytes;
+  const bytes = new Uint8Array(audioStart + (shape.frames * 4));
+  bytes.set([0x66, 0x4c, 0x61, 0x43, 0, 0, 0, 34]);
+  const stream = bytes.subarray(8, 42);
+  stream.set([0, 1, 0, 1, 0, 0, 4, 0, 0, 4]);
+  const packed = (BigInt(shape.sampleRateHz) << 44n) |
+    (BigInt(shape.channels - 1) << 41n) |
+    (BigInt(shape.bitDepth - 1) << 36n) |
+    BigInt(shape.frames);
+  putU64(stream, 10, packed);
+  stream.fill(1, 18, 34);
+  bytes.set([0x83, (seekBytes >>> 16) & 0xff, (seekBytes >>> 8) & 0xff, seekBytes & 0xff], 42);
+  for (let index = 0; index < shape.frames; index += 1) {
+    const point = 46 + (index * 18);
+    putU64(bytes, point, BigInt(index));
+    putU64(bytes, point + 8, BigInt(index * 4));
+    bytes.set([0, 1], point + 16);
+    bytes.set([0xff, 0xf8, index, 0], audioStart + (index * 4));
+  }
+  return { bytes, audioStart };
 }
 
 function documentValue(sources: EngineWebSessionCommonOptions["sources"]) {
@@ -327,6 +541,61 @@ class FailingWorker extends EventTarget {
   fail(error: Error) {
     const event = Object.assign(new Event("error"), { error, message: error.message });
     this.dispatchEvent(event);
+  }
+}
+
+class ErrorOnStartWorker extends EventTarget {
+  terminated = false;
+  postMessage(message: { type?: string; requestId?: number }) {
+    if (message.type !== "start") return;
+    queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: {
+      type: "error", requestId: message.requestId,
+      error: { name: "Error", message: "intentional FLAC worker stop" },
+    } })));
+  }
+  terminate() { this.terminated = true; }
+}
+
+class ValidationWorker extends EventTarget {
+  terminated = false;
+  #mailbox: FlacWorkerMailbox | undefined;
+  postMessage(message: FlacWorkerRequest) {
+    if (this.terminated) return;
+    if (message.type === "start") {
+      const mailbox = new FlacWorkerMailbox();
+      this.#mailbox = mailbox;
+      void runFlacIngest({
+        requestId: message.requestId,
+        ...(message.expected === undefined ? {} : { expected: message.expected }),
+        post: (reply) => this.#reply(reply),
+        nextInput: () => mailbox.nextInput(),
+        nextOutputCredit: () => mailbox.takeOutputCredit(),
+        cancelled: () => mailbox.cancelled,
+        cancellation: mailbox.cancellation,
+        cancellationReason: () => mailbox.cancellationReason,
+        globals: {
+          AudioDecoder: class {}, EncodedAudioChunk: class {},
+        } as unknown as typeof globalThis,
+      }).catch((error: unknown) => {
+        if (!mailbox.cancelled) this.#reply({
+          type: "error", requestId: message.requestId,
+          error: error instanceof EngineWebAdapterError
+            ? { name: error.name, message: error.message, code: error.code, details: error.details }
+            : { name: "Error", message: String(error) },
+        });
+      });
+    } else if (message.type === "input") {
+      this.#mailbox?.giveInput({ bytes: new Uint8Array(message.bytes), totalFlacBytes: message.totalFlacBytes });
+    } else if (message.type === "finish") this.#mailbox?.giveInput(null);
+    else if (message.type === "output-credit") this.#mailbox?.giveOutputCredit();
+    else this.#mailbox?.cancel(new DOMException("cancelled", "AbortError"));
+  }
+  terminate() {
+    this.terminated = true;
+    this.#mailbox?.cancel(new DOMException("terminated", "AbortError"));
+  }
+  #reply(reply: FlacWorkerResponse) {
+    if (!this.terminated) this.dispatchEvent(new MessageEvent("message", { data: reply }));
   }
 }
 

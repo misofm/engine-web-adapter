@@ -50,6 +50,8 @@ export async function runFlacIngest(options: {
   readonly nextInput: () => Promise<FlacInput | null>;
   readonly nextOutputCredit: () => Promise<void>;
   readonly cancelled: () => boolean;
+  readonly cancellation?: Promise<void>;
+  readonly cancellationReason?: () => unknown;
   readonly globals?: DecoderGlobals;
 }): Promise<void> {
   const globals = options.globals ?? (globalThis as DecoderGlobals);
@@ -70,7 +72,20 @@ export async function runFlacIngest(options: {
   let submitted = 0;
   let emittedFrames = 0;
   let emittedPcmBytes = 0;
+  let decoderFailed = false;
   let decoderFailure: unknown;
+  let rejectDecoderFailure!: (error: unknown) => void;
+  const decoderFailureSignal = new Promise<never>((_resolve, reject) => { rejectDecoderFailure = reject; });
+  const never = new Promise<never>(() => undefined);
+  const cancellationSignal = options.cancellation === undefined
+    ? never
+    : options.cancellation.then<never>(() => Promise.reject(
+      options.cancellationReason?.() ?? new DOMException("FLAC Worker job was cancelled", "AbortError"),
+    ));
+  const terminal = Promise.race([decoderFailureSignal, cancellationSignal]);
+  // Terminal is also raced by every blocking operation. This permanent branch
+  // prevents a cancellation between operations from becoming unhandled.
+  void terminal.catch(() => undefined);
   let wakeDecoder: (() => void) | undefined;
 
   const wake = () => {
@@ -78,17 +93,31 @@ export async function runFlacIngest(options: {
     wakeDecoder = undefined;
     current?.();
   };
+  const fail = (error: unknown) => {
+    if (decoderFailed) return;
+    decoderFailed = true;
+    decoderFailure = error;
+    rejectDecoderFailure(error);
+    wake();
+  };
+  const throwIfTerminal = () => {
+    if (decoderFailed) throw decoderFailure;
+    if (options.cancelled()) {
+      throw options.cancellationReason?.() ?? new DOMException("FLAC Worker job was cancelled", "AbortError");
+    }
+  };
+  const guard = <T>(promise: PromiseLike<T>): Promise<T> => Promise.race([Promise.resolve(promise), terminal]);
   const awaitDecoder = async () => {
-    if (decoderFailure !== undefined) throw decoderFailure;
+    throwIfTerminal();
     if (submitted === 0) return;
-    await new Promise<void>((resolve) => { wakeDecoder = resolve; });
-    if (decoderFailure !== undefined) throw decoderFailure;
+    await guard(new Promise<void>((resolve) => { wakeDecoder = resolve; }));
+    throwIfTerminal();
   };
   const submit = async (packet: FlacFramePacket) => {
-    if (options.cancelled()) return;
+    throwIfTerminal();
     while (submitted >= MAXIMUM_FLAC_DECODER_SUBMISSIONS) await awaitDecoder();
-    await options.nextOutputCredit();
-    if (options.cancelled()) return;
+    await guard(options.nextOutputCredit());
+    throwIfTerminal();
     const current = metadata!;
     const chunk = new EncodedChunk({
       type: "key",
@@ -111,7 +140,8 @@ export async function runFlacIngest(options: {
         phase: metadata === undefined ? parser.phase : "audio",
         phaseBytesRemaining: metadata === undefined ? parser.phaseBytesRemaining : 0,
       });
-      const input = await options.nextInput();
+      const input = await guard(options.nextInput());
+      throwIfTerminal();
       if (input === null) break;
       if (input.bytes.byteLength > MAXIMUM_DELIVERY_CHUNK_BYTES) {
         throw new EngineWebAdapterError("stem.flac.resource_limit", "Worker input exceeds the delivery chunk limit");
@@ -138,13 +168,18 @@ export async function runFlacIngest(options: {
           numberOfChannels: metadata.channels,
           description: metadata.decoderDescription,
         };
-        const supported = await AudioDecoderConstructor.isConfigSupported(config);
+        const supported = await guard(AudioDecoderConstructor.isConfigSupported(config));
+        throwIfTerminal();
         if (supported.supported !== true) {
           throw new EngineWebAdapterError("stem.decode.flac_unsupported", "WebCodecs does not support FLAC decoding");
         }
         const expectedMetadata = metadata;
         decoder = new AudioDecoderConstructor({
           output(audio) {
+            if (decoderFailed || options.cancelled()) {
+              audio.close();
+              return;
+            }
             try {
               const expectedFrameSamples = expectedMetadata.seekTable.frameSamples[emittedFrames];
               if (expectedFrameSamples === undefined) {
@@ -169,9 +204,9 @@ export async function runFlacIngest(options: {
                 totalPcmBytes: expectedMetadata.totalSamples * expectedMetadata.channels * (expectedMetadata.bitDepth / 8),
               }, [bytes]);
               wake();
-            } catch (error) { decoderFailure = error; wake(); }
+            } catch (error) { fail(error); }
           },
-          error(error) { decoderFailure = error; wake(); },
+          error(error) { fail(error); },
         });
         decoder.configure(supported.config ?? config);
         await packetizer.pushTo(parsed.audioRemainder, submit);
@@ -183,8 +218,8 @@ export async function runFlacIngest(options: {
     if (metadata === undefined || packetizer === undefined || decoder === undefined) parser.finish();
     await packetizer!.finishTo(submit);
     while (submitted > 0) await awaitDecoder();
-    await decoder!.flush();
-    if (decoderFailure !== undefined) throw decoderFailure;
+    await guard(decoder!.flush());
+    throwIfTerminal();
     if (emittedFrames !== metadata!.seekTable.length) {
       throw new EngineWebAdapterError("stem.decode.output", "Decoder output frame count is not exact");
     }

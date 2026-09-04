@@ -90,6 +90,10 @@ ETag stable across attempts.
 Package-relative asset URLs and overrides are exported from
 `@misofm/engine-web-adapter/assets`. They cover the scratch Worker, FLAC Worker,
 PCM pump Worker, feed worklet, and Engine assets.
+Common `assets.flacWorkerUrl` and `assets.createWorker` overrides apply to the
+high-level FLAC path. A nested `flac.assets` field overrides matching common
+asset fields without discarding the other common fields; the low-level
+`flac.createWorker` hook has highest precedence when supplied.
 
 ## Bounds and integrity
 

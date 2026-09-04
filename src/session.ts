@@ -56,7 +56,8 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
 
   try {
     const document = normalizeDocument(options.document);
-    const requirements = requirementsFor(options);
+    const sources = snapshotSources(options.sources);
+    const requirements = requirementsFor(options.leaseId, sources);
     const engineWasmUrl = options.assets?.engineWasmUrl ?? BUNDLED_ENGINE_ASSETS.wasm;
     const engineWorkletUrl = options.assets?.engineWorkletModuleUrl ?? BUNDLED_ENGINE_ASSETS.workletModule;
     const engineHostUrl = options.assets?.engineHostModuleUrl ?? BUNDLED_ENGINE_ASSETS.hostModule;
@@ -75,7 +76,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       options: scratchBootOptions(options.policy ?? {}),
     });
     const documentDeclaration = extractDocumentDeclaration(document);
-    const orderedSources = crossSessionDeclarations(compiledShape, documentDeclaration, options.sources);
+    const orderedSources = crossSessionDeclarations(compiledShape, documentDeclaration, sources);
     if (scratchWorker !== undefined && closeScratchWorker !== undefined) {
       scratchWorker.close();
       const cleanupIndex = cleanup.indexOf(closeScratchWorker);
@@ -97,7 +98,11 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
         ...(options.flac.maximumWorkers === undefined ? {} : { maximum: options.flac.maximumWorkers }),
       }));
       const expectations = expectationsFor(orderedSources, compiledShape.sampleRateHz);
-      const flacResolver = createFlacStemResolver({ ...options.flac, admission });
+      const flacResolver = createFlacStemResolver({
+        ...options.flac,
+        assets: { ...options.assets, ...options.flac.assets },
+        admission,
+      });
       resolver = {
         resolve(identity, resolveOptions = {}) {
           const expected = expectations.get(identity);
@@ -152,7 +157,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
 
     engine = await createEngine({
       document,
-      sources: options.sources.map((source) => ({ id: source.id, spec: source.spec })),
+      sources: sources.map((source) => ({ id: source.id, spec: source.spec })),
       createContext,
       scratchBoot: reuseScratchBoot,
       createHost: async (request) => {
@@ -264,10 +269,10 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
   }
 }
 
-function requirementsFor(options: EngineWebSessionOptions): StemRequirement[] {
-  if (options.leaseId.length === 0) throw new TypeError("leaseId must not be empty");
+function requirementsFor(leaseId: string, sources: EngineWebSessionOptions["sources"]): StemRequirement[] {
+  if (leaseId.length === 0) throw new TypeError("leaseId must not be empty");
   const ids = new Set<string>();
-  return options.sources.map((source) => {
+  return sources.map((source) => {
     if (source.id.length === 0 || ids.has(source.id)) throw new EngineWebAdapterError("session.declaration_mismatch", "Source IDs must be non-empty and unique", { sourceId: source.id });
     ids.add(source.id);
     return { sourceId: source.id, identity: source.spec.content as `sha256:${string}`, bytes: canonicalPcmBytes(source.spec) };
@@ -276,10 +281,20 @@ function requirementsFor(options: EngineWebSessionOptions): StemRequirement[] {
 
 function normalizeDocument(document: EngineWebSessionOptions["document"]): Uint8Array<ArrayBuffer> {
   if (typeof document === "string") return new TextEncoder().encode(document);
-  if (document instanceof Uint8Array) {
-    return document.buffer instanceof ArrayBuffer ? document as Uint8Array<ArrayBuffer> : new Uint8Array(document);
-  }
+  if (document instanceof Uint8Array) return new Uint8Array(document);
   return new TextEncoder().encode(document.toJson());
+}
+
+function snapshotSources(sources: EngineWebSessionOptions["sources"]): EngineWebSessionOptions["sources"] {
+  return sources.map((source) => Object.freeze({
+    id: source.id,
+    spec: Object.freeze({
+      channels: source.spec.channels,
+      bitDepth: source.spec.bitDepth,
+      frames: source.spec.frames,
+      content: source.spec.content,
+    }),
+  }));
 }
 
 function expectationsFor(

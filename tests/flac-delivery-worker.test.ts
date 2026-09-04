@@ -6,6 +6,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ADAPTER_ASSETS, createFlacWorker } from "../src/assets.js";
 import { EngineWebAdapterError } from "../src/errors.js";
+import { FlacWorkerMailbox } from "../src/stems/flac-worker-mailbox.js";
 import {
   FlacWorkerPool,
   createFlacStemResolver,
@@ -528,6 +529,164 @@ function singleFrameFlac(): Uint8Array {
   bytes.set([0xff, 0xf8, 1, 2], 64);
   return bytes;
 }
+
+function threeFrameFlac(): Uint8Array {
+  const bytes = new Uint8Array(4 + 4 + 34 + 4 + (18 * 3) + (4 * 3));
+  bytes.set([0x66, 0x4c, 0x61, 0x43, 0, 0, 0, 34]);
+  const stream = bytes.subarray(8, 42);
+  stream.set([0, 1, 0, 1, 0, 0, 4, 0, 0, 4]);
+  putU64(stream, 10, (44_100n << 44n) | (15n << 36n) | 3n);
+  stream.fill(1, 18, 34);
+  bytes.set([0x83, 0, 0, 54], 42);
+  for (let index = 0; index < 3; index += 1) {
+    const point = 46 + (index * 18);
+    putU64(bytes, point, BigInt(index));
+    putU64(bytes, point + 8, BigInt(index * 4));
+    bytes.set([0, 1], point + 16);
+    bytes.set([0xff, 0xf8, index, index + 1], 100 + (index * 4));
+  }
+  return bytes;
+}
+
+class InProcessFlacWorker implements FlacWorkerLike {
+  terminated = false;
+  lateReplies = 0;
+  #mailbox: FlacWorkerMailbox | undefined;
+  #listeners = new Map<string, Set<(event: any) => void>>();
+  constructor(readonly globals: typeof globalThis) {}
+  postMessage(message: FlacWorkerRequest): void {
+    if (this.terminated) return;
+    if (message.type === "start") {
+      const mailbox = new FlacWorkerMailbox();
+      this.#mailbox = mailbox;
+      void runFlacIngest({
+        requestId: message.requestId,
+        ...(message.expected === undefined ? {} : { expected: message.expected }),
+        post: (reply) => this.#emit(reply),
+        nextInput: () => mailbox.nextInput(),
+        nextOutputCredit: () => mailbox.takeOutputCredit(),
+        cancelled: () => mailbox.cancelled,
+        cancellation: mailbox.cancellation,
+        cancellationReason: () => mailbox.cancellationReason,
+        globals: this.globals,
+      }).catch((error: unknown) => {
+        if (!mailbox.cancelled) this.#emit({
+          type: "error", requestId: message.requestId,
+          error: error instanceof EngineWebAdapterError
+            ? { name: error.name, message: error.message, code: error.code, details: error.details }
+            : { name: "Error", message: String(error) },
+        });
+      });
+    } else if (message.type === "input") {
+      this.#mailbox?.giveInput({ bytes: new Uint8Array(message.bytes), totalFlacBytes: message.totalFlacBytes });
+    } else if (message.type === "finish") this.#mailbox?.giveInput(null);
+    else if (message.type === "output-credit") this.#mailbox?.giveOutputCredit();
+    else this.#mailbox?.cancel(new DOMException("cancelled", "AbortError"));
+  }
+  terminate(): void {
+    this.terminated = true;
+    this.#mailbox?.cancel(new DOMException("terminated", "AbortError"));
+  }
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
+    const listeners = this.#listeners.get(type) ?? new Set(); listeners.add(listener); this.#listeners.set(type, listeners);
+  }
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
+    this.#listeners.get(type)?.delete(listener);
+  }
+  #emit(message: FlacWorkerResponse): void {
+    if (this.terminated) { this.lateReplies += 1; return; }
+    for (const listener of this.#listeners.get("message") ?? []) listener({ data: message });
+  }
+}
+
+function threeFrameResolver(worker: InProcessFlacWorker) {
+  const source = threeFrameFlac();
+  return createFlacStemResolver({
+    createWorker: () => worker,
+    hardwareConcurrency: 2,
+    maximumAttempts: 1,
+    locate: () => "https://caller.invalid/three-frames",
+    httpClient: responseClient((request) => {
+      const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+      return exactResponse(source, Number(match[1]), Number(match[2]));
+    }),
+  });
+}
+
+test("async decoder error wakes output-credit wait and physically terminates the Worker", async () => {
+  class FakeEncodedAudioChunk {}
+  let lateAudioCloses = 0;
+  class AsyncErrorDecoder {
+    static async isConfigSupported(config: AudioDecoderConfig) { return { supported: true, config }; }
+    readonly error: (error: DOMException) => void;
+    readonly output: (audio: AudioData) => void;
+    decodes = 0;
+    constructor(init: { readonly error: (error: DOMException) => void; readonly output: (audio: AudioData) => void }) {
+      this.error = init.error;
+      this.output = init.output;
+    }
+    configure(): void {}
+    decode(): void {
+      this.decodes += 1;
+      if (this.decodes === 2) setTimeout(() => {
+        this.error(new DOMException("asynchronous decoder failure", "EncodingError"));
+        queueMicrotask(() => this.output({ close: () => { lateAudioCloses += 1; } } as unknown as AudioData));
+      }, 0);
+    }
+    async flush(): Promise<void> {}
+    close(): void {}
+  }
+  const worker = new InProcessFlacWorker({
+    AudioDecoder: AsyncErrorDecoder,
+    EncodedAudioChunk: FakeEncodedAudioChunk,
+  } as unknown as typeof globalThis);
+  const reading = (await threeFrameResolver(worker).resolve(IDENTITY)).stream.getReader().read();
+  await assert.rejects(Promise.race([
+    reading,
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("decoder error deadlocked on credit")), 100)),
+  ]), /asynchronous decoder failure/u);
+  assert.equal(worker.terminated, true);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(lateAudioCloses, 1);
+  assert.equal(worker.lateReplies, 0);
+});
+
+test("PCM conversion failure wakes output-credit wait and physically terminates the Worker", async () => {
+  class FakeEncodedAudioChunk {}
+  let audioCloses = 0;
+  class InvalidOutputDecoder {
+    static async isConfigSupported(config: AudioDecoderConfig) { return { supported: true, config }; }
+    readonly output: (audio: AudioData) => void;
+    decodes = 0;
+    constructor(init: { readonly output: (audio: AudioData) => void }) { this.output = init.output; }
+    configure(): void {}
+    decode(): void {
+      this.decodes += 1;
+      if (this.decodes === 2) setTimeout(() => {
+        this.output({
+          format: "s16", numberOfFrames: 1, numberOfChannels: 1, sampleRate: 48_000,
+          allocationSize: () => 2, copyTo: () => undefined, close: () => { audioCloses += 1; },
+        } as unknown as AudioData);
+        queueMicrotask(() => this.output({ close: () => { audioCloses += 1; } } as unknown as AudioData));
+      }, 0);
+    }
+    async flush(): Promise<void> {}
+    close(): void {}
+  }
+  const worker = new InProcessFlacWorker({
+    AudioDecoder: InvalidOutputDecoder,
+    EncodedAudioChunk: FakeEncodedAudioChunk,
+  } as unknown as typeof globalThis);
+  const reading = (await threeFrameResolver(worker).resolve(IDENTITY)).stream.getReader().read();
+  await assert.rejects(Promise.race([
+    reading,
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("PCM failure deadlocked on credit")), 100)),
+  ]), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.decode.output");
+  assert.equal(worker.terminated, true);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(audioCloses, 2);
+  assert.equal(worker.lateReplies, 0);
+});
 
 test("ingest core submits one FLAC frame per EncodedAudioChunk and consumes output credit", async () => {
   const encoded: Array<Readonly<{ data: BufferSource }>> = [];

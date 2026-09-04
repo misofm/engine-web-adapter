@@ -262,3 +262,50 @@ Native Safari has not been run in this attempt because Safari Remote Automation
 is disabled on the test Mac. Safari support therefore remains candidly
 unverified; unsupported Worker FLAC must remain a typed platform blocker rather
 than gain a codec-Wasm fallback.
+
+Attempt 3 is the final implementation attempt. It corrects the second review's
+four release-blocking findings without relaxing any bound or product boundary:
+
+- The real Worker protocol now uses one bounded mailbox with a resolving
+  cancellation notification and stored reason. Decoder errors, PCM conversion
+  failures, input waits, decoder-submission waits, and exhausted output-credit
+  waits share one terminal race. Terminal output is closed and ignored, and the
+  resolver still joins delivery before the pool physically terminates the
+  Worker and exposes rejection.
+- Session document bytes are always copied into a fresh owned `ArrayBuffer` and
+  caller source/spec records are copied before the first await. That same
+  document and source snapshot drives scratch compilation, strict JSON
+  extraction, declaration cross-check, store requirements, FLAC expectations,
+  `createEngine`, feed, and pump construction.
+- Common FLAC Worker asset overrides now reach the default high-level FLAC
+  resolver. Nested `flac.assets` overrides matching common asset fields while
+  retaining unrelated common fields; the direct low-level `flac.createWorker`
+  hook remains highest precedence.
+- The session-level expected tuple is now exercised through the resolver,
+  Effect HTTP fixture, production ingest core, and Worker mailbox. Wrong
+  STREAMINFO sample rate, channels, bit depth, and frame count each permit only
+  metadata ranges and reject before any requested range touches audio bytes.
+
+Final attempt-3 local evidence: `npm run check` passes 78/78 tests, source
+policy over 35 files, and packed policy over 144 files / 102,200 bytes. Focused
+three-frame regressions exhaust both initial PCM credits before asynchronous
+`AudioDecoder.error` and PCM conversion failure; both reject within a bounded
+deadline, close terminal `AudioData`, physically terminate the Worker, and
+emit no late reply. A deferred-scratch regression mutates the caller's original
+document and every source-spec field while suspended and proves scratch,
+boundary extraction/store requirements, and `createEngine` still observe the
+pre-await snapshot.
+
+Packed Chromium passes cold decode/play/pause/unaligned-seek/close and warm
+reuse with counters unchanged at 8 locator calls, 8 network requests, and one
+FLAC Worker; it reports 32 Engine submissions, one applied seek, eight emitted
+assets, and zero refusals, torn feeds, or errors. The opt-in live Chromium
+profile also passes at the exact configured origin: 21 cold locator/range
+requests and one Worker ingest the 4,198,461-byte object with ETag
+`"5cc22b5075610fc68f75247c7d135dd9"`; warm counters remain 21/21/1, with one
+applied seek and zero refusals, torn feeds, or errors. The number of pump
+submissions is scheduling-dependent and is not an acceptance claim.
+
+Native Safari remains unrun because Safari Remote Automation is disabled on
+the available Mac. Its status is therefore still an environmental evidence
+gap, not a claimed pass and not grounds for adding an unbriefed codec fallback.

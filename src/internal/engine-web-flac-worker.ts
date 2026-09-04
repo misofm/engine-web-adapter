@@ -1,5 +1,6 @@
 import { runFlacIngest } from "../stems/flac-ingest.js";
-import { FLAC_DECODE_OUTPUT_CREDITS, type FlacWorkerRequest, type FlacWorkerResponse } from "../stems/flac-worker-protocol.js";
+import { FlacWorkerMailbox } from "../stems/flac-worker-mailbox.js";
+import type { FlacWorkerRequest, FlacWorkerResponse } from "../stems/flac-worker-protocol.js";
 
 interface WorkerScope {
   onmessage: ((event: MessageEvent<FlacWorkerRequest>) => void) | null;
@@ -7,32 +8,9 @@ interface WorkerScope {
   close?: () => void;
 }
 
-type Input = { readonly bytes: Uint8Array; readonly totalFlacBytes: number } | null;
 const scope = ((globalThis as unknown as { readonly self?: WorkerScope }).self ?? globalThis) as unknown as WorkerScope;
 let active = 0;
-let cancelled = false;
-let inputs: Input[] = [];
-let inputWake: ((input: Input) => void) | undefined;
-let outputCredits = 0;
-let creditWake: (() => void) | undefined;
-
-function giveInput(input: Input): void {
-  const wake = inputWake;
-  inputWake = undefined;
-  if (wake !== undefined) wake(input);
-  else inputs.push(input);
-}
-
-function nextInput(): Promise<Input> {
-  const input = inputs.shift();
-  if (input !== undefined) return Promise.resolve(input);
-  return new Promise((resolve) => { inputWake = resolve; });
-}
-
-async function takeOutputCredit(): Promise<void> {
-  while (!cancelled && outputCredits === 0) await new Promise<void>((resolve) => { creditWake = resolve; });
-  if (!cancelled) outputCredits -= 1;
-}
+let mailbox: FlacWorkerMailbox | undefined;
 
 function serialize(error: unknown): Extract<FlacWorkerResponse, { type: "error" }>["error"] {
   if (error instanceof Error) {
@@ -54,34 +32,25 @@ scope.onmessage = (event) => {
   if (message.type === "start") {
     if (active !== 0) return;
     active = message.requestId;
-    cancelled = false;
-    inputs = [];
-    outputCredits = FLAC_DECODE_OUTPUT_CREDITS;
+    mailbox = new FlacWorkerMailbox();
+    const job = mailbox;
     void runFlacIngest({
       requestId: active,
       ...(message.expected === undefined ? {} : { expected: message.expected }),
       post: (reply, transfer) => scope.postMessage(reply, transfer),
-      nextInput,
-      nextOutputCredit: takeOutputCredit,
-      cancelled: () => cancelled,
+      nextInput: () => job.nextInput(),
+      nextOutputCredit: () => job.takeOutputCredit(),
+      cancelled: () => job.cancelled,
+      cancellation: job.cancellation,
+      cancellationReason: () => job.cancellationReason,
     }).catch((error: unknown) => {
-      if (!cancelled) scope.postMessage({ type: "error", requestId: active, error: serialize(error) });
+      if (!job.cancelled) scope.postMessage({ type: "error", requestId: active, error: serialize(error) });
     }).finally(() => scope.close?.());
     return;
   }
   if (message.requestId !== active) return;
-  if (message.type === "input") giveInput({ bytes: new Uint8Array(message.bytes), totalFlacBytes: message.totalFlacBytes });
-  else if (message.type === "finish") giveInput(null);
-  else if (message.type === "output-credit") {
-    outputCredits += 1;
-    const wake = creditWake;
-    creditWake = undefined;
-    wake?.();
-  } else {
-    cancelled = true;
-    giveInput(null);
-    const wake = creditWake;
-    creditWake = undefined;
-    wake?.();
-  }
+  if (message.type === "input") mailbox?.giveInput({ bytes: new Uint8Array(message.bytes), totalFlacBytes: message.totalFlacBytes });
+  else if (message.type === "finish") mailbox?.giveInput(null);
+  else if (message.type === "output-credit") mailbox?.giveOutputCredit();
+  else mailbox?.cancel(new DOMException("FLAC Worker job was cancelled", "AbortError"));
 };
