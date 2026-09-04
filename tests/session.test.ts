@@ -2,14 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { BrowserEngine } from "@misofm/engine/browser";
-import { Effect } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-
 import { EngineWebAdapterError, openEngineWebSession } from "../src/index.js";
 import { assertEngineWebCapabilities } from "../src/capabilities.js";
-import { MSB1_CONTROL } from "../src/stems/index.js";
+import { MSB1_CONTROL } from "../src/stems/ring.js";
 import type { EngineAudioContext, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
-import type { FlacWorkerRequest, FlacWorkerResponse, StemResolver, StemSessionLease, StemStore } from "../src/stems/index.js";
+import type { FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
+import type { DeclaredStemSource, StemResolver, StemSessionLease, StemStore } from "../src/stems/types.js";
 
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
 const IDENTITY_Z = `sha256:${"b".repeat(64)}` as const;
@@ -310,7 +308,7 @@ test("session snapshots document and source declarations before deferred scratch
   const opening = openEngineWebSession({
     document,
     leaseId: "snapshot",
-    sources: originalSources as EngineWebSessionCommonOptions["sources"],
+    sources: originalSources as readonly DeclaredStemSource[],
     resolver: { async resolve() { throw new Error("warm fixture must not resolve"); } },
     capabilityScope: capabilities(),
     store: {
@@ -410,20 +408,21 @@ test("session FLAC expectations reject wrong STREAMINFO before any audio-byte ra
   for (const mismatch of cases) {
     const fixture = nativeFlacFixture(mismatch);
     const requested: Array<readonly [number, number]> = [];
-    const client = HttpClient.make((request) => {
-      const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+    const client: typeof globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Readonly<Record<string, string>>;
+      const match = /^bytes=(\d+)-(\d+)$/u.exec(headers.range!)!;
       const start = Number(match[1]);
       const end = Number(match[2]);
       requested.push([start, end]);
-      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(fixture.bytes.slice(start, end + 1), {
+      return new Response(fixture.bytes.slice(start, end + 1), {
         status: 206,
         headers: {
           "Content-Range": `bytes ${start}-${end}/${fixture.bytes.byteLength}`,
           "Content-Length": String(end - start + 1),
           ETag: '"shape-fixture"',
         },
-      })));
-    });
+      });
+    }) as typeof globalThis.fetch;
     const worker = new ValidationWorker();
     const base = baseOptions();
     const { resolver: _resolver, ...common } = base;
@@ -436,7 +435,7 @@ test("session FLAC expectations reject wrong STREAMINFO before any audio-byte ra
       }),
       flac: {
         locate: () => "https://caller.invalid/shape.flac",
-        httpClient: client,
+        fetch: client,
         createWorker: () => worker,
         maximumAttempts: 1,
       },
@@ -501,7 +500,7 @@ function nativeFlacFixture(shape: { readonly sampleRateHz: number; readonly chan
   return { bytes, audioStart };
 }
 
-function documentValue(sources: EngineWebSessionCommonOptions["sources"]) {
+function documentValue(sources: readonly DeclaredStemSource[]) {
   return {
     schema_version: 1,
     session_id: "test",
@@ -518,7 +517,7 @@ function documentValue(sources: EngineWebSessionCommonOptions["sources"]) {
   };
 }
 
-function documentFor(sources: EngineWebSessionCommonOptions["sources"]): string {
+function documentFor(sources: readonly DeclaredStemSource[]): string {
   return JSON.stringify(documentValue(sources));
 }
 

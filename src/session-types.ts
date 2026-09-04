@@ -1,4 +1,4 @@
-import type { EngineConsole, SessionShape, SourceSpec } from "@misofm/engine";
+import type { ConsoleEdits, LaneEdit, SessionShape, SourceSpec } from "@misofm/engine";
 import type {
   AudioContextLike,
   BrowserBootPolicy,
@@ -31,12 +31,92 @@ export interface EnginePump {
   close(): Promise<void> | void;
 }
 
+/** One track's decimated meter reading, already folded to what a meter draws. */
+export interface TrackMeter {
+  readonly peakLeft: number;
+  readonly peakRight: number;
+  /** The greater of the two lanes: what a single meter bar shows. */
+  readonly peak: number;
+  /** Non-negative gain reduction in decibels; `0` when nothing is observed. */
+  readonly gainReductionDb: number;
+}
+
+/** One decimated meter window, addressed by track id rather than by ordinal. */
+export interface MeterUpdate {
+  readonly sequence: bigint;
+  /** Complete windows folded into this update; normally `1`. */
+  readonly windows: number;
+  readonly firstSample: bigint;
+  readonly endSample: bigint;
+  /** Every track in the compiled session, keyed by its id. */
+  readonly tracks: ReadonlyMap<string, TrackMeter>;
+  readonly master: TrackMeter;
+}
+
+/** One windowed render-telemetry reading. */
+export interface TelemetryUpdate {
+  readonly sequence: bigint;
+  readonly blocks: number;
+  /** Render time as a percentage of the block budget over the window. */
+  readonly cpuPercent: number;
+  readonly peakBlockMs: number;
+  readonly meanBlockMs: number;
+  readonly budgetMs: number;
+  readonly deadlineMisses: number;
+  readonly resolutionMs: number;
+  /** `true` when the window measured exactly zero: the clock could not see the work. */
+  readonly belowResolution: boolean;
+}
+
+/**
+ * The session's live console.
+ *
+ * `edit` is the Engine's own catalog-derived builder, bound to this session's
+ * compiled map. `submit` is the adapter's: it stages edits on one shared
+ * latest-wins writer, so a fader drag collapses to the position the hand
+ * actually stopped at instead of a queue's worth of stale intermediates.
+ */
+export interface EngineWebConsole {
+  readonly edit: ConsoleEdits;
+  /**
+   * Stage a transaction and let it land.
+   *
+   * Resolves once the edits have been admitted, superseded by a newer edit for
+   * the same address, or handed to the background flusher because the engine's
+   * queue is momentarily full. Flow-control backpressure is absorbed and never
+   * reaches the caller; a semantic refusal -- an unknown address, a malformed
+   * record -- rejects with `EngineWebAdapterError` code `console.refused`,
+   * because it will not succeed on retry.
+   */
+  submit(...edits: readonly LaneEdit[]): Promise<void>;
+}
+
 export interface EngineWebSessionCommonOptions {
+  /** The Session V1 document, or the SDK builder session that produced it. */
   readonly document: EngineSessionDocument;
-  readonly leaseId: string;
-  readonly sources: readonly DeclaredStemSource[];
+  /**
+   * Stem declarations.
+   *
+   * Optional: the adapter derives them from the canonical session document,
+   * which already declares every source's id, digest, channels, bit depth and
+   * frame count. Supply them to assert the declaration a second time.
+   */
+  readonly sources?: readonly DeclaredStemSource[];
+  /** Optional store pin name. Generated per open when absent. */
+  readonly leaseId?: string;
+  /**
+   * Opt out of the live console.
+   *
+   * The adapter attaches the Engine's published default console. Pass `false`
+   * for a playback-only session; `session.console`, `session.meters` and
+   * `session.telemetry` then refuse with `console.not_attached` rather than
+   * letting an ordinary command look like an unknown command kind. It writes no
+   * console words at all, so it also overrides any `policy.console` sizes.
+   */
+  readonly console?: false;
   readonly signal?: AbortSignal;
   readonly onProgress?: (progress: StemProgress) => void;
+  /** Boot policy. Explicit `console` sizes override the adapter's defaults field by field. */
   readonly policy?: BrowserBootPolicy;
   readonly assets?: AdapterAssetOverrides;
   readonly capabilityScope?: WebCapabilityScope;
@@ -78,10 +158,22 @@ export type EngineWebSessionOptions = EngineWebSessionCommonOptions & (
 export interface EngineWebSession {
   readonly shape: SessionShape;
   readonly context: EngineAudioContext;
+  /**
+   * The raw Engine worklet host.
+   *
+   * An escape hatch, and the one place the adapter's request-identifier ledger
+   * does not reach: a call made here allocates its own identifier and can
+   * collide with the console's. Prefer `console`, `meters` and `telemetry`.
+   */
   readonly host: BrowserEngine["host"];
-  readonly console: EngineConsole;
+  /** Refuses with `console.not_attached` when the session opted out of a console. */
+  readonly console: EngineWebConsole;
   readonly output: AudioNode;
   readonly state: EngineWebSessionState;
+  /** Subscribe to the decimated meter feed. Resolves to an unsubscribe function. */
+  meters(listener: (update: MeterUpdate) => void): Promise<() => void>;
+  /** Subscribe to the render-telemetry feed. Resolves to an unsubscribe function. */
+  telemetry(listener: (update: TelemetryUpdate) => void): Promise<() => void>;
   play(): Promise<void>;
   pause(): Promise<void>;
   seekFrames(frame: number | bigint): Promise<void>;

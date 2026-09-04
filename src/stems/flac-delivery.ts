@@ -1,4 +1,4 @@
-import { Effect, Stream, type Layer } from "effect";
+import { Effect, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 
 import { EngineWebAdapterError } from "../errors.js";
@@ -21,12 +21,14 @@ export type FlacLocator = (
 export interface FlacHttpOptions {
   readonly locate: FlacLocator;
   /**
-   * An injected client receives the normalized GET URL and headers. Transport
-   * policy beyond that request model is owned by the injected client; Web
-   * Request policy is forwarded through RequestInit for the default fetch layer.
+   * The transport every physical range attempt runs through.
+   *
+   * Defaults to the platform `fetch`. An override receives the normalized GET
+   * URL and headers plus the adapter's own `Range`, signal and any caller
+   * `Request` policy `locate` returned; everything beyond that request model is
+   * the override's own.
    */
-  readonly httpClient?: HttpClient.HttpClient;
-  readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
+  readonly fetch?: typeof globalThis.fetch;
   readonly readDeadlineMs?: number;
   readonly maximumAttempts?: number;
 }
@@ -139,7 +141,7 @@ export function readExactFlacRange(options: FlacHttpOptions & {
       }),
       catch: (error) => error,
     });
-    const service = options.httpClient ?? (yield* HttpClient.HttpClient);
+    const service = yield* HttpClient.HttpClient;
     const client = HttpClient.withScope(service);
     const stalled = () => failure("stem.delivery.stall", `FLAC range made no progress for ${deadlineMs}ms`, {
       identity: options.identity, phase: options.phase, range: [options.start, options.end], attempt, retryable: true,
@@ -239,9 +241,12 @@ export function readExactFlacRange(options: FlacHttpOptions & {
     }));
 
   const operation = Effect.scoped(attempt(1));
-  const provided = options.httpClient === undefined
-    ? operation.pipe(Effect.provide(options.httpClientLayer ?? FetchHttpClient.layer))
-    : operation.pipe(Effect.provideService(HttpClient.HttpClient, options.httpClient));
+  // A caller override replaces only the platform `fetch` reference; the client
+  // itself, and every bound it enforces, stays the package's.
+  const transported = options.fetch === undefined
+    ? operation
+    : operation.pipe(Effect.provideService(FetchHttpClient.Fetch, options.fetch));
+  const provided = transported.pipe(Effect.provide(FetchHttpClient.layer));
   return Effect.runPromise(provided, { signal: options.signal }).catch((error: unknown) => {
     if (options.signal.aborted) {
       throw new EngineWebAdapterError("stem.cancelled", "FLAC delivery was cancelled", {

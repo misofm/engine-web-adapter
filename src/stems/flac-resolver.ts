@@ -1,6 +1,3 @@
-import type { Layer } from "effect";
-import type { HttpClient } from "effect/unstable/http";
-
 import { EngineWebAdapterError } from "../errors.js";
 import { ADAPTER_ASSETS, type AdapterAssetOverrides } from "../assets.js";
 import type { BoundedStemAdmission } from "./flac-admission.js";
@@ -20,8 +17,14 @@ export interface FlacDeliveryOptions {
   readonly locate: FlacLocator;
   /** Optional shared admission used to bound both decode and cache verification. */
   readonly admission?: BoundedStemAdmission;
-  readonly httpClient?: HttpClient.HttpClient;
-  readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
+  /**
+   * The transport every physical range attempt runs through.
+   *
+   * Defaults to the platform `fetch`. The package owns the request model --
+   * exact `Range`, the operation signal, bounded retry -- and an override owns
+   * everything outside it.
+   */
+  readonly fetch?: typeof globalThis.fetch;
   readonly readDeadlineMs?: number;
   /** Main-thread deadline for decoder asset/decode progress. */
   readonly decodeNoProgressMs?: number;
@@ -142,8 +145,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
           );
           const range = (phase: "probe" | "metadata" | "audio", start: number, end: number) => readExactFlacRange({
             locate: options.locate,
-            ...(options.httpClient === undefined ? {} : { httpClient: options.httpClient }),
-            ...(options.httpClientLayer === undefined ? {} : { httpClientLayer: options.httpClientLayer }),
+            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
             ...(options.readDeadlineMs === undefined ? {} : { readDeadlineMs: options.readDeadlineMs }),
             ...(options.maximumAttempts === undefined ? {} : { maximumAttempts: options.maximumAttempts }),
             identity, phase, start, end, signal: controller.signal, state: deliveryState,

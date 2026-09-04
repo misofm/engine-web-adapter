@@ -40,8 +40,44 @@ No Rust ABI change, new queue implementation, mixer UI change, or unrelated
 policy defaults belong in this issue. The companion Engine diagnostic gap is
 tracked separately in `misofm/engine`.
 
+## Decision
+
+The adapter attaches the Engine SDK's published default console unless the
+caller explicitly opts out with `console: false`.
+
+`policy.console.commandQueueRecords` and `policy.console.meterBlocks` default to
+`ABI_LAYOUT.constants.defaultCommandQueueRecords` and
+`ABI_LAYOUT.constants.defaultMeterBlocks`. No queue-size constant is invented or
+duplicated. The remaining two words have no published default and stay at the
+documented off value of `0`, which is also what the Engine's own
+`toWebBootOptions` writes for an absent word. A caller's explicit `policy.console`
+wins field by field over the defaults; every other `policy` field is untouched.
+
+`console: false` writes no console words at all and never opens a control
+channel. `session.console`, `session.meters` and `session.telemetry` then refuse
+with `EngineWebAdapterError` code `console.not_attached`, phase `console`, and a
+remedy naming the opt-out.
+
+## Evidence
+
+- `tests/console.test.ts`
+  - "the default session attaches the Engine's published console words"
+  - "explicit console sizes and other policy fields survive the default"
+  - "an explicit no-console session names the missing console at first access"
+- `npm run test:browser` (packed tarball, Chromium, real Engine worklet) reports
+  `"notAttached":"console.not_attached"` and
+  `"meterNotAttached":"console.not_attached"` for a `console: false` session, and
+  real admitted console transactions plus real meter frames for a default one.
+- README "Open a native-FLAC session" and "Failures" match runtime behavior.
+
+## Correction to the problem statement
+
+The app workaround claimed all four console words must be stated or every
+command fails `invalidArgument`. That is not what the SDK does:
+`@misofm/engine/browser` `toWebBootOptions` maps an absent `observationTaps` or
+`masterTrackPlusOne` to `0n`. Only `commandQueueRecords` and `meterBlocks`
+actually had to be supplied, and both now come from the published constants.
+
 ## Status
 
-Open and unimplemented. The app's explicit policy remains the supported
-workaround. This spec synchronizes the pre-existing GitHub issue before the
-next issue boundary.
+Implemented on `feat/zero-config-console-and-feeds`.

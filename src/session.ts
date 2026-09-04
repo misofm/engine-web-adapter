@@ -1,9 +1,13 @@
+import { ABI_LAYOUT } from "@misofm/engine";
+import type { BrowserBootPolicy } from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
 import { createEngine, scratchBootOptions, toWebBootOptions } from "@misofm/engine/browser";
 import type { BrowserEngine, CreateEngineOptions } from "@misofm/engine/browser";
 
 import { ADAPTER_ASSETS } from "./assets.js";
 import { assertEngineWebCapabilities } from "./capabilities.js";
+import { attachSessionControl } from "./console.js";
+import type { SessionControl } from "./console.js";
 import { EngineWebAdapterError } from "./errors.js";
 import { attachEngineFeed, prepareEngineFeed } from "./feed.js";
 import type { EngineFeed } from "./feed.js";
@@ -11,26 +15,28 @@ import { ScratchWorkerClient } from "./scratch.js";
 import type {
   EngineAudioContext,
   EnginePump,
+  EngineWebConsole,
   EngineWebSession,
   EngineWebSessionOptions,
   EngineWebSessionState,
 } from "./session-types.js";
 import {
   BoundedStemAdmission,
-  canonicalPcmBytes,
-  createFlacStemResolver,
   defaultFlacMemoryBudgetBytes,
   flacAdmissionWidth,
-  OpfsStemStore,
-  PcmPumpWorkerClient,
-} from "./stems/index.js";
+} from "./stems/flac-admission.js";
+import { createFlacStemResolver } from "./stems/flac-resolver.js";
+import { canonicalPcmBytes } from "./stems/identity.js";
+import { OpfsStemStore } from "./stems/store.js";
+import { PcmPumpWorkerClient } from "./stems/worker-client.js";
+import type { PcmPumpSource } from "./stems/pump.js";
 import type {
   CanonicalPcmExpectation,
-  PcmPumpSource,
+  DeclaredStemSource,
   StemRequirement,
   StemResolver,
   StemSessionLease,
-} from "./stems/index.js";
+} from "./stems/types.js";
 
 const PREFILL_TIMEOUT_MS = 2_000;
 
@@ -53,11 +59,20 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
   let feed: EngineFeed | undefined;
   let pump: EnginePump | undefined;
   let output: AudioNode | undefined;
+  let control: SessionControl | undefined;
 
   try {
     const document = normalizeDocument(options.document);
-    const sources = snapshotSources(options.sources);
-    const requirements = requirementsFor(options.leaseId, sources);
+    // Parsed before anything is constructed: the document is the session's own
+    // declaration of its sources, so a caller who has one has already said
+    // everything `sources` could say.
+    const documentDeclaration = extractDocumentDeclaration(document);
+    const sources = options.sources === undefined
+      ? declaredSourcesFrom(documentDeclaration)
+      : snapshotSources(options.sources);
+    const leaseId = options.leaseId ?? crypto.randomUUID();
+    const policy = bootPolicy(options);
+    const requirements = requirementsFor(leaseId, sources);
     const engineWasmUrl = options.assets?.engineWasmUrl ?? BUNDLED_ENGINE_ASSETS.wasm;
     const engineWorkletUrl = options.assets?.engineWorkletModuleUrl ?? BUNDLED_ENGINE_ASSETS.workletModule;
     const engineHostUrl = options.assets?.engineHostModuleUrl ?? BUNDLED_ENGINE_ASSETS.hostModule;
@@ -73,9 +88,8 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       scratchWorker!.boot({ ...request, moduleUrl: engineWasmUrl, signal: abort.signal }));
     const compiledShape = await scratchBoot({
       document,
-      options: scratchBootOptions(options.policy ?? {}),
+      options: scratchBootOptions(policy),
     });
-    const documentDeclaration = extractDocumentDeclaration(document);
     const orderedSources = crossSessionDeclarations(compiledShape, documentDeclaration, sources);
     if (scratchWorker !== undefined && closeScratchWorker !== undefined) {
       scratchWorker.close();
@@ -123,7 +137,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       ?? new OpfsStemStore(options.assets === undefined ? {} : { assets: options.assets });
     options.onProgress?.({ stage: "loading", sourcesTotal: requirements.length });
     lease = await store.openSession({
-      leaseId: options.leaseId,
+      leaseId,
       stems: requirements,
       resolver,
       ...(admission === undefined ? {} : { admission }),
@@ -167,7 +181,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       },
       simd128ModuleUrl: String(engineWasmUrl),
       workletModuleUrl: String(engineWorkletUrl),
-      ...(options.policy === undefined ? {} : { policy: options.policy }),
+      policy,
     });
     cleanup.push(() => engine!.close());
     crossCompiledSources(engine.shape.sources, orderedSources);
@@ -203,7 +217,13 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     output = options.createOutput?.({ context, engineNode: engine.host.node }) ?? engine.host.node;
     if (options.createOutput === undefined) output.connect(context.destination);
     cleanup.push(() => { try { output!.disconnect(); } catch { /* already disconnected */ } });
-    const semanticConsole = await engine.console();
+    // One request-identifier ledger, resolved before the session is handed back,
+    // so a first console command and a first meter subscription work in either
+    // order and neither caller nor adapter ever names an identifier.
+    if (consoleAttached(policy)) {
+      control = await attachSessionControl(engine.host);
+      cleanup.push(() => control!.close());
+    }
     detachAbort();
 
     let state: EngineWebSessionState = "ready";
@@ -219,9 +239,20 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       shape: engine.shape,
       context,
       host: engine.host,
-      console: semanticConsole,
+      get console(): EngineWebConsole {
+        if (control === undefined) throw consoleNotAttached();
+        return control.console;
+      },
       output,
       get state() { return state; },
+      meters(listener) {
+        if (control === undefined) return Promise.reject(consoleNotAttached());
+        return control.meters(listener);
+      },
+      telemetry(listener) {
+        if (control === undefined) return Promise.reject(consoleNotAttached());
+        return control.telemetry(listener);
+      },
       play() {
         if (closing || state === "closed") return Promise.reject(new EngineWebAdapterError("session.closed", "Engine Web session is closed"));
         // This call intentionally precedes the first await and preserves the user gesture.
@@ -270,7 +301,80 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
   }
 }
 
-function requirementsFor(leaseId: string, sources: EngineWebSessionOptions["sources"]): StemRequirement[] {
+/**
+ * The boot policy both boots read.
+ *
+ * The Engine reads an absent `console` as "attach no console at all", which
+ * reaches `ready`, plays audio, and then answers every ordinary command with a
+ * reason about the command rather than about the missing console. So the
+ * adapter attaches the Engine's own published default sizes -- not sizes of its
+ * own invention -- unless the caller asked for a playback-only session, and any
+ * console word the caller states wins field by field.
+ */
+function bootPolicy(options: EngineWebSessionOptions): BrowserBootPolicy {
+  if (options.console === false) {
+    const { console: _opted, ...rest } = options.policy ?? {};
+    return rest;
+  }
+  return {
+    ...options.policy,
+    console: {
+      commandQueueRecords: ABI_LAYOUT.constants.defaultCommandQueueRecords,
+      meterBlocks: ABI_LAYOUT.constants.defaultMeterBlocks,
+      ...options.policy?.console,
+    },
+  };
+}
+
+function consoleAttached(policy: BrowserBootPolicy): boolean {
+  return (policy.console?.commandQueueRecords ?? 0) > 0;
+}
+
+function consoleNotAttached(): EngineWebAdapterError {
+  return new EngineWebAdapterError(
+    "console.not_attached",
+    "This Engine Web session has no console attached",
+    { commandQueueRecords: 0 },
+  );
+}
+
+/**
+ * The stem declarations the document already carries.
+ *
+ * Session V1 states every source's id, digest, channel count, bit depth and
+ * frame count, and the adapter has already parsed all five to cross-check a
+ * caller's own declarations. Re-deriving them is therefore free, and it removes
+ * the only reason a caller had to restate the document in a second vocabulary.
+ */
+function declaredSourcesFrom(declaration: DocumentDeclaration): readonly DeclaredStemSource[] {
+  return declaration.sources.map((source) => {
+    if (source.bitDepth === "32f") {
+      throw new EngineWebAdapterError(
+        "stem.invalid_declaration",
+        "The browser adapter supports canonical 16-bit and 24-bit integer PCM only",
+        { sourceId: source.id, bitDepth: source.bitDepth },
+      );
+    }
+    if (source.channels !== 1 && source.channels !== 2) {
+      throw new EngineWebAdapterError(
+        "stem.invalid_declaration",
+        "The browser adapter supports mono and stereo sources only",
+        { sourceId: source.id, channels: source.channels },
+      );
+    }
+    return Object.freeze({
+      id: source.id,
+      spec: Object.freeze({
+        channels: source.channels,
+        bitDepth: source.bitDepth,
+        frames: exactFrames(source.frames),
+        content: source.identity,
+      }),
+    });
+  });
+}
+
+function requirementsFor(leaseId: string, sources: readonly DeclaredStemSource[]): StemRequirement[] {
   if (leaseId.length === 0) throw new TypeError("leaseId must not be empty");
   const ids = new Set<string>();
   return sources.map((source) => {
@@ -286,7 +390,7 @@ function normalizeDocument(document: EngineWebSessionOptions["document"]): Uint8
   return new TextEncoder().encode(document.toJson());
 }
 
-function snapshotSources(sources: EngineWebSessionOptions["sources"]): EngineWebSessionOptions["sources"] {
+function snapshotSources(sources: readonly DeclaredStemSource[]): readonly DeclaredStemSource[] {
   return sources.map((source) => Object.freeze({
     id: source.id,
     spec: Object.freeze({
@@ -299,7 +403,7 @@ function snapshotSources(sources: EngineWebSessionOptions["sources"]): EngineWeb
 }
 
 function expectationsFor(
-  sources: EngineWebSessionOptions["sources"],
+  sources: readonly DeclaredStemSource[],
   sampleRateHz: number,
 ): ReadonlyMap<`sha256:${string}`, CanonicalPcmExpectation> {
   const expectations = new Map<`sha256:${string}`, CanonicalPcmExpectation>();
@@ -337,8 +441,8 @@ function expectationsFor(
 
 function crossCompiledSources(
   compiled: readonly { readonly id: string; readonly channels: number; readonly frames: bigint }[],
-  declared: EngineWebSessionOptions["sources"],
-): EngineWebSessionOptions["sources"] {
+  declared: readonly DeclaredStemSource[],
+): readonly DeclaredStemSource[] {
   const byId = new Map(declared.map((source) => [source.id, source]));
   const ordered = compiled.map((source) => byId.get(source.id));
   const mismatch = compiled.length !== declared.length || ordered.some((expected, index) => {
@@ -346,7 +450,7 @@ function crossCompiledSources(
     return expected === undefined || source.channels !== expected.spec.channels || source.frames !== BigInt(expected.spec.frames);
   });
   if (mismatch) throw new EngineWebAdapterError("session.declaration_mismatch", "Engine-reported source order or shape differs from declarations");
-  return ordered as EngineWebSessionOptions["sources"];
+  return ordered as readonly DeclaredStemSource[];
 }
 
 interface DocumentSourceDeclaration {
@@ -414,8 +518,8 @@ function crossSessionDeclarations(
     readonly sources: readonly { readonly id: string; readonly channels: number; readonly frames: bigint }[];
   }>,
   document: DocumentDeclaration,
-  declared: EngineWebSessionOptions["sources"],
-): EngineWebSessionOptions["sources"] {
+  declared: readonly DeclaredStemSource[],
+): readonly DeclaredStemSource[] {
   const ordered = crossCompiledSources(compiled.sources, declared);
   if (document.sampleRateHz !== compiled.sampleRateHz) {
     throw declarationMismatch("Document sample rate differs from the scratch-compiled session", {

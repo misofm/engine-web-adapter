@@ -53,11 +53,30 @@ await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><sc
 await mkdir(join(consumer, "src"));
 await writeFile(join(consumer, "src", "main.ts"), browserSource(profile));
 await writeFile(join(consumer, "consumer-check.ts"), `
-import { openEngineWebSession } from "@misofm/engine-web-adapter";
+import { EngineWebAdapterError, openEngineWebSession } from "@misofm/engine-web-adapter";
+import type {
+  EngineWebConsole, EngineWebSession, EngineWebSessionOptions, MeterUpdate, TelemetryUpdate, TrackMeter,
+} from "@misofm/engine-web-adapter";
 import { createFlacStemResolver, PcmPumpWorkerClient } from "@misofm/engine-web-adapter/stems";
 import { ADAPTER_ASSETS } from "@misofm/engine-web-adapter/assets";
 import packageJson from "@misofm/engine-web-adapter/package.json" with { type: "json" };
-void [openEngineWebSession, createFlacStemResolver, PcmPumpWorkerClient, ADAPTER_ASSETS, packageJson];
+
+// The documented zero-configuration open: a document and a locator, nothing else.
+const minimal: EngineWebSessionOptions = {
+  document: "{}",
+  flac: { locate: () => "https://caller.invalid/stem.flac" },
+};
+declare const session: EngineWebSession;
+const live: EngineWebConsole = session.console;
+const meters: (listener: (update: MeterUpdate) => void) => Promise<() => void> = session.meters;
+const telemetry: (listener: (update: TelemetryUpdate) => void) => Promise<() => void> = session.telemetry;
+declare const update: MeterUpdate;
+const peak: TrackMeter | undefined = update.tracks.get("track-000");
+declare const failure: EngineWebAdapterError;
+const remedy: string = failure.remedy;
+const transient: boolean = failure.transient;
+void [openEngineWebSession, createFlacStemResolver, PcmPumpWorkerClient, ADAPTER_ASSETS, packageJson,
+  minimal, live, meters, telemetry, peak, remedy, transient];
 `);
 await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: {
   strict: true, noEmit: true, target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext",
@@ -142,6 +161,13 @@ try {
   assert.equal(result.result?.errors, 0);
   assert.equal(result.result?.coldClosed, true);
   assert.equal(result.result?.warmClosed, true);
+  for (const [order, observed] of [["console first", result.result?.consoleFirst], ["meters first", result.result?.meterFirst]]) {
+    assert.ok(observed?.meterUpdates > 0, `${order}: no meter update arrived`);
+    assert.deepEqual(observed?.meterTrackIds, [observed?.trackId], `${order}: meters are not keyed by track id`);
+    assert.equal(observed?.meterHasMaster, true, `${order}: master fold missing`);
+  }
+  assert.equal(result.result?.notAttached, "console.not_attached");
+  assert.equal(result.result?.meterNotAttached, "console.not_attached");
   assert.deepEqual(consoleErrors, []);
   const requested = [...requests.entries()];
   assert.ok(requested.some(([path, mime]) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm") && mime === "application/wasm"), "decoder Wasm asset/MIME not observed");
@@ -229,9 +255,9 @@ globalThis.Worker = class ObservedWorker extends NativeWorker {
   }
 } as typeof Worker;
 let rings: readonly SharedArrayBuffer[] = [];
-async function open(leaseId: string) {
+async function open(overrides: Record<string, unknown> = {}) {
   return openEngineWebSession({
-    document, leaseId, sources: [source],
+    document,
     flac: { locate(requested) {
       if (requested !== identity) throw new Error("unexpected identity");
       locatorCalls += 1;
@@ -241,10 +267,33 @@ async function open(leaseId: string) {
       rings = options.sources.map((item) => item.ring);
       return PcmPumpWorkerClient.create(options);
     },
+    ...overrides,
   });
 }
+/** Both orders, because a first control call must not need a retry either way. */
+async function exerciseControl(engine: any, consoleFirst: boolean) {
+  const trackId = engine.shape.tracks[0];
+  const updates: any[] = [];
+  const submit = () => {
+    const track = engine.console.edit.track(trackId);
+    return engine.console.submit(track.faderDb(-6), track.mute(false));
+  };
+  const subscribe = () => engine.meters((update: any) => updates.push(update));
+  let stop: () => void;
+  if (consoleFirst) { await submit(); stop = await subscribe(); }
+  else { stop = await subscribe(); await submit(); }
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  stop();
+  const last = updates.at(-1);
+  return {
+    trackId,
+    meterUpdates: updates.length,
+    meterTrackIds: last === undefined ? [] : [...last.tracks.keys()],
+    meterHasMaster: last === undefined ? false : typeof last.master.peak === "number",
+  };
+}
 try {
-  const cold = await open("cold");
+  const cold = await open({ leaseId: "cold" });
   await cold.play();
   await new Promise((resolve) => setTimeout(resolve, 150));
   await cold.pause();
@@ -266,15 +315,32 @@ try {
   const coldLocatorCalls = locatorCalls;
   const coldFlacWorkers = flacWorkers;
   const coldNetworkRequests = networkRequests;
-  const warm = await open("warm");
-  await warm.play(); await new Promise((resolve) => setTimeout(resolve, 50)); await warm.pause(); await warm.close();
+  const warm = await open({ leaseId: "warm" });
+  await warm.play(); await new Promise((resolve) => setTimeout(resolve, 50));
+  const consoleFirst = await exerciseControl(warm, true);
+  await warm.pause(); await warm.close();
   const warmClosed = warm.state === "closed";
+
+  // Zero configuration: no leaseId, no sources, no policy.
+  const minimal = await open();
+  await minimal.play();
+  const meterFirst = await exerciseControl(minimal, false);
+  await minimal.close();
+
+  const playbackOnly = await open({ leaseId: "playback-only", console: false });
+  let notAttached = "";
+  try { void playbackOnly.console; } catch (error) { notAttached = (error as { code?: string }).code ?? ""; }
+  let meterNotAttached = "";
+  try { await playbackOnly.meters(() => undefined); }
+  catch (error) { meterNotAttached = (error as { code?: string }).code ?? ""; }
+  await playbackOnly.close();
   globalThis.__result = {
     coldLocatorCalls, warmLocatorCalls: locatorCalls,
     coldFlacWorkers, warmFlacWorkers: flacWorkers,
     coldNetworkRequests, warmNetworkRequests: networkRequests,
     observedRemoteBytes, observedEtag,
-    coldClosed, warmClosed, ...counters,
+    coldClosed, warmClosed, consoleFirst, meterFirst, notAttached, meterNotAttached,
+    ...counters,
   };
 } catch (error) {
   globalThis.__error = describe(error);
