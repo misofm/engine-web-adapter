@@ -1,8 +1,8 @@
 # @misofm/engine-web-adapter
 
 Headless, framework-neutral browser session hosting for
-`@misofm/engine@0.1.0`. Version 0.2 streams CLI-prepared fixed-block FLAC
-through bounded Effect HTTP ranges and a one-stem WebCodecs Worker, verifies
+`@misofm/engine@0.1.0`. Version 0.2 streams standards-compliant native FLAC
+through bounded Effect HTTP ranges and a one-stem universal libFLAC Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
 rings. URL, authentication, and request mapping remain caller-owned.
 
@@ -14,7 +14,7 @@ npm install @misofm/engine-web-adapter@0.2.0 @misofm/engine@0.1.0
 
 The package is ESM-only and remains pinned to exactly Engine `0.1.0`.
 
-## Open a dense-FLAC session
+## Open a native-FLAC session
 
 ```ts
 import { openEngineWebSession } from "@misofm/engine-web-adapter"
@@ -81,21 +81,17 @@ Cross-Origin-Embedder-Policy: require-corp
 ```
 
 The browser must provide OPFS, Web Locks, module Workers, AudioWorklet,
-WebAssembly SIMD128, and Worker-side WebCodecs FLAC for a cold FLAC open.
-Unsupported FLAC fails with a typed capability error; there is no codec-Wasm
-fallback. The server must expose exact `Content-Range` and `Content-Length`,
+WebAssembly SIMD128, and WebAssembly for a cold FLAC open. The package-owned
+libFLAC module is the only decoder path. The server must expose exact `Content-Range` and `Content-Length`,
 return status 206, avoid `Content-Encoding`, and keep total size and any visible
 ETag stable across attempts.
 
-Chrome is the qualified browser for version 0.2. Safari 26.3.1 advertises the
-required FLAC `AudioDecoder` configuration but closes the decoder when standard
-per-frame chunks are submitted, for both the package fixture and a live stem.
-Safari is therefore not supported by this release; the failure is surfaced to
-the caller and no hidden whole-file or codec-Wasm fallback is used.
+Chromium, macOS Safari, and mobile Safari share the same decoder and error path;
+there is no platform codec fallback.
 
 Package-relative asset URLs and overrides are exported from
 `@misofm/engine-web-adapter/assets`. They cover the scratch Worker, FLAC Worker,
-PCM pump Worker, feed worklet, and Engine assets.
+libFLAC Wasm, PCM pump Worker, feed worklet, and Engine assets.
 Common `assets.flacWorkerUrl` and `assets.createWorker` overrides apply to the
 high-level FLAC path. A nested `flac.assets` field overrides matching common
 asset fields without discarding the other common fields; the low-level
@@ -103,14 +99,13 @@ asset fields without discarding the other common fields; the low-level
 
 ## Bounds and integrity
 
-- Delivery chunks are at most 256 KiB; compressed frames at most 524,320 bytes.
+- Delivery chunks and the sole compressed input slot are each 256 KiB.
 - Canonical output blocks are at most 384 KiB.
-- Each Worker has four decoder submissions and two decoded-output credits.
+- Each Worker has one synchronous decoder call and two decoded-output credits.
 - One active FLAC Worker reserves 8 MiB of package-owned memory.
-- Conservatively accounted live buffers and exact typed dense seek tables total
-  7,864,486 bytes per Worker; 524,122 bytes remain for bounded wrapper/bookkeeping
-  overhead. Browser
-  network and WebCodecs implementation memory is opaque and excluded.
+- The decoder memory is fixed at 2 MiB; package-owned buffers are independent of
+  compressed-stem duration. Browser network, Worker, and compiled-code memory is
+  opaque and excluded.
 - Cold decode and warm OPFS verification share one FIFO admission width.
 - PCM is not leased or pumped until exact byte count and incremental SHA-256
   verification succeeds and the staging file is promoted.

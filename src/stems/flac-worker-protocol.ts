@@ -3,7 +3,6 @@ import type { FlacInputSlotBuffers } from "./flac-input-slot.js";
 import type { NativeFlacStreamInfo } from "./native-flac-metadata.js";
 
 export const FLAC_DECODE_OUTPUT_CREDITS = 2;
-export const MAXIMUM_FLAC_DECODER_SUBMISSIONS = 4;
 
 export type FlacWorkerRequest =
   | {
@@ -21,8 +20,6 @@ export type FlacWorkerRequest =
       readonly expectedFrames: number;
       readonly totalPcmBytes: number;
     }
-  | { readonly type: "input"; readonly requestId: number; readonly bytes: ArrayBuffer; readonly totalFlacBytes: number }
-  | { readonly type: "finish"; readonly requestId: number }
   | { readonly type: "output-credit"; readonly requestId: number }
   | { readonly type: "cancel"; readonly requestId: number };
 

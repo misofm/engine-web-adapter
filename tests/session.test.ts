@@ -8,8 +8,6 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { EngineWebAdapterError, openEngineWebSession } from "../src/index.js";
 import { assertEngineWebCapabilities } from "../src/capabilities.js";
 import { MSB1_CONTROL } from "../src/stems/index.js";
-import { runFlacIngest } from "../src/stems/flac-ingest.js";
-import { FlacWorkerMailbox } from "../src/stems/flac-worker-mailbox.js";
 import type { EngineAudioContext, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
 import type { FlacWorkerRequest, FlacWorkerResponse, StemResolver, StemSessionLease, StemStore } from "../src/stems/index.js";
 
@@ -388,7 +386,7 @@ test("session FLAC expectations reject wrong STREAMINFO before any audio-byte ra
     { field: "frames", sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 5 },
   ] as const;
   for (const mismatch of cases) {
-    const fixture = denseFlac(mismatch);
+    const fixture = nativeFlacFixture(mismatch);
     const requested: Array<readonly [number, number]> = [];
     const client = HttpClient.make((request) => {
       const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
@@ -457,7 +455,7 @@ function putU64(bytes: Uint8Array, offset: number, input: bigint): void {
   }
 }
 
-function denseFlac(shape: { readonly sampleRateHz: number; readonly channels: number; readonly bitDepth: number; readonly frames: number }) {
+function nativeFlacFixture(shape: { readonly sampleRateHz: number; readonly channels: number; readonly bitDepth: number; readonly frames: number }) {
   const seekBytes = shape.frames * 18;
   const audioStart = 46 + seekBytes;
   const bytes = new Uint8Array(audioStart + (shape.frames * 4));
@@ -558,41 +556,14 @@ class ErrorOnStartWorker extends EventTarget {
 
 class ValidationWorker extends EventTarget {
   terminated = false;
-  #mailbox: FlacWorkerMailbox | undefined;
   postMessage(message: FlacWorkerRequest) {
     if (this.terminated) return;
     if (message.type === "start") {
-      const mailbox = new FlacWorkerMailbox();
-      this.#mailbox = mailbox;
-      void runFlacIngest({
-        requestId: message.requestId,
-        ...(message.expected === undefined ? {} : { expected: message.expected }),
-        post: (reply) => this.#reply(reply),
-        nextInput: () => mailbox.nextInput(),
-        nextOutputCredit: () => mailbox.takeOutputCredit(),
-        cancelled: () => mailbox.cancelled,
-        cancellation: mailbox.cancellation,
-        cancellationReason: () => mailbox.cancellationReason,
-        globals: {
-          AudioDecoder: class {}, EncodedAudioChunk: class {},
-        } as unknown as typeof globalThis,
-      }).catch((error: unknown) => {
-        if (!mailbox.cancelled) this.#reply({
-          type: "error", requestId: message.requestId,
-          error: error instanceof EngineWebAdapterError
-            ? { name: error.name, message: error.message, code: error.code, details: error.details }
-            : { name: "Error", message: String(error) },
-        });
-      });
-    } else if (message.type === "input") {
-      this.#mailbox?.giveInput({ bytes: new Uint8Array(message.bytes), totalFlacBytes: message.totalFlacBytes });
-    } else if (message.type === "finish") this.#mailbox?.giveInput(null);
-    else if (message.type === "output-credit") this.#mailbox?.giveOutputCredit();
-    else this.#mailbox?.cancel(new DOMException("cancelled", "AbortError"));
+      queueMicrotask(() => this.#reply({ type: "ready", requestId: message.requestId }));
+    }
   }
   terminate() {
     this.terminated = true;
-    this.#mailbox?.cancel(new DOMException("terminated", "AbortError"));
   }
   #reply(reply: FlacWorkerResponse) {
     if (!this.terminated) this.dispatchEvent(new MessageEvent("message", { data: reply }));

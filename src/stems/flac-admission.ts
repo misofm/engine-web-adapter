@@ -1,31 +1,20 @@
 import { EngineWebAdapterError } from "../errors.js";
-import {
-  MAXIMUM_DELIVERY_CHUNK_BYTES,
-  MAXIMUM_DENSE_SEEK_POINTS,
-  MAXIMUM_FLAC_FRAME_BYTES,
-  MAXIMUM_FLAC_METADATA_BYTES,
-} from "./flac-metadata.js";
-import { MAXIMUM_CANONICAL_OUTPUT_BYTES } from "./flac-pcm.js";
-import { FLAC_DECODE_OUTPUT_CREDITS, MAXIMUM_FLAC_DECODER_SUBMISSIONS } from "./flac-worker-protocol.js";
+import { FLAC_INPUT_CONTROL_BYTES, FLAC_INPUT_SLOT_BYTES } from "./flac-input-slot.js";
+import { FLAC_DECODER_MEMORY_BYTES, MAXIMUM_CANONICAL_OUTPUT_BYTES } from "./native-flac-decoder.js";
+import { FLAC_DECODE_OUTPUT_CREDITS } from "./flac-worker-protocol.js";
 
 export const FLAC_WORKER_RESERVATION_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_FLAC_MEMORY_BUDGET_BYTES = 16 * 1024 * 1024;
 export const MINIMUM_FLAC_MEMORY_BUDGET_BYTES = 8 * 1024 * 1024;
 export const MAXIMUM_FLAC_MEMORY_BUDGET_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_MAXIMUM_ACTIVE_FLAC_WORKERS = 4;
-const MAXIMUM_METADATA_SEEK_POINTS = Math.min(
-  MAXIMUM_DENSE_SEEK_POINTS,
-  Math.floor((MAXIMUM_FLAC_METADATA_BYTES - 4 - 4 - 34 - 4) / 18),
-);
-
 /** Conservative fixed-byte accounting; browser network/decoder internals are opaque and excluded. */
 export const FLAC_PACKAGE_MEMORY_COMPONENTS = Object.freeze({
-  exactRange: MAXIMUM_DELIVERY_CHUNK_BYTES,
-  metadataParser: MAXIMUM_FLAC_METADATA_BYTES + 2 * MAXIMUM_DELIVERY_CHUNK_BYTES,
-  packetizerPeak: 3 * MAXIMUM_FLAC_FRAME_BYTES + 2 * MAXIMUM_DELIVERY_CHUNK_BYTES,
-  decoderSubmissions: MAXIMUM_FLAC_DECODER_SUBMISSIONS * MAXIMUM_FLAC_FRAME_BYTES,
+  exactRange: FLAC_INPUT_SLOT_BYTES,
+  compressedInputSlot: FLAC_INPUT_SLOT_BYTES,
+  decoderLinearMemory: FLAC_DECODER_MEMORY_BYTES,
   decodedOutputCredits: FLAC_DECODE_OUTPUT_CREDITS * MAXIMUM_CANONICAL_OUTPUT_BYTES,
-  seekTable: MAXIMUM_METADATA_SEEK_POINTS * (8 + 8 + 2),
+  metadataAndControl: 4 * 1024 + FLAC_INPUT_CONTROL_BYTES,
 });
 export const FLAC_ACCOUNTED_FIXED_BUFFER_BYTES = Object.values(FLAC_PACKAGE_MEMORY_COMPONENTS)
   .reduce((sum, bytes) => sum + bytes, 0);

@@ -17,20 +17,9 @@ export {
   defaultFlacMemoryBudgetBytes,
   flacAdmissionWidth,
 } from "./flac-admission.js";
-export {
-  MAXIMUM_DELIVERY_CHUNK_BYTES,
-  MAXIMUM_DENSE_SEEK_POINTS,
-  MAXIMUM_FLAC_FRAME_BYTES,
-  MAXIMUM_FLAC_METADATA_BYTES,
-  DenseFlacMetadataParser,
-} from "./flac-metadata.js";
-export { DenseFlacFramePacketizer } from "./flac-packetizer.js";
-export { MAXIMUM_CANONICAL_OUTPUT_BYTES, audioDataToCanonicalPcm } from "./flac-pcm.js";
 export { readExactFlacRange } from "./flac-delivery.js";
-export { runFlacIngest } from "./flac-ingest.js";
 export { createFlacStemResolver } from "./flac-resolver.js";
 export { FlacWorkerPool } from "./flac-worker-pool.js";
-export { FLAC_DECODE_OUTPUT_CREDITS, MAXIMUM_FLAC_DECODER_SUBMISSIONS } from "./flac-worker-protocol.js";
 export {
   CanonicalPcmPump,
   SelfDrivingPcmPump,
@@ -55,9 +44,6 @@ export type { EngineSourceSink, Msb1RingCounters, Msb1RingLayout } from "./ring.
 export type { PumpWorkerRequest, PumpWorkerResponse } from "./worker-protocol.js";
 export type { PumpWorkerLike } from "./worker-client.js";
 export type { StemAdmissionLease } from "./flac-admission.js";
-export type { DenseFlacMetadata, DenseFlacMetadataResult, DenseFlacSeekTable } from "./flac-metadata.js";
-export type { FlacFramePacket } from "./flac-packetizer.js";
-export type { WebCodecsAudioDataLike, WebCodecsAudioFormat } from "./flac-pcm.js";
 export type { FlacHttpOptions, FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";
 export type { FlacDeliveryOptions } from "./flac-resolver.js";
 export type { FlacWorkerPoolOptions } from "./flac-worker-pool.js";

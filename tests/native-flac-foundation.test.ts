@@ -13,6 +13,16 @@ import {
   parseNativeFlacStreamInfo,
 } from "../src/stems/native-flac-metadata.js";
 import { NativeFlacDecoder } from "../src/stems/native-flac-decoder.js";
+import {
+  BoundedStemAdmission,
+  DEFAULT_FLAC_MEMORY_BUDGET_BYTES,
+  FLAC_ACCOUNTED_FIXED_BUFFER_BYTES,
+  FLAC_ACCOUNTING_HEADROOM_BYTES,
+  FLAC_PACKAGE_MEMORY_COMPONENTS,
+  FLAC_WORKER_RESERVATION_BYTES,
+  defaultFlacMemoryBudgetBytes,
+  flacAdmissionWidth,
+} from "../src/stems/index.js";
 
 function putU64(bytes: Uint8Array, offset: number, input: bigint): void {
   let value = input;
@@ -100,7 +110,7 @@ test("cancellation wakes the synchronous input bridge as ABORT, never EOF", () =
 });
 
 test("real fixed-memory libFLAC Wasm emits exact canonical PCM", async () => {
-  const flac = new Uint8Array(await readFile("tests/fixtures/dense-silence.flac"));
+  const flac = new Uint8Array(await readFile("tests/fixtures/native-silence.flac"));
   let audioOffset = 42;
   if ((flac[4]! & 0x80) === 0) {
     for (;;) {
@@ -140,7 +150,7 @@ test("real fixed-memory libFLAC Wasm emits exact canonical PCM", async () => {
 });
 
 test("real libFLAC waits through delayed one-byte refills across arbitrary frame splits", async () => {
-  const flac = new Uint8Array(await readFile("tests/fixtures/dense-silence.flac"));
+  const flac = new Uint8Array(await readFile("tests/fixtures/native-silence.flac"));
   let audioOffset = 42;
   if ((flac[4]! & 0x80) === 0) {
     for (;;) {
@@ -178,4 +188,40 @@ test("real libFLAC waits through delayed one-byte refills across arbitrary frame
   } finally {
     await worker.terminate();
   }
+});
+
+test("native FLAC admission obeys frozen memory and core bounds", () => {
+  assert.equal(defaultFlacMemoryBudgetBytes(), DEFAULT_FLAC_MEMORY_BUDGET_BYTES);
+  assert.equal(defaultFlacMemoryBudgetBytes(Number.NaN), DEFAULT_FLAC_MEMORY_BUDGET_BYTES);
+  assert.equal(defaultFlacMemoryBudgetBytes(0.5), 8 * 1024 * 1024);
+  assert.equal(defaultFlacMemoryBudgetBytes(16), 32 * 1024 * 1024);
+  assert.equal(flacAdmissionWidth(), 1);
+  assert.equal(flacAdmissionWidth({ hardwareConcurrency: 12, memoryBudgetBytes: 24 * 1024 * 1024 }), 3);
+});
+
+test("native FLAC package buffers are fixed and leave reservation headroom", () => {
+  assert.deepEqual(FLAC_PACKAGE_MEMORY_COMPONENTS, {
+    exactRange: 256 * 1024,
+    compressedInputSlot: 256 * 1024,
+    decoderLinearMemory: 2 * 1024 * 1024,
+    decodedOutputCredits: 2 * 384 * 1024,
+    metadataAndControl: 4 * 1024 + 16,
+  });
+  assert.equal(FLAC_ACCOUNTED_FIXED_BUFFER_BYTES + FLAC_ACCOUNTING_HEADROOM_BYTES, FLAC_WORKER_RESERVATION_BYTES);
+  assert.ok(FLAC_ACCOUNTING_HEADROOM_BYTES > 4 * 1024 * 1024);
+});
+
+test("native FLAC admission is FIFO and removes queued cancellation", async () => {
+  const admission = new BoundedStemAdmission(1);
+  const first = await admission.acquire();
+  const order: string[] = [];
+  const cancelled = new AbortController();
+  const second = admission.acquire(cancelled.signal).then(() => order.push("cancelled"));
+  const third = admission.acquire().then((lease) => { order.push("third"); lease.release(); });
+  cancelled.abort("test");
+  await assert.rejects(second);
+  first.release();
+  await third;
+  assert.deepEqual(order, ["third"]);
+  assert.deepEqual(admission.stats, { active: 0, queued: 0, limit: 1 });
 });

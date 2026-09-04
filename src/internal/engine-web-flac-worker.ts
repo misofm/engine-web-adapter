@@ -1,6 +1,6 @@
 import { EngineWebAdapterError } from "../errors.js";
 import { NativeFlacDecoder } from "../stems/native-flac-decoder.js";
-import { FlacWorkerMailbox } from "../stems/flac-worker-mailbox.js";
+import { FlacOutputCredits } from "../stems/flac-output-credits.js";
 import type { FlacWorkerRequest, FlacWorkerResponse } from "../stems/flac-worker-protocol.js";
 
 interface WorkerScope {
@@ -11,7 +11,7 @@ interface WorkerScope {
 
 const scope = ((globalThis as unknown as { readonly self?: WorkerScope }).self ?? globalThis) as unknown as WorkerScope;
 let active = 0;
-let mailbox: FlacWorkerMailbox | undefined;
+let credits: FlacOutputCredits | undefined;
 let decoder: NativeFlacDecoder | undefined;
 
 function serialize(error: unknown): Extract<FlacWorkerResponse, { type: "error" }>["error"] {
@@ -27,7 +27,7 @@ function serialize(error: unknown): Extract<FlacWorkerResponse, { type: "error" 
 }
 
 function fail(error: unknown): void {
-  if (!mailbox?.cancelled) scope.postMessage({ type: "error", requestId: active, error: serialize(error) });
+  if (!credits?.cancelled) scope.postMessage({ type: "error", requestId: active, error: serialize(error) });
   decoder?.destroy();
   scope.close?.();
 }
@@ -37,7 +37,7 @@ scope.onmessage = (event) => {
   if (message.type === "start") {
     if (active !== 0) return;
     active = message.requestId;
-    mailbox = new FlacWorkerMailbox();
+    credits = new FlacOutputCredits();
     void NativeFlacDecoder.load({
       url: message.decoderWasmUrl,
       inputSlot: message.inputSlot,
@@ -51,10 +51,10 @@ scope.onmessage = (event) => {
     }, fail);
     return;
   }
-  if (message.requestId !== active || mailbox === undefined) return;
-  if (message.type === "output-credit") { mailbox.giveOutputCredit(); return; }
+  if (message.requestId !== active || credits === undefined) return;
+  if (message.type === "output-credit") { credits.give(); return; }
   if (message.type === "cancel") {
-    mailbox.cancel(new DOMException("FLAC Worker job was cancelled", "AbortError"));
+    credits.cancel();
     decoder?.destroy();
     scope.close?.();
     return;
@@ -64,13 +64,12 @@ scope.onmessage = (event) => {
     try { decoder.initialize(message.streamInfo, message.expectedFrames); }
     catch (error) { fail(error); return; }
     const current = decoder;
-    const job = mailbox;
+    const outputCredits = credits;
     void (async () => {
       let frames = 0;
       let bytes = 0;
       for (;;) {
-        await job.takeOutputCredit();
-        if (job.cancelled) return;
+        if (!await outputCredits.take()) return;
         let result;
         do { result = current.processSingle(); } while (result === null);
         if (result === "eof") break;
