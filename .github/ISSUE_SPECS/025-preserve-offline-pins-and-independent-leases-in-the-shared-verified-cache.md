@@ -118,3 +118,7 @@ No public declaration, lock order, schema, persistence behavior, or additional
 scope changed in this revision. The prior packed public-type evidence remains
 applicable. This records implementation evidence only; the same independent
 reviewer must recheck the exact correction before a PASS/closure claim.
+
+## Dedicated Astra medium attempt2 PASS
+
+Independent review at27dde96 confirms cancellation before lifetime lock grant returns stem.cancelled with its original cause, with no lost ownership or held lock. The independent reproducer and focused42 tests pass; first-review accepted cache/pin/compatibility and packed-consumer findings remain valid. Full131-test check evidence is upstream. Report attached to PR26. This completes cache pin/lease compatibility; quota reclamation and app adoption remain separately scoped work.
