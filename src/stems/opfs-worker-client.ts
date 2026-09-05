@@ -9,6 +9,7 @@ import type { StemStorageWriter } from "./storage.js";
 interface Pending {
   resolve(): void;
   reject(reason: unknown): void;
+  readonly timer: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -19,6 +20,7 @@ interface Pending {
  */
 export class OpfsWriteWorkerClient {
   readonly #createWorker: () => OpfsWorkerLike;
+  readonly #deadlineMs: number;
   readonly #pending = new Map<number, Pending>();
   #worker: OpfsWorkerLike | undefined;
   #ready: Promise<void> | undefined;
@@ -28,10 +30,19 @@ export class OpfsWriteWorkerClient {
   #requestId = 1;
   #writerId = 1;
   #generation = 1;
+  #readyReject: ((reason: unknown) => void) | undefined;
 
-  constructor(options: { readonly assets?: AdapterAssetOverrides; readonly createWorker?: () => OpfsWorkerLike } = {}) {
+  constructor(options: {
+    readonly assets?: AdapterAssetOverrides;
+    readonly createWorker?: () => OpfsWorkerLike;
+    readonly deadlineMs?: number;
+  } = {}) {
     this.#createWorker = options.createWorker
       ?? (() => createOpfsWorker(options.assets) as unknown as OpfsWorkerLike);
+    this.#deadlineMs = options.deadlineMs ?? 15_000;
+    if (!Number.isFinite(this.#deadlineMs) || this.#deadlineMs <= 0) {
+      throw new RangeError("deadlineMs must be a positive finite number");
+    }
   }
 
   get workersActive(): number { return this.#worker === undefined ? 0 : 1; }
@@ -130,9 +141,19 @@ export class OpfsWriteWorkerClient {
 
   #awaitReady(worker: OpfsWorkerLike): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        const reason = new DOMException("Stem read deadline exceeded", "TimeoutError");
+        this.#fail(reason);
+      }, this.#deadlineMs);
       const settle = (action: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (this.#readyReject === reject) this.#readyReject = undefined;
         worker.removeEventListener("message", onMessage);
         worker.removeEventListener("error", onError);
+        worker.removeEventListener("messageerror", onMessageError);
         action();
       };
       const onMessage = (event: MessageEvent<OpfsWorkerResponse>) => {
@@ -143,8 +164,13 @@ export class OpfsWriteWorkerClient {
       const onError = (event: ErrorEvent) => settle(() => reject(new EngineWebAdapterError(
         "capability.module_worker", "OPFS write Worker did not load", {}, event.error ?? new Error(event.message),
       )));
+      const onMessageError = () => settle(() => reject(new EngineWebAdapterError(
+        "capability.opfs", "OPFS write Worker message could not be cloned",
+      )));
+      this.#readyReject = (reason) => settle(() => reject(reason));
       worker.addEventListener("message", onMessage);
       worker.addEventListener("error", onError);
+      worker.addEventListener("messageerror", onMessageError);
     });
   }
 
@@ -162,6 +188,8 @@ export class OpfsWriteWorkerClient {
     this.#detach = undefined;
     this.#worker = undefined;
     this.#ready = undefined;
+    this.#readyReject?.(new EngineWebAdapterError("session.closed", "OPFS write Worker is closed"));
+    this.#readyReject = undefined;
     // A Worker scope's write support does not change between instances.
     this.#generation += 1;
     try { worker?.terminate(); } catch { /* a terminated Worker cannot be re-terminated */ }
@@ -171,6 +199,9 @@ export class OpfsWriteWorkerClient {
     if (this.#worker === undefined && this.#pending.size === 0) return;
     const pending = [...this.#pending.values()];
     this.#pending.clear();
+    for (const entry of pending) clearTimeout(entry.timer);
+    this.#readyReject?.(reason);
+    this.#readyReject = undefined;
     this.#openWriters = 0;
     this.#teardown();
     for (const entry of pending) entry.reject(reason);
@@ -186,9 +217,14 @@ export class OpfsWriteWorkerClient {
     }
     const worker = this.#worker;
     return new Promise<void>((resolve, reject) => {
-      this.#pending.set(message.requestId, { resolve, reject });
+      const timer = setTimeout(() => {
+        if (!this.#pending.has(message.requestId)) return;
+        this.#fail(new DOMException("Stem read deadline exceeded", "TimeoutError"));
+      }, this.#deadlineMs);
+      this.#pending.set(message.requestId, { resolve, reject, timer });
       try { worker.postMessage(message); }
       catch (error) {
+        clearTimeout(timer);
         this.#pending.delete(message.requestId);
         this.#fail(error);
         reject(error);
@@ -201,6 +237,7 @@ export class OpfsWriteWorkerClient {
     const pending = this.#pending.get(message.requestId);
     if (pending === undefined) return;
     this.#pending.delete(message.requestId);
+    clearTimeout(pending.timer);
     if (message.type === "opfs-ok") { pending.resolve(); return; }
     pending.reject(reviveWorkerError(message.error));
   }

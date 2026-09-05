@@ -76,6 +76,10 @@ export class OpfsStorageBackend implements StemStorageBackend {
     this.#writes = new OpfsWriteWorkerClient({
       ...(options.assets === undefined ? {} : { assets: options.assets }),
       ...(options.createWorker === undefined ? {} : { createWorker: options.createWorker }),
+      // Let the worker generation fail-close just before the public backend
+      // deadline abandons its promise. This makes termination deterministic
+      // when both timers are scheduled in the same turn.
+      deadlineMs: Math.max(1, this.#readDeadlineMs - 1),
     });
   }
 
@@ -130,11 +134,13 @@ export class OpfsStorageBackend implements StemStorageBackend {
 
   async createWriter(name: string): Promise<StemStorageWriter> {
     this.#opened();
-    const writer = await deadline(this.#writes.createWriter(this.#folderName, name), this.#readDeadlineMs);
+    // The worker client owns this deadline so a timeout terminates the shared
+    // generation before the public promise is abandoned.
+    const writer = await this.#writes.createWriter(this.#folderName, name);
     return {
-      write: (chunk) => deadline(writer.write(chunk), this.#readDeadlineMs),
-      close: () => deadline(writer.close(), this.#readDeadlineMs),
-      abort: (reason) => deadline(writer.abort(reason), this.#readDeadlineMs),
+      write: (chunk) => writer.write(chunk),
+      close: () => writer.close(),
+      abort: (reason) => writer.abort(reason),
     };
   }
 

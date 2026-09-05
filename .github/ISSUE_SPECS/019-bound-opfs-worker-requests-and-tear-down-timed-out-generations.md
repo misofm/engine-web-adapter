@@ -1,5 +1,30 @@
 # Bound OPFS worker requests and tear down timed-out generations
 
+## Attempt 1 evidence (Luna, 2026-09-05)
+
+Implemented in the approved paths only: `src/stems/opfs-worker-client.ts`,
+`src/stems/storage.ts`, and `tests/opfs-storage.test.ts`. The worker client now
+owns the backend deadline for its handshake and requests, clears request
+timers, fail-closes the whole generation on timeout, rejects pending work once,
+and ignores late replies after listener removal and termination. The backend no
+longer races that deadline with an outer `Promise.race` around worker-backed
+writer operations; public interfaces and existing error names remain unchanged.
+
+Focused discriminator `/private/tmp/dx-opfs-open-repro.mjs` changed from the
+baseline `{ "deadlineRejected": "TimeoutError", "lateOpenAborted": false,
+"workerTerminated": false }` to `{ "deadlineRejected": "TimeoutError",
+"lateOpenAborted": false, "workerTerminated": true }`. The new repository
+regression is `a timed-out writer open terminates its generation and ignores a
+late reply` in `tests/opfs-storage.test.ts`.
+
+Validation: `npm run typecheck` passed; `npm test` passed with 101/101 tests;
+`npm run check` reached the same suite and its format, lint, source-policy, and
+decoder gates, but the first run exposed the timer race now corrected and must
+be rerun. `npm run test:browser:opfs` could not start its local server in this
+sandbox (`listen EPERM 127.0.0.1`), so packed Chromium/WebKit evidence remains
+the existing baseline and is not claimed as rerun here. No worker protocol or
+worker implementation changes were made.
+
 **Repository baseline:** `engine-web-adapter` `origin/main` at `63b4ee6212287000ff85e1cfa969d385f6246d2d`  
 **Issue:** https://github.com/misofm/engine-web-adapter/issues/19. Do not reopen closed issue #13.  
 **Workflow:** Luna implements attempt 1 after engine issue #393 reaches its commit/review boundary; Astra performs the adversarial PR review. The user's model assignments override the repository's default role wording for this issue only.

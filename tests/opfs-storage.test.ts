@@ -172,6 +172,54 @@ function backendFor(root: FakeDirectory, folderName: string): OpfsStorageBackend
   });
 }
 
+test("a timed-out writer open terminates its generation and ignores a late reply", async () => {
+  const workers: Array<{
+    readonly messages: OpfsWorkerRequest[];
+    readonly emit: (message: OpfsWorkerResponse) => void;
+    readonly terminated: () => boolean;
+  }> = [];
+  const backend = new OpfsStorageBackend({
+    folderName: "opfs-late-open-v1",
+    storage: { getDirectory: async () => new FakeDirectory() } as never,
+    readDeadlineMs: 30,
+    createWorker: () => {
+      const listeners = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
+      const messages: OpfsWorkerRequest[] = [];
+      let dead = false;
+      const worker = {
+        postMessage(message: OpfsWorkerRequest) {
+          if (!dead) messages.push(message);
+        },
+        terminate() { dead = true; },
+        addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
+          if (type === "message") listeners.add(listener);
+        },
+        removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
+          if (type === "message") listeners.delete(listener);
+        },
+      } satisfies OpfsWorkerLike;
+      const entry = {
+        messages,
+        emit(message: OpfsWorkerResponse) {
+          if (!dead) for (const listener of [...listeners]) listener({ data: message } as never);
+        },
+        terminated: () => dead,
+      };
+      workers.push(entry);
+      queueMicrotask(() => entry.emit({ type: "worker-ready", writeSupport: true }));
+      return worker;
+    },
+  });
+  await backend.open();
+  await assert.rejects(backend.createWriter("staging-timeout"), (error: unknown) =>
+    error instanceof DOMException && error.name === "TimeoutError");
+  const worker = workers.at(-1)!;
+  const request = worker.messages.find((message) => message.type === "write-open")!;
+  worker.emit({ type: "opfs-ok", requestId: request.requestId });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(worker.terminated(), true);
+});
+
 test("OPFS staging is written through createSyncAccessHandle, never createWritable", async () => {
   const root = new FakeDirectory();
   const backend = backendFor(root, "opfs-write-v1");
