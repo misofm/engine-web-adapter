@@ -188,6 +188,22 @@ override reads. The existing ring control exports are SDK re-exports. Digests,
 admission width, the decoder pool and adapter Worker protocols remain internal;
 PCM ring arithmetic is owned by the SDK.
 
+## Verified source progress
+
+The package store emits `onProgress({ stage: "source-ready", identity, bytes })`
+once per unique identity during each open, for cold ingest and warm verification.
+`bytes` is the verified canonical PCM length. This event follows exact length and
+SHA-256 verification and successful persistence of the opening's ownership pin.
+It lets a caller mark that source complete while other sources are still loading;
+duplicate source declarations sharing an identity do not duplicate the event.
+
+`source-ready` does not make the session playable. The unchanged aggregate
+`ready` event waits for every declaration, and the session still completes its
+normal prefill before returning. Failed verification or pin persistence emits no
+source proof. Cancellation from a progress callback rejects the open and releases
+its ownership without aggregate readiness. If a later source fails, earlier
+verified files can remain cached, but the failed opening releases its pins.
+
 ## Per-open ingest diagnostics
 
 Create a collector before opening and pass it as `ingestDiagnostics`:
