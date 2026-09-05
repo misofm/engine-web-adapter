@@ -64,6 +64,7 @@ export class VerifiedStemStore implements StemStore {
   readonly #instanceId: string;
   readonly #readDeadlineMs: number;
   readonly #shared: SharedState;
+  readonly #folderName: string;
   #opened: Promise<void> | undefined;
 
   constructor(options: VerifiedStemStoreOptions = {}) {
@@ -73,6 +74,7 @@ export class VerifiedStemStore implements StemStore {
     this.#instanceId = options.instanceId ?? randomId();
     this.#readDeadlineMs = positive(options.readDeadlineMs ?? 30_000, "readDeadlineMs");
     this.#shared = sharedFor(this.#backend);
+    this.#folderName = this.#backend.folderName ?? "miso-engine-web-stems-v1";
   }
 
   async open(): Promise<this> {
@@ -124,30 +126,59 @@ export class VerifiedStemStore implements StemStore {
       throw new EngineWebAdapterError("stem.cancelled", "Stem session open was cancelled", {}, options.signal.reason);
     }
 
-    // Pin only after every content identity crossed the hard verification gate.
-    const pin = `session:${this.#instanceId}:${leaseId}`;
-    await this.#mutateIndex((index) => {
-      for (const stem of unique) {
-        const row = index.stems[stem.identity];
-        if (row === undefined || row.bytes !== stem.bytes) {
-          throw new EngineWebAdapterError("stem.corrupt", "Verified stem disappeared before leasing", {
-            identity: stem.identity,
-          });
+    // Independent openings own independent pins, even when caller lease IDs repeat.
+    const pin = `session:${this.#instanceId}:${leaseId}:${randomId()}`;
+    let releaseLock: (() => Promise<void>) | undefined;
+    let pinned = false;
+    try {
+      releaseLock = await this.#holdPinLock(pin, options.signal);
+      await this.#mutateIndex((index) => {
+        for (const stem of unique) {
+          const row = index.stems[stem.identity];
+          if (row === undefined || row.bytes !== stem.bytes) {
+            throw new EngineWebAdapterError("stem.corrupt", "Verified stem disappeared before leasing", { identity: stem.identity });
+          }
+          row.pins.push(pin);
+          row.lastUsedAt = this.#now();
         }
-        if (!row.pins.includes(pin)) row.pins.push(pin);
-        row.lastUsedAt = this.#now();
+      }, options.signal);
+      pinned = true;
+      options.signal?.throwIfAborted();
+      options.onProgress?.({ stage: "ready", sourcesReady: declared.length, sourcesTotal: declared.length });
+      options.signal?.throwIfAborted();
+      return new VerifiedStemSessionLease(this, leaseId, pin, declared, releaseLock);
+    } catch (error) {
+      try { if (pinned) await this.release(pin, declared); }
+      finally { await releaseLock?.(); }
+      if (options.signal?.aborted || isAbort(error)) {
+        throw new EngineWebAdapterError("stem.cancelled", "Stem session open was cancelled", {}, error);
       }
-    }, options.signal);
+      throw error;
+    }
+  }
 
-    options.onProgress?.({ stage: "ready", sourcesReady: declared.length, sourcesTotal: declared.length });
-    return new VerifiedStemSessionLease(this, leaseId, pin, declared);
+  /** Durable offline intent shares the existing version-1 index and pin encoding. */
+  async setOfflinePin(identity: StemIdentity, pinId: string, pinned: boolean): Promise<void> {
+    assertStemIdentity(identity);
+    const pin = `offline:${nonempty(pinId, "pinId")}`;
+    await this.open();
+    await this.#mutateIndex((index) => {
+      const row = index.stems[identity];
+      if (row === undefined) {
+        if (pinned) throw new EngineWebAdapterError("stem.not_found", "Cannot pin a missing stem", { identity });
+        return false;
+      }
+      if (row.pins.includes(pin) === pinned) return false;
+      if (pinned) row.pins.push(pin);
+      else row.pins = row.pins.filter((candidate) => candidate !== pin);
+    });
   }
 
   async verify(identity: StemIdentity, expectedBytes?: number, signal?: AbortSignal): Promise<boolean> {
     await this.open();
     assertStemIdentity(identity);
     return this.#withLock(this.#stemLock(identity), signal, async () => {
-      const index = await this.#readIndex();
+      const index = await this.#withLock("index", signal, () => this.#readIndex());
       const row = index.stems[identity];
       if (row === undefined || (expectedBytes !== undefined && row.bytes !== expectedBytes)) return false;
       return this.#verifyFile(identity, row.bytes, signal);
@@ -157,7 +188,7 @@ export class VerifiedStemStore implements StemStore {
   async read(identity: StemIdentity): Promise<Blob> {
     await this.open();
     assertStemIdentity(identity);
-    const index = await this.#readIndex();
+    const index = await this.#withLock("index", undefined, () => this.#readIndex());
     if (index.stems[identity] === undefined) {
       throw new EngineWebAdapterError("stem.not_found", `Stem is not indexed: ${identity}`, { identity });
     }
@@ -182,17 +213,17 @@ export class VerifiedStemStore implements StemStore {
     await this.#backend.open();
     await this.#withLock("index", undefined, async () => {
       const liveLocks = await this.#liveLockNames();
+      const index = await this.#readIndex(liveLocks);
       for (const name of await this.#backend.list()) {
         if (name === INDEX_TEMP) await this.#backend.remove(name);
-        if (name.startsWith(STAGING_PREFIX) && liveLocks !== undefined && !liveLocks.has(lockForStorageName(name))) {
+        if (name.startsWith(STAGING_PREFIX) && liveLocks !== undefined && !this.#hasLiveStem(liveLocks, name)) {
           await this.#backend.remove(name);
         }
       }
-      const index = await this.#readIndex(liveLocks);
       for (const name of await this.#backend.list()) {
         if (name.startsWith(FINAL_PREFIX)) {
           const identity = `sha256:${name.slice(FINAL_PREFIX.length)}`;
-          if (!Object.hasOwn(index.stems, identity) && liveLocks !== undefined && !liveLocks.has(lockForStorageName(name))) {
+          if (!Object.hasOwn(index.stems, identity) && liveLocks !== undefined && !this.#hasLiveStem(liveLocks, name)) {
             await this.#backend.remove(name);
           }
         }
@@ -221,7 +252,7 @@ export class VerifiedStemStore implements StemStore {
     signal: AbortSignal,
     onProgress?: (progress: StemProgress) => void,
   ): Promise<boolean> {
-    const index = await this.#readIndex();
+    const index = await this.#withLock("index", signal, () => this.#readIndex());
     const row = index.stems[stem.identity];
     if (row === undefined) return false;
     if (row.bytes !== stem.bytes) {
@@ -310,7 +341,7 @@ export class VerifiedStemStore implements StemStore {
       await deadline(this.#backend.move(staging, finalName(stem.identity)), this.#readDeadlineMs, signal);
       promoted = true;
       await this.#mutateIndex((index) => {
-        index.stems[stem.identity] = { bytes: stem.bytes, pins: [], lastUsedAt: this.#now() };
+        index.stems[stem.identity] = { bytes: stem.bytes, pins: index.stems[stem.identity]?.pins ?? [], lastUsedAt: this.#now() };
       }, signal);
     } catch (error) {
       // Cancel even when the open deadline expired before returning a writer.
@@ -350,18 +381,26 @@ export class VerifiedStemStore implements StemStore {
 
   async #demote(identity: StemIdentity): Promise<void> {
     await this.#backend.remove(finalName(identity));
-    await this.#mutateIndex((index) => { delete index.stems[identity]; });
+    await this.#mutateIndex((index) => {
+      // A pin records ownership/intent, never proof that corrupt bytes are usable.
+      // Retain pinned rows across repair; every session still hashes the final.
+      if (index.stems[identity]?.pins.length === 0) delete index.stems[identity];
+    });
   }
 
   async #readIndex(liveLocks?: ReadonlySet<string>): Promise<StoreIndex> {
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(await this.#backend.readText(INDEX_FILE));
-      if (validIndex(parsed)) return parsed;
+      parsed = JSON.parse(await this.#backend.readText(INDEX_FILE));
     } catch (error) {
       if (!isMissing(error)) {
         // Malformed and unreadable indexes take the same bounded recovery path.
       }
     }
+    if (typeof parsed === "object" && parsed !== null && "version" in parsed && parsed.version !== INDEX_VERSION) {
+      throw new EngineWebAdapterError("stem.corrupt", "Unsupported stem index version", { version: parsed.version });
+    }
+    if (validIndex(parsed)) return parsed;
     return this.#rebuildIndex(liveLocks ?? await this.#liveLockNames());
   }
 
@@ -369,7 +408,7 @@ export class VerifiedStemStore implements StemStore {
     const index = emptyIndex();
     for (const name of await this.#backend.list()) {
       if (!name.startsWith(FINAL_PREFIX) || name.length !== FINAL_PREFIX.length + 64) continue;
-      if (liveLocks?.has(lockForStorageName(name))) continue;
+      if (liveLocks !== undefined && this.#hasLiveStem(liveLocks, name)) continue;
       const identity = `sha256:${name.slice(FINAL_PREFIX.length)}` as StemIdentity;
       try {
         assertStemIdentity(identity);
@@ -400,10 +439,10 @@ export class VerifiedStemStore implements StemStore {
     }
   }
 
-  async #mutateIndex(mutation: (index: StoreIndex) => void, signal?: AbortSignal): Promise<void> {
+  async #mutateIndex(mutation: (index: StoreIndex) => void | false, signal?: AbortSignal): Promise<void> {
     await this.#withLock("index", signal, async () => {
       const index = await this.#readIndex();
-      mutation(index);
+      if (mutation(index) === false) return;
       await this.#writeIndex(index);
     });
   }
@@ -425,10 +464,39 @@ export class VerifiedStemStore implements StemStore {
 
   async #withLock<T>(name: string, signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
     signal?.throwIfAborted();
+    // Fixed order: prior adapter global resource, then historical app folder resource.
+    // Stem work may enter index work; index work never acquires a stem lock.
+    const historical = name === "index" ? "index" : `ingest:${name.slice("stem:".length)}`;
+    return this.#withNamedLock(`miso:engine-web:v1:${name}`, signal, () =>
+      this.#withNamedLock(`miso:stem-store:v1:${this.#folderName}:${historical}`, signal, work));
+  }
+
+  #hasLiveStem(names: ReadonlySet<string>, file: string): boolean {
+    const hash = file.slice(-64);
+    return names.has(`miso:engine-web:v1:stem:${hash}`)
+      || names.has(`miso:stem-store:v1:${this.#folderName}:ingest:${hash}`);
+  }
+
+  async #holdPinLock(pin: string, signal?: AbortSignal): Promise<() => Promise<void>> {
+    let acquired!: () => void;
+    let failed!: (reason: unknown) => void;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve, reject) => { acquired = resolve; failed = reject; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const request = this.#withNamedLock(`miso:stem-store:v1:${this.#folderName}:pin:${pin}`, signal, async () => {
+      acquired();
+      await hold;
+    });
+    void request.catch(failed);
+    await ready;
+    return async () => { release(); await request; };
+  }
+
+  async #withNamedLock<T>(name: string, signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
+    signal?.throwIfAborted();
     if (this.#locks !== undefined) return this.#locks.request(
-      `miso:engine-web:v1:${name}`,
-      { mode: "exclusive", ...(signal === undefined ? {} : { signal }) },
-      work,
+      name, { mode: "exclusive", ...(signal === undefined ? {} : { signal }) },
+      async () => { signal?.throwIfAborted(); return work(); },
     );
     const prior = this.#shared.locks.get(name) ?? Promise.resolve();
     let release!: () => void;
@@ -463,8 +531,10 @@ class VerifiedStemSessionLease implements StemSessionLease {
   readonly stems: readonly StemRequirement[];
   readonly leaseId: string;
   #closed = false;
-  constructor(store: VerifiedStemStore, leaseId: string, pin: string, stems: readonly StemRequirement[]) {
-    this.#store = store; this.leaseId = leaseId; this.#pin = pin;
+  #closing: Promise<void> | undefined;
+  readonly #releaseLock: () => Promise<void>;
+  constructor(store: VerifiedStemStore, leaseId: string, pin: string, stems: readonly StemRequirement[], releaseLock: () => Promise<void>) {
+    this.#store = store; this.leaseId = leaseId; this.#pin = pin; this.#releaseLock = releaseLock;
     this.stems = Object.freeze(stems.map((stem) => Object.freeze({ ...stem })));
   }
   async read(identity: StemIdentity): Promise<Blob> {
@@ -474,10 +544,16 @@ class VerifiedStemSessionLease implements StemSessionLease {
     }
     return this.#store.read(identity);
   }
-  async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    await this.#store.release(this.#pin, this.stems);
+  close(): Promise<void> {
+    if (this.#closed) return Promise.resolve();
+    this.#closing ??= this.#store.release(this.#pin, this.stems).then(async () => {
+      this.#closed = true;
+      await this.#releaseLock();
+    }).catch((error: unknown) => {
+      this.#closing = undefined;
+      throw error;
+    });
+    return this.#closing;
   }
 }
 
@@ -558,11 +634,8 @@ function validIndex(value: unknown): value is StoreIndex {
   });
 }
 function finalName(identity: StemIdentity): string { return `${FINAL_PREFIX}${digest(identity)}`; }
-function lockForStorageName(name: string): string {
-  return `miso:engine-web:v1:stem:${name.slice(-64)}`;
-}
 function digest(identity: StemIdentity): string { return identity.slice("sha256:".length); }
-function nonempty(value: string, label: string): string { if (value.length === 0) throw new TypeError(`${label} must not be empty`); return value; }
+function nonempty(value: string, label: string): string { if (typeof value !== "string" || value.trim().length === 0) throw new TypeError(`${label} must not be empty`); return value; }
 function positive(value: number, label: string): number { if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${label} must be positive`); return value; }
 function randomId(): string { return globalThis.crypto?.randomUUID?.().replaceAll("-", "") ?? Math.random().toString(36).slice(2); }
 function browserLocks(): WebLockProvider | undefined { return globalThis.navigator?.locks as unknown as WebLockProvider | undefined; }
