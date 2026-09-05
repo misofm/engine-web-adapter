@@ -200,8 +200,9 @@ export interface EngineWebSession {
   /** Call from a user gesture. Rejects session.busy without resuming while any seek is pending. */
   play(): Promise<void>;
   pause(): Promise<void>;
-  /** While suspended, resolves after consumer preparation and target-generation prefill.
-   * Await this before play(); preparation failure closes the session. Running seeks remain live. */
+  /** Resolves after consumer preparation and target-generation prefill. Running contexts
+   * suspend during preparation and resume afterward; suspended contexts stay suspended.
+   * Await this before play(); preparation or context-transition failure closes the session. */
   seekFrames(frame: number | bigint): Promise<void>;
   close(): Promise<void>;
 }
