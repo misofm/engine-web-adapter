@@ -1,0 +1,42 @@
+# Publish Engine Web Adapter 0.3.0 against registry SDK 0.2.0
+
+Read-only preparation against clean `/private/tmp/miso-dx-adapter-seek-ready` HEAD `78918cf0a700c9c6c3bb9889f27f927a7e8de5df`. Local ancestry proves known main `63b4ee6212287000ff85e1cfa969d385f6246d2d` is an ancestor with 75 reviewed commits ahead. This clone has no `origin/main` tracking ref; root must freshly fetch/audit actual main before integration. No implementation, install, registry request, issue creation or publication was performed.
+
+## Authorized smallest slice and prerequisites
+
+User requires SDK publication, then adapter publication, then app direct npm dependencies, then website integration. Create a matching numbered adapter release issue before edits. Use Astra medium implementation and independent Astra review under the user's workflow override.
+
+Start only after SDK `@misofm/engine@0.2.0` is publicly installed and independently verified: exact registry tarball SHA256/SHA512/shasum, public access/latest, authenticated SLSA source/workflow identity and public imports/enginectl. Root must verify adapter0.3.0 is unused; failed authentication/network lookup is not version absence. The old reviewed adapter archive7e21711e and SDK175755/archive0df6 remain historical evidence, never identities of newly versioned packages. SDK0.2.0 includes the freshly integrated main source/new Wasm; run the existing behavioral gates against those actual bytes.
+
+## Exact minimal edit paths
+
+1. `package.json`: adapter version0.3.0 and dependency `@misofm/engine: "0.2.0"`; preserve Effect4.0.0-rc.112 and all other metadata/exports/scripts.
+2. `package-lock.json`: corresponding top/root versions/dependency and actual registry SDK entry resolved URL/integrity obtained by normal npm installation. Use a fresh task-owned cache and committed registry lock, not `--no-save`, file override, local archive or manual integrity fabrication. Preserve unrelated resolutions; run fresh `npm ci --ignore-scripts` afterward.
+3. `src/provenance.ts`: `engine.package`, `engine.commit`, `engine.archiveSha256` from the authenticated SDK0.2.0 release receipt. Preserve safeBaselines, copiedSources, decoder lineage and licenses.
+4. `tests/foundation.test.ts`: existing exact package/commit expectations follow that release. There is currently no archive hash assertion; do not invent a new metadata-only test. Preserve all substantive tests.
+5. `scripts/check-package.mjs`: exact dependency policy0.1.0→0.2.0 only. Preserve required packed worker/Wasm/license files, excluded legacy modules and product-policy rejection, SDK ring/asset identity assertions.
+6. `.github/workflows/npm-publish.yml`: PACKAGE_VERSION0.2.0→0.3.0; correct stale job label0.1.0→0.3.0; SDK guard and registry dependency assertion0.1.0→0.2.0. Preserve main-only precheckout dispatch and exact SHA checks, npm11.19.0, OIDC-only token rejection, empty userconfig, serialized non-canceling publication, existing verify mode and fresh consumer imports/signature checks. Tighten the existing absent-version check to allow publication only after parsed registry E404; retain stderr/status evidence and fail closed on auth/network/malformed errors. This is one existing guard correction, no alternate publisher or qualification framework.
+7. `README.md`: opening package version/pinned SDK and install coordinates only, plus concise publication provenance wording if needed; preserve API/behavior documentation.
+8. New numbered `.github/ISSUE_SPECS/...` release body/evidence.
+
+No runtime/store/pump/protocol/SDK/decoder edits are authorized. Report a concrete incompatibility before expanding the slice. No source-ready, memory or transport redesign.
+
+## Existing gates and timing authority
+
+Focused types/build, foundation/package policy and version/lock/provenance consistency first; pause a coherent checkpoint for root commit before further source changes. Existing full `npm run check` covers format, types/source policy, decoder, tests and package checks (reviewed baseline158 tests/154 files; counts describe evidence, not fixed acceptance targets).
+
+Run the existing `npm run test:browser` once with authorized localhost access against the freshly registry-installed SDK. Its packed consumer copies the installed SDK and Effect closure; independently verify that installed SDK closure equals the actual registry archive before running. Preserve the existing initial/paused/running nonzero first-target PCM cases,64 stale slots/full internal queue, unchanged suspended clocks, exact target observation synchronously BEFORE resume wrapper's first await, zero added underruns and all native-FLAC/cache/control/assets assertions. No new browser matrix or fixture framework; no script changes unless an actual release incompatibility requires a separately reviewed bounded correction. Capture exact candidate source, dependency receipt and packed payload manifest/digests for review.
+
+## Normal main integration and one OIDC publication
+
+Root freshly checks remote main ancestry and protection. If known ancestry still holds, normal fast-forward reviewed history plus release checkpoint into main preserves all75 commits; otherwise stop for a normal reviewed merge of actual new changes. Never reset/rewrite main or remove precheckout main-only guards. Dispatch the existing publish workflow at the exact integrated main SHA only after dedicated source/package PASS. Do not use local npm credentials/token fallback.
+
+The existing adapter workflow rebuilds and `npm publish` runs prepack; it does not publish the earlier reviewed tarball. Therefore verify the actual public0.3.0 tarball against the reviewed built payload (all files, allowing no unexplained difference), record its actual size/SHA256/SHA512/shasum, and authenticate registry signatures/SLSA subject digest plus source repository/commit and trusted workflow/ref. Existing `npm audit signatures --include-attestations` supplies cryptographic verification; inspect the authenticated statement, not untrusted metadata alone. Verify version/latest/public access and exact SDK0.2.0 dependency, fresh root/stems/assets imports and one SDK closure. These release receipts can be gathered with existing npm/tooling; no new CI subsystem is needed.
+
+If dispatch/publication response is ambiguous, preserve the run and inspect registry; use existing mode`verify`, never publish again blindly. Only after public artifact verification, independent PASS and upstream evidence does root close the issue and authorize app adoption. No website edits or app vendored-archive refresh in this slice.
+
+## Release prerequisite evidence
+
+SDK 0.2.0 is published by existing main-only OIDC run [33968931904](https://github.com/misofm/engine/actions/runs/33968931904), following successful exact-main qualification 33968584388 at `bb5ed498a2c0934498d964befb2cd5b7c2a45264`. The published archive matches the qualified 964,480-byte archive with SHA256 `77a2c78046428db40e3a9408c3a35ba1a05b3905a2595838fadf423631e92981`. Registry public access/latest, integrity, fresh imports/CLI and cryptographic provenance checks passed. Retained evidence: `/private/tmp/dx468-npm-published-33968931904`. Independent registry review is required before source/dependency edits.
+
+Fresh root audit confirms adapter remote main remains `63b4ee6212287000ff85e1cfa969d385f6246d2d`, unprotected. Official registry lookup for adapter 0.3.0 returned parsed E404 (no matching version); other failures are not treated as absence. Release checkout `/private/tmp/miso-dx-adapter-npm-release`, branch `codex/release-adapter-0-3-0`, begins at reviewed `78918cf0a700c9c6c3bb9889f27f927a7e8de5df`. No adapter source or dependency change has begun. Dedicated Astra medium approved the bounded brief before issue creation.
