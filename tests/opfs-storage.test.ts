@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { getEventListeners } from "node:events";
 
 import { EngineWebAdapterError } from "../src/errors.js";
 import { OpfsStorageBackend } from "../src/stems/storage.js";
@@ -325,6 +326,8 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
     }) as typeof clearTimeout;
     const first = controlledWorkerHarness();
     const second = controlledWorkerHarness();
+    const oldLifetime = new AbortController();
+    const freshLifetime = new AbortController();
     let generations = 0;
     const client = new OpfsWriteWorkerClient({ createWorker: () => (generations++ === 0 ? first : second).worker });
     let unsettled = 0;
@@ -337,7 +340,7 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
     };
     try {
       const count = phase === "shared" ? 2 : 1;
-      const openings = Array.from({ length: count }, (_, i) => tracked(client.createWriter("folder", `old-${i}`)));
+      const openings = Array.from({ length: count }, (_, i) => tracked(client.createWriter("folder", `old-${i}`, oldLifetime.signal)));
       if (phase !== "handshake") {
         first.emit({ type: "worker-ready", writeSupport: true });
         await flush();
@@ -351,6 +354,7 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
         pending = writers.map(writer => tracked(writer.write(new Uint8Array([1])).then(() => writer)));
       }
       const oldCreated = phase === "handshake" ? 1 : phase === "open" ? 2 : 1 + count * 2;
+      assert.equal(getEventListeners(oldLifetime.signal, "abort").length, count, phase);
       assert.equal(created, oldCreated, phase);
       assert.equal(timers.size, phase === "handshake" ? 1 : count, phase);
       if (phase === "close") client.close();
@@ -359,7 +363,7 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
         timers.delete(id); fired += 1; callback();
       }
       // Replacement starts synchronously before old rejection continuations run.
-      const replacement = tracked(client.createWriter("folder", "replacement"));
+      const replacement = tracked(client.createWriter("folder", "replacement", freshLifetime.signal));
       const replay = (requestId: number) => {
         first.emit({ type: "worker-ready", writeSupport: true });
         first.emit({ type: "opfs-ok", requestId });
@@ -377,6 +381,7 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
       assert.deepEqual(first.counts(), [0, 0, 0], phase);
       assert.deepEqual(first.historicalCounts(), [2, 2, 2], phase);
       assert.equal(first.terminations, 1, phase);
+      assert.equal(getEventListeners(oldLifetime.signal, "abort").length, 0, phase);
       assert.equal(first.messages.length, oldCreated - 1, phase);
       assert.equal(timers.size, 1, phase);
       assert.equal(unsettled, 1, phase);
@@ -401,7 +406,9 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
       assert.equal(second.messages.length, 1, phase);
       assert.equal(second.terminations, 0, "stale writer release must preserve replacement ownership");
       assert.deepEqual(second.counts(), [1, 1, 1], phase);
+      oldLifetime.abort(new Error("retired lifetime"));
       assert.equal(client.workersActive, 1, phase);
+      assert.equal(getEventListeners(freshLifetime.signal, "abort").length, 1, phase);
       assert.equal(unsettled, 0, phase);
       assert.equal(timers.size, 0, phase);
       assert.equal(created, oldCreated + 2, phase);
@@ -413,6 +420,7 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
       second.emit({ type: "opfs-ok", requestId: close.requestId });
       await closing;
       assert.equal(second.terminations, 1, phase);
+      assert.equal(getEventListeners(freshLifetime.signal, "abort").length, 0, phase);
       assert.deepEqual(second.counts(), [0, 0, 0], phase);
       assert.equal(second.messages.length, 2, phase);
       assert.equal(created, oldCreated + 3, phase);

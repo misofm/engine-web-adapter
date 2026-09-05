@@ -255,3 +255,7 @@ The renewed real-worker probe disproved the earlier experimental-only diagnosis:
 - src/stems/store.ts: own an ingest controller, pass its signal into createWriter, and abort before cleanup on failure even if no writer handle returned. Do not wait indefinitely for a pending open or special-case OPFS in the generic store.
 
 Keep existing protocol, cache identity, verification, error semantics and request/store bounds. Other valid cached entries remain untouched. Verify actual browser lock release and cleanup before public rejection; if browser termination needs additional bounded handling, report the evidence before extending the correction. Existing test/runner/spec paths remain allowed. These are demonstrated packaging and cancellation-ownership defects, not new storage or playback features.
+
+### Astra correction checkpoint
+
+Standalone OPFS worker bundling and ingest-owned cancellation before cleanup are implemented. Typecheck, focused18/18 OPFS tests (including truthful locked deletion and abort-listener cleanup), and package build pass. The existing Vite8.2.2 build dependency bundles the worker at its unchanged public URL. Real-browser lock/cleanup qualification and independent review remain pending; no final PASS claimed.

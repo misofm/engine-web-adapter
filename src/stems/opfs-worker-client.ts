@@ -22,6 +22,7 @@ export class OpfsWriteWorkerClient {
   readonly #createWorker: () => OpfsWorkerLike;
   readonly #deadlineMs: number;
   readonly #pending = new Map<number, Pending>();
+  readonly #cancellations = new Set<() => void>();
   #worker: OpfsWorkerLike | undefined;
   #ready: Promise<void> | undefined;
   #detach: (() => void) | undefined;
@@ -68,12 +69,24 @@ export class OpfsWriteWorkerClient {
     }
   }
 
-  async createWriter(folderName: string, name: string): Promise<StemStorageWriter> {
+  async createWriter(folderName: string, name: string, signal?: AbortSignal): Promise<StemStorageWriter> {
+    signal?.throwIfAborted();
     const writerId = this.#writerId++;
-    const generation = await this.#acquire();
+    const generation = this.#generation;
+    const cancel = () => {
+      if (generation === this.#generation) this.#fail(signal?.reason);
+    };
+    const detach = () => {
+      signal?.removeEventListener("abort", cancel);
+      this.#cancellations.delete(detach);
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    this.#cancellations.add(detach);
     try {
+      await this.#acquire();
       await this.#request({ type: "write-open", requestId: this.#next(), writerId, folderName, name }, generation);
     } catch (error) {
+      detach();
       this.#release(generation);
       throw error;
     }
@@ -82,7 +95,7 @@ export class OpfsWriteWorkerClient {
       if (settled) return;
       settled = true;
       try { await this.#request(message, generation); }
-      finally { this.#release(generation); }
+      finally { detach(); this.#release(generation); }
     };
     return {
       write: async (chunk) => {
@@ -197,6 +210,7 @@ export class OpfsWriteWorkerClient {
 
   #teardown(): void {
     const worker = this.#worker;
+    for (const detach of this.#cancellations) detach();
     this.#detach?.();
     this.#detach = undefined;
     this.#worker = undefined;

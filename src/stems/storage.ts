@@ -18,7 +18,8 @@ export interface StemStorageBackend {
   exists(name: string): Promise<boolean>;
   read(name: string): Promise<Blob>;
   readText(name: string): Promise<string>;
-  createWriter(name: string): Promise<StemStorageWriter>;
+  /** Cancellation stops pending open and owned writes before cleanup. */
+  createWriter(name: string, signal?: AbortSignal): Promise<StemStorageWriter>;
   move(from: string, to: string): Promise<void>;
   remove(name: string): Promise<void>;
   estimate?(): Promise<{ readonly quota?: number; readonly usage?: number }>;
@@ -132,11 +133,11 @@ export class OpfsStorageBackend implements StemStorageBackend {
     return deadline(file.text(), this.#readDeadlineMs);
   }
 
-  async createWriter(name: string): Promise<StemStorageWriter> {
+  async createWriter(name: string, signal?: AbortSignal): Promise<StemStorageWriter> {
     this.#opened();
     // The worker client owns this deadline so a timeout terminates the shared
     // generation before the public promise is abandoned.
-    const writer = await this.#writes.createWriter(this.#folderName, name);
+    const writer = await this.#writes.createWriter(this.#folderName, name, signal);
     return {
       write: (chunk) => writer.write(chunk),
       close: () => writer.close(),
@@ -213,16 +214,19 @@ export class MemoryStemStorageBackend implements StemStorageBackend {
   }
   async readText(name: string): Promise<string> { return new TextDecoder().decode(this.#get(name)); }
 
-  async createWriter(name: string): Promise<StemStorageWriter> {
+  async createWriter(name: string, signal?: AbortSignal): Promise<StemStorageWriter> {
+    signal?.throwIfAborted();
     const chunks: Uint8Array[] = [];
     let closed = false;
     return {
       write: async (chunk) => {
+        signal?.throwIfAborted();
         if (closed) throw new Error("writer is closed");
         chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk.slice());
       },
       close: async () => {
         if (closed) return;
+        signal?.throwIfAborted();
         const bytes = concat(chunks);
         const prior = this.files.get(name)?.byteLength ?? 0;
         const usage = this.#usage() - prior + bytes.byteLength;
