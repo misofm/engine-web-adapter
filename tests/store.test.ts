@@ -8,7 +8,7 @@ import { StemSessionGate } from "../src/stems/gate.js";
 import { MemoryStemResolver } from "../src/stems/memory-resolver.js";
 import { MemoryStemStorageBackend } from "../src/stems/storage.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
-import type { StemIdentity, StemResolver } from "../src/stems/types.js";
+import type { StemIdentity, StemProgress, StemResolver } from "../src/stems/types.js";
 import type { StemStorageBackend } from "../src/stems/storage.js";
 import type { WebLockProvider } from "../src/stems/store.js";
 
@@ -518,13 +518,15 @@ test("pin persistence failure never acknowledges and a failed lease close retain
   assert.deepEqual(row().pins, ["offline:keep"]);
   assert.deepEqual((await locks.query()).held, []);
   fail = true;
-  await assert.rejects(store.openSession({ leaseId: "failed", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}) }), /index persistence failed/);
+  const progress: StemProgress[] = [];
+  await assert.rejects(store.openSession({ leaseId: "failed", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}), onProgress: event => progress.push(event) }), /index persistence failed/);
+  assert.equal(progress.some(event => event.stage === "source-ready" || event.stage === "ready"), false);
   assert.deepEqual(row().pins, ["offline:keep"]);
   assert.deepEqual((await locks.query()).held, []);
 });
 
 test("cancellation racing pin persistence rolls back only its own pin and releases its lock", async () => {
-  for (const phase of ["persist", "ready"] as const) {
+  for (const phase of ["persist", "source-ready", "ready"] as const) {
   const { item, backend, row } = seededCache(["offline:keep"]);
   const locks = new TestLocks();
   const controller = new AbortController();
@@ -533,9 +535,12 @@ test("cancellation racing pin persistence rolls back only its own pin and releas
     if (phase === "persist" && to === "index.json" && row().pins.some(pin => pin.startsWith("session:"))) controller.abort();
   } };
   const store = new VerifiedStemStore({ backend: view, locks });
-  await assert.rejects(store.openSession({ leaseId: "cancel", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}), signal: controller.signal, onProgress: event => { if (phase === "ready" && event.stage === "ready") controller.abort(); } }), { code: "stem.cancelled" });
+  const stages: string[] = [];
+  await assert.rejects(store.openSession({ leaseId: "cancel", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}), signal: controller.signal, onProgress: event => { stages.push(event.stage); if (event.stage === phase) controller.abort(); } }), { code: "stem.cancelled" });
   assert.deepEqual(row().pins, ["offline:keep"]);
   assert.deepEqual((await locks.query()).held, []);
+  if (phase !== "ready") assert.equal(stages.includes("ready"), false);
+  assert.equal(stages.filter(stage => stage === "source-ready").length, phase === "persist" ? 0 : 1);
   }
 });
 
@@ -801,4 +806,77 @@ test("quota failure persisting reclamation metadata remains typed without acknow
   assert.equal(cache.storage.files.has("index.pending"), false);
   assert.deepEqual((await cache.row())[victim.identity].pins, []);
   assert.deepEqual((await locks.query()).held, [], "failed opening releases lifetime and mutation locks");
+});
+
+test("source-ready follows persisted ownership while another source is incomplete, cold and warm", async () => {
+  for (const warm of [false, true]) {
+    const first = fixture([71, 72]);
+    const second = fixture([73, 74]);
+    const backend = new MemoryStemStorageBackend();
+    const source = requirement("first", first.identity, first.bytes.length);
+    if (warm) {
+      await (await new VerifiedStemStore({ backend }).openSession({ leaseId: "seed", stems: [source], resolver: new MemoryStemResolver({ [first.identity]: first.bytes }) })).close();
+    }
+    const pinStarted = deferred<void>();
+    const allowPin = deferred<void>();
+    const proved = deferred<void>();
+    const secondStarted = deferred<void>();
+    const allowSecond = deferred<void>();
+    let held = false;
+    const store = new VerifiedStemStore({ backend: { ...backendView(backend), async move(from, to) {
+      const pending = backend.files.get(from);
+      if (!held && to === "index.json" && pending && new TextDecoder().decode(pending).includes("session:")) {
+        held = true;
+        pinStarted.resolve();
+        await allowPin.promise;
+      }
+      await backend.move(from, to);
+    } } });
+    const memory = new MemoryStemResolver({ [first.identity]: first.bytes, [second.identity]: second.bytes });
+    const events: StemProgress[] = [];
+    const opening = store.openSession({
+      leaseId: "proof", stems: [source, { ...source, sourceId: "alias" }, requirement("second", second.identity, second.bytes.length)],
+      resolver: { async resolve(identity, options) {
+        if (identity === second.identity) { secondStarted.resolve(); await allowSecond.promise; }
+        return memory.resolve(identity, options);
+      } },
+      onProgress(event) {
+        events.push(event);
+        if (event.stage === "source-ready" && event.identity === first.identity) {
+          const index = JSON.parse(new TextDecoder().decode(backend.files.get("index.json")!));
+          assert.equal(index.stems[first.identity].pins.length, 1);
+          assert.deepEqual(backend.files.get(`sha256-${first.identity.slice(7)}`), first.bytes);
+          assert.equal(event.bytes, first.bytes.length);
+          proved.resolve();
+        }
+      },
+    });
+    await pinStarted.promise;
+    assert.equal(events.some(event => event.stage === "source-ready"), false, "pending pin write is not proof");
+    allowPin.resolve();
+    await proved.promise;
+    await secondStarted.promise;
+    assert.deepEqual(events.filter(event => event.stage === "source-ready").map(event => event.identity), [first.identity]);
+    assert.equal(events.some(event => event.stage === "ready"), false);
+    allowSecond.resolve();
+    const lease = await opening;
+    assert.deepEqual(events.filter(event => event.stage === "source-ready").map(event => event.identity), [first.identity, second.identity]);
+    assert.deepEqual(events.at(-1), { stage: "ready", sourcesReady: 3, sourcesTotal: 3 });
+    assert.equal(memory.requests.filter(identity => identity === first.identity).length, warm ? 0 : 1);
+    await lease.close();
+  }
+});
+
+test("failed canonical proof emits no source-ready or aggregate ready", async () => {
+  const item = fixture([11, 12, 13]);
+  for (const bytes of [new Uint8Array([11, 99, 13]), item.bytes.slice(0, 2)]) {
+    const events: StemProgress[] = [];
+    const backend = new MemoryStemStorageBackend();
+    await assert.rejects(new VerifiedStemStore({ backend }).openSession({
+      leaseId: "bad", stems: [requirement("source", item.identity, item.bytes.length)],
+      resolver: new MemoryStemResolver({ [item.identity]: bytes }), onProgress: event => events.push(event),
+    }));
+    assert.equal(events.some(event => event.stage === "source-ready" || event.stage === "ready"), false);
+    assert.equal(backend.files.has(`sha256-${item.identity.slice(7)}`), false);
+  }
 });

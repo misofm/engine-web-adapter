@@ -132,7 +132,12 @@ export class VerifiedStemStore implements StemStore {
       await runBounded(
         unique,
         options.admission?.limit ?? 1,
-        (stem) => this.#ensure(stem, resolver, controller.signal, own, options.onProgress, options.admission, diagnostics),
+        async (stem) => {
+          await this.#ensure(stem, resolver, controller.signal, own, options.onProgress, options.admission, diagnostics);
+          controller.signal.throwIfAborted();
+          options.onProgress?.({ stage: "source-ready", identity: stem.identity, bytes: stem.bytes });
+          controller.signal.throwIfAborted();
+        },
         (error) => controller.abort(error),
       );
       options.signal?.throwIfAborted();

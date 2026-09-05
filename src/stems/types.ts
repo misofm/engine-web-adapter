@@ -29,6 +29,7 @@ export type StemProgress = StemProgressContext & (
       readonly byteKind: "flac" | "pcm";
       readonly attempt?: number;
     }
+  | { readonly stage: "source-ready"; readonly identity: StemIdentity; readonly bytes: number }
   | { readonly stage: "ready"; readonly sourcesReady: number; readonly sourcesTotal: number }
   | { readonly stage: "prefilling"; readonly sourcesTotal: number }
 );
