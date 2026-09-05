@@ -1,3 +1,4 @@
+import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -17,7 +18,7 @@ test("shipped prelude wraps Engine process and submits MSB1 through the synchron
     registerProcessor(name: string, constructor: new () => any) { registrations.set(name, constructor); },
   };
   Object.assign(sandbox, { globalThis: sandbox });
-  const source = await readFile("src/internal/engine-web-feed-worklet.js", "utf8");
+  const source = await readFile(BUNDLED_ENGINE_ASSETS.pcmFeedWorklet, "utf8");
   vm.runInNewContext(source, sandbox);
 
   const submissions: Array<{ generation: bigint; start: bigint; frames: number }> = [];
@@ -68,7 +69,7 @@ test("shipped prelude wraps Engine process and submits MSB1 through the synchron
 });
 
 test("worklet drain contains no first-use typed-array or tail subview allocation", async () => {
-  const source = await readFile("src/internal/engine-web-feed-worklet.js", "utf8");
+  const source = await readFile(BUNDLED_ENGINE_ASSETS.pcmFeedWorklet, "utf8");
   const drain = source.slice(source.indexOf("drainSharedRing(ring)"), source.indexOf("/** The rings' way in"));
   assert.equal(/new Uint8Array\s*\(/u.test(drain), false);
   assert.equal(/\.subarray\s*\(/u.test(drain), false);

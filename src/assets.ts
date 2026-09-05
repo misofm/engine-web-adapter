@@ -1,20 +1,22 @@
+import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
+
 export const ADAPTER_ASSET_FILES = Object.freeze({
-  scratchWorker: "./internal/engine-web-scratch-worker.js",
+  scratchWorker: BUNDLED_ENGINE_ASSETS.scratchWorkerModule.href,
   flacWorker: "./internal/engine-web-flac-worker.js",
   flacDecoderWasm: "./internal/engine-web-flac-decoder.wasm",
   opfsWorker: "./internal/engine-web-opfs-worker.js",
   pumpWorker: "./internal/engine-web-pcm-pump-worker.js",
-  feedWorkletModule: "./internal/engine-web-feed-worklet.js",
+  feedWorkletModule: BUNDLED_ENGINE_ASSETS.pcmFeedWorklet.href,
 } as const);
 
 /** Package-relative deployment URLs; bundlers may rewrite these exact literals. */
 export const ADAPTER_ASSETS = Object.freeze({
-  scratchWorker: new URL("./internal/engine-web-scratch-worker.js", import.meta.url),
+  scratchWorker: BUNDLED_ENGINE_ASSETS.scratchWorkerModule,
   flacWorker: new URL("./internal/engine-web-flac-worker.js", import.meta.url),
   flacDecoderWasm: new URL("./internal/engine-web-flac-decoder.wasm", import.meta.url),
   opfsWorker: new URL("./internal/engine-web-opfs-worker.js", import.meta.url),
   pumpWorker: new URL("./internal/engine-web-pcm-pump-worker.js", import.meta.url),
-  feedWorkletModule: new URL("./internal/engine-web-feed-worklet.js", import.meta.url),
+  feedWorkletModule: BUNDLED_ENGINE_ASSETS.pcmFeedWorklet,
 });
 
 export interface AdapterAssetOverrides {
@@ -58,7 +60,7 @@ export function createScratchWorker(overrides: AdapterAssetOverrides = {}): Work
   if (overrides.scratchWorkerUrl !== undefined) {
     return new Worker(overrides.scratchWorkerUrl, { type: "module" });
   }
-  return new Worker(new URL("./internal/engine-web-scratch-worker.js", import.meta.url), {
+  return new Worker(BUNDLED_ENGINE_ASSETS.scratchWorkerModule, {
     type: "module",
   });
 }

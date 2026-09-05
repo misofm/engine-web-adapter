@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import vm from "node:vm";
+import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
@@ -9,11 +12,9 @@ import {
   MSB1_CONTROL_BYTES,
   MSB1_HEADER_OFFSET,
   MSB1_SLOT_HEADER_BYTES,
-  Msb1RingReader,
   createMsb1Ring,
 } from "../src/stems/ring.js";
 import { PcmPumpWorkerClient } from "../src/stems/worker-client.js";
-import type { EngineSourceSink } from "../src/stems/ring.js";
 import type { StemIdentity } from "../src/stems/types.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "../src/stems/worker-protocol.js";
 import type { PumpWorkerLike } from "../src/stems/worker-client.js";
@@ -97,7 +98,6 @@ test("exported self-driver orders a delayed Blob tick before seek", async () => 
 test("seek drops stale slots, emits quantum slots and retries ordinary backpressure", async () => {
   const bytes = pcm16([0, 1000, 2000, 3000, 4000, 5000]);
   const shared = ring("seekable", 1, 4, 2);
-  const reader = new Msb1RingReader(shared);
   const pump = new CanonicalPcmPump({
     lease: { read: async () => new Blob([bytes]) },
     sources: [{ sourceId: "seekable", identity: IDENTITY, channels: 1, bitDepth: 16, frames: 6, ring: shared }],
@@ -108,32 +108,53 @@ test("seek drops stale slots, emits quantum slots and retries ordinary backpress
 
   const accepted: Array<{ start: bigint; frames: number; values: number[]; end: boolean }> = [];
   let backpressureOnce = true;
-  const sink: EngineSourceSink = {
-    async seekSource(request) { assert.equal(request.generation, 2n); assert.equal(request.sourceFrame, 1n); return { result: 0 }; },
-    async submitSource(request) {
-      if (backpressureOnce) { backpressureOnce = false; return { result: 6 }; }
-      accepted.push({
-        start: request.startFrame, frames: request.frames,
-        values: [...request.planes[0]!], end: request.endOfRegion,
-      });
-      return { result: 0 };
-    },
+  // Consume the SDK's actual worklet reader; the adapter has no second ring reader.
+  const registrations = new Map<string, new () => any>();
+  class AttachBase { readonly port = { onmessage: null as ((event: { data: unknown }) => void) | null }; }
+  const sandbox = {
+    SharedArrayBuffer, Int32Array, BigInt64Array, Uint8Array, Float32Array, Atomics, TextDecoder,
+    AudioWorkletProcessor: AttachBase,
+    registerProcessor(name: string, ctor: new () => any) { registrations.set(name, ctor); },
   };
-  await reader.drain(sink);
-  assert.equal(reader.counters.stale, 2);
+  Object.assign(sandbox, { globalThis: sandbox });
+  vm.runInNewContext(await readFile(BUNDLED_ENGINE_ASSETS.pcmFeedWorklet, "utf8"), sandbox);
+  class EngineProcessor {
+    readonly quantumFrames = 4; readonly maximumSourceChannels = 1;
+    readonly memoryBuffer = new ArrayBuffer(65536);
+    readonly sourceIdPointer = 0; readonly sourceIdCapacity = 128;
+    readonly sourcePcm = new Float32Array(this.memoryBuffer, 1024, 4);
+    readonly handle = 1; readonly ready = true; readonly disposed = false; readonly stickyResult = 0;
+    readonly exports = {
+      memory: { buffer: this.memoryBuffer },
+      miso_engine_web_v1_source_seek: (_handle: number, _id: number, generation: bigint, frame: bigint) => {
+        assert.equal(generation, 2n); assert.equal(frame, 1n); return 0;
+      },
+      miso_engine_web_v1_source_submit: (_handle: number, _id: number, _generation: bigint, start: bigint, _channels: number, frames: number, end: number) => {
+        if (backpressureOnce) { backpressureOnce = false; return 6; }
+        accepted.push({ start, frames, values: [...this.sourcePcm], end: end !== 0 }); return 0;
+      },
+    };
+    process() { return true; }
+  }
+  sandbox.registerProcessor("miso-engine-v1-audio-worklet", EngineProcessor);
+  const engine = new (registrations.get("miso-engine-v1-audio-worklet")!)();
+  const attach = new (registrations.get("miso-sab-feed-attach")!)();
+  attach.port.onmessage({ data: { op: "attach", rings: [shared] } });
+  engine.process([], []);
+  assert.equal(counter(shared, MSB1_CONTROL.STALE), 2);
   await pump.pumpUntilBlocked();
-  await reader.drain(sink);
-  assert.equal(reader.counters.refused, 0, "backpressure is flow control, not an Engine refusal");
-  assert.equal(reader.counters.occupancy, 2, "backpressured slot remains queued");
-  await reader.drain(sink);
+  engine.process([], []);
+  assert.equal(counter(shared, MSB1_CONTROL.REFUSED), 0, "backpressure is flow control, not an Engine refusal");
+  assert.equal(counter(shared, MSB1_CONTROL.WRITE_INDEX) - counter(shared, MSB1_CONTROL.READ_INDEX), 2, "backpressured slot remains queued");
+  engine.process([], []);
   assert.deepEqual(accepted.map(({ start, frames, end }) => ({ start, frames, end })), [
     { start: 1n, frames: 4, end: false },
     { start: 5n, frames: 1, end: true },
   ]);
   assert.equal(accepted[0]!.values.length, 4);
   assert.deepEqual(accepted[1]!.values.slice(1), [0, 0, 0], "legal tail is zero padded to one quantum");
-  assert.equal(reader.counters.refused, 0);
-  pump.close(); reader.detach();
+  assert.equal(counter(shared, MSB1_CONTROL.REFUSED), 0);
+  pump.close(); attach.port.onmessage({ data: { op: "detach" } });
 });
 
 test("dedicated Worker keeps driving while the main realm is blocked and stops cleanly", async () => {

@@ -1,7 +1,7 @@
 import { ABI_LAYOUT } from "@misofm/engine";
 import type { BrowserBootPolicy } from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
-import { createEngine, scratchBootOptions, toWebBootOptions } from "@misofm/engine/browser";
+import { createEngine, createDefaultHost, scratchBootOptions, MSB1_CONTROL } from "@misofm/engine/browser";
 import type { BrowserEngine, CreateEngineOptions } from "@misofm/engine/browser";
 
 import { ADAPTER_ASSETS } from "./assets.js";
@@ -11,7 +11,7 @@ import type { SessionControl } from "./console.js";
 import { EngineWebAdapterError } from "./errors.js";
 import { attachEngineFeed, prepareEngineFeed } from "./feed.js";
 import type { EngineFeed } from "./feed.js";
-import { ScratchWorkerClient } from "./scratch.js";
+import { scratchBootWithWorker } from "./scratch.js";
 import type {
   EngineAudioContext,
   EnginePump,
@@ -55,7 +55,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
   const detachAbort = forwardAbort(options.signal, abort);
   const cleanup: Array<() => void | Promise<void>> = [];
   let lease: StemSessionLease | undefined;
-  let engine: BrowserEngine | undefined;
+  let engine: BrowserEngine<EngineAudioContext> | undefined;
   let feed: EngineFeed | undefined;
   let pump: EnginePump | undefined;
   let output: AudioNode | undefined;
@@ -77,25 +77,11 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     const engineWorkletUrl = options.assets?.engineWorkletModuleUrl ?? BUNDLED_ENGINE_ASSETS.workletModule;
     const engineHostUrl = options.assets?.engineHostModuleUrl ?? BUNDLED_ENGINE_ASSETS.hostModule;
     const feedPreludeUrl = options.assets?.feedWorkletModuleUrl ?? ADAPTER_ASSETS.feedWorkletModule;
-    const scratchWorker = options.scratchBoot === undefined
-      ? await ScratchWorkerClient.create({
-        ...(options.assets === undefined ? {} : { assets: options.assets }), signal: abort.signal,
-      })
-      : undefined;
-    const closeScratchWorker = scratchWorker === undefined ? undefined : () => scratchWorker.close();
-    if (closeScratchWorker !== undefined) cleanup.push(closeScratchWorker);
     const scratchBoot = options.scratchBoot ?? ((request: Parameters<NonNullable<EngineWebSessionOptions["scratchBoot"]>>[0]) =>
-      scratchWorker!.boot({ ...request, moduleUrl: engineWasmUrl, signal: abort.signal }));
-    const compiledShape = await scratchBoot({
-      document,
-      options: scratchBootOptions(policy),
-    });
+      scratchBootWithWorker({ ...request, moduleUrl: engineWasmUrl,
+        ...(options.assets === undefined ? {} : { assets: options.assets }), signal: abort.signal }));
+    const compiledShape = await scratchBoot({ document, options: scratchBootOptions(policy) });
     const orderedSources = crossSessionDeclarations(compiledShape, documentDeclaration, sources);
-    if (scratchWorker !== undefined && closeScratchWorker !== undefined) {
-      scratchWorker.close();
-      const cleanupIndex = cleanup.indexOf(closeScratchWorker);
-      if (cleanupIndex >= 0) cleanup.splice(cleanupIndex, 1);
-    }
 
     let resolver: StemResolver;
     let admission: BoundedStemAdmission | undefined;
@@ -146,43 +132,27 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     });
     cleanup.push(() => lease!.close());
 
-    const createContext = options.createContext ?? defaultCreateContext;
-    const reuseScratchBoot: CreateEngineOptions["scratchBoot"] = async () => compiledShape;
-    const createHost: CreateEngineOptions["createHost"] = options.createHost ?? (async (request) => {
-      const context = request.context as unknown as BaseAudioContext & { suspend?: () => Promise<void> };
-      if (context.state === "running") await context.suspend?.();
+    const reuseScratchBoot = async () => compiledShape;
+    const createHost: NonNullable<CreateEngineOptions["createHost"]> = async (request) => {
       await prepareEngineFeed(request.context, feedPreludeUrl);
-      const module = await import(/* @vite-ignore */ String(engineHostUrl)) as {
-        createMisoAudioWorkletHost(value: unknown): Promise<BrowserEngine["host"]>;
-      };
-      const hostRequest = { ...request, options: toWebBootOptions(request.options) };
-      try { return await module.createMisoAudioWorkletHost(hostRequest); }
+      if (options.createHost !== undefined) return options.createHost(request);
+      try { return await createDefaultHost({ ...request, hostModuleUrl: String(engineHostUrl) }); }
       catch (error) {
-        throw new EngineWebAdapterError("session.open", "Engine AudioWorklet host could not start", {
-          contextState: request.context.state,
-          sampleRate: request.context.sampleRate,
-          renderQuantumSize: request.context.renderQuantumSize,
-          documentBytes: request.document.byteLength,
-          optionKeys: Object.keys(hostRequest.options),
-          simd128ModuleUrlType: typeof request.simd128ModuleUrl,
-          workletModuleUrlType: typeof request.workletModuleUrl,
-        }, error);
+        throw new EngineWebAdapterError("session.open", "Engine AudioWorklet host could not start", {}, error);
       }
-    });
-
-    engine = await createEngine({
+    };
+    const engineOptions = {
       document,
       sources: sources.map((source) => ({ id: source.id, spec: source.spec })),
-      createContext,
       scratchBoot: reuseScratchBoot,
-      createHost: async (request) => {
-        if (options.createHost !== undefined) await prepareEngineFeed(request.context, feedPreludeUrl);
-        return createHost(request);
-      },
+      createHost,
       simd128ModuleUrl: String(engineWasmUrl),
       workletModuleUrl: String(engineWorkletUrl),
       policy,
-    });
+    };
+    engine = options.createContext === undefined
+      ? await createEngine(engineOptions)
+      : await createEngine({ ...engineOptions, createContext: options.createContext });
     cleanup.push(() => engine!.close());
     crossCompiledSources(engine.shape.sources, orderedSources);
 
@@ -213,7 +183,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     options.onProgress?.({ stage: "prefilling", sourcesTotal: pumpSources.length });
     await waitForPrefill(feed.rings, abort.signal);
 
-    const context = engine.context as EngineAudioContext;
+    const context = engine.context;
     output = options.createOutput?.({ context, engineNode: engine.host.node }) ?? engine.host.node;
     if (options.createOutput === undefined) output.connect(context.destination);
     cleanup.push(() => { try { output!.disconnect(); } catch { /* already disconnected */ } });
@@ -580,7 +550,7 @@ function exactFrames(value: number | bigint): number {
 
 async function waitForPrefill(rings: readonly SharedArrayBuffer[], signal: AbortSignal): Promise<void> {
   const deadline = performance.now() + PREFILL_TIMEOUT_MS;
-  while (rings.some((ring) => Atomics.load(new Int32Array(ring), 14) === 0)) {
+  while (rings.some((ring) => Atomics.load(new Int32Array(ring), MSB1_CONTROL.WROTE) === 0)) {
     signal.throwIfAborted();
     if (performance.now() >= deadline) throw new EngineWebAdapterError("session.open", "PCM pump prefill timed out");
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -595,10 +565,6 @@ async function reverseCleanup(cleanup: Array<() => void | Promise<void>>): Promi
   if (first !== undefined) throw first;
 }
 
-function defaultCreateContext(options: { readonly sampleRate: number; readonly renderSizeHint: number }): EngineAudioContext {
-  const Constructor = AudioContext as unknown as new (options: { sampleRate: number; renderSizeHint: number }) => EngineAudioContext;
-  return new Constructor({ sampleRate: options.sampleRate, renderSizeHint: options.renderSizeHint });
-}
 
 function forwardAbort(parent: AbortSignal | undefined, child: AbortController): () => void {
   if (parent === undefined) return () => undefined;

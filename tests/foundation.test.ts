@@ -1,3 +1,6 @@
+import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
+import { MSB1_CONTROL as SDK_CONTROL, Msb1RingWriter as SdkWriter, createMsb1Ring as sdkRing } from "@misofm/engine/browser";
+import { MSB1_CONTROL, Msb1RingWriter, createMsb1Ring } from "../src/stems/ring.js";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -14,7 +17,7 @@ test("foundation is pinned to the exact public Engine release", () => {
   assert.equal(ADAPTER_PROVENANCE.engine.package, "@misofm/engine@0.1.0");
   assert.equal(
     ADAPTER_PROVENANCE.engine.commit,
-    "5360874854f47e3dbfa2279ec6c57174e5ca018e",
+    "79900f3f1d296b2b9af215e2a87acf1628fadb06",
   );
   assert.equal(ADAPTER_PROVENANCE.safeBaselines.stemStore, "bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c");
 });
@@ -73,4 +76,12 @@ test("asset factories honor explicit worker overrides", () => {
     { url: ADAPTER_ASSETS.scratchWorker.href, type: "module" },
     { url: ADAPTER_ASSETS.pumpWorker.href, type: "module" },
   ]);
+});
+
+test("PCM and boot compatibility assets share the SDK authority", () => {
+  assert.equal(MSB1_CONTROL, SDK_CONTROL);
+  assert.equal(Msb1RingWriter, SdkWriter);
+  assert.equal(createMsb1Ring, sdkRing);
+  assert.equal(ADAPTER_ASSETS.scratchWorker, BUNDLED_ENGINE_ASSETS.scratchWorkerModule);
+  assert.equal(ADAPTER_ASSETS.feedWorkletModule, BUNDLED_ENGINE_ASSETS.pcmFeedWorklet);
 });
