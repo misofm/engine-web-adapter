@@ -140,3 +140,22 @@ Run the focused issue-19 tests including the independent generation reproducer b
 Attempt 2 passes only when both Astra findings and every omitted original gate have executable evidence. Do not lower gates or treat termination behavior supplied by a fake as client proof.
 
 Root qualification update: `npm run test:browser:opfs` passed outside the sandbox on `acf86f5`, preserving packed cold ingest and warm reuse in Chromium 152 and Playwright WebKit 26.5. This does not replace missing adversarial unit evidence and is not shipping Safari/iOS qualification. Log: `/private/tmp/dx-baseline-evidence/adapter-opfs-pr20.log`. Astra attempt 1 remains FAIL until the generation race and all frozen missing gates are corrected.
+
+## Attempt 2 implementation evidence (Luna, pending Astra review)
+
+Production corrections are in `src/stems/opfs-worker-client.ts` and
+`src/stems/storage.ts`: acquire continuations carry their generation, stale
+success/failure/release paths cannot touch a replacement, ready settlement uses
+one stable callback identity, and worker handshake/request deadlines are owned
+by the client without timer-ordering offsets. Worker event callbacks also carry
+generation, so historical replies cannot mutate a later generation.
+
+| Gate area | Evidence | Result |
+| --- | --- | --- |
+| Generation replacement | `/private/tmp/dx-19-generation-repro.mjs` | `first=session.closed`, `second=success`, `terminations=[1,0]`, `active=1` |
+| Late open timeout | `tests/opfs-storage.test.ts` | TimeoutError, one termination, historical reply inert |
+| Already-open write timeout | `tests/opfs-storage.test.ts` | TimeoutError, one termination, stale writer rejected as `session.closed` |
+| Existing suite | `npm test` | 102/102 passing |
+
+The full handshake/open/write/close and VerifiedStemStore gate matrix still
+requires executable coverage before PASS; no claim is made for those rows yet.

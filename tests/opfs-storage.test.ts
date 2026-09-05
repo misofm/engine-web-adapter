@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { EngineWebAdapterError } from "../src/errors.js";
 import { OpfsStorageBackend } from "../src/stems/storage.js";
+import { OpfsWriteWorkerClient } from "../src/stems/opfs-worker-client.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { IncrementalSha256 } from "../src/stems/sha256.js";
 import type { OpfsWorkerLike, OpfsWorkerRequest, OpfsWorkerResponse } from "../src/stems/opfs-worker-protocol.js";
@@ -218,6 +219,47 @@ test("a timed-out writer open terminates its generation and ignores a late reply
   worker.emit({ type: "opfs-ok", requestId: request.requestId });
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(worker.terminated(), true);
+});
+
+function historicalWorkerHarness(options: { readonly ready?: boolean } = {}) {
+  const listeners = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
+  const history = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
+  const messages: OpfsWorkerRequest[] = [];
+  let terminations = 0;
+  const worker = {
+    postMessage(message: OpfsWorkerRequest) { messages.push(message); },
+    terminate() { terminations += 1; },
+    addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
+      if (type === "message") { listeners.add(listener); history.add(listener); }
+    },
+    removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
+      if (type === "message") listeners.delete(listener);
+    },
+  } satisfies OpfsWorkerLike;
+  const emit = (message: OpfsWorkerResponse) => {
+    for (const listener of [...history]) listener({ data: message } as never);
+  };
+  if (options.ready === true) queueMicrotask(() => emit({ type: "worker-ready", writeSupport: true }));
+  return { worker, messages, emit, listeners, history, get terminations() { return terminations; } };
+}
+
+test("a timed-out write invalidates the writer and makes its historical reply inert", async () => {
+  const generation = historicalWorkerHarness();
+  const client = new OpfsWriteWorkerClient({ deadlineMs: 10, createWorker: () => generation.worker });
+  const opening = client.createWriter("folder", "write-timeout");
+  await new Promise((resolve) => setImmediate(resolve));
+  generation.emit({ type: "worker-ready", writeSupport: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  const open = generation.messages.find((message) => message.type === "write-open")!;
+  generation.emit({ type: "opfs-ok", requestId: open.requestId });
+  const writer = await opening;
+  const write = writer.write(new Uint8Array([1]));
+  const request = generation.messages.find((message) => message.type === "write")!;
+  await assert.rejects(write, (error: unknown) => error instanceof DOMException && error.name === "TimeoutError");
+  assert.equal(generation.terminations, 1);
+  generation.emit({ type: "opfs-ok", requestId: request.requestId });
+  await assert.rejects(writer.write(new Uint8Array([2])), (error: unknown) =>
+    error instanceof EngineWebAdapterError && error.code === "session.closed");
 });
 
 test("OPFS staging is written through createSyncAccessHandle, never createWritable", async () => {

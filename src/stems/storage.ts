@@ -79,7 +79,7 @@ export class OpfsStorageBackend implements StemStorageBackend {
       // Let the worker generation fail-close just before the public backend
       // deadline abandons its promise. This makes termination deterministic
       // when both timers are scheduled in the same turn.
-      deadlineMs: Math.max(1, this.#readDeadlineMs - 1),
+      deadlineMs: this.#readDeadlineMs,
     });
   }
 
@@ -93,7 +93,7 @@ export class OpfsStorageBackend implements StemStorageBackend {
     }
     // The Worker is the only scope that can see the write method, so the
     // refusal happens here: still before any resolver, network, or decode work.
-    await deadline(this.#writes.assertWriteSupport(), this.#readDeadlineMs);
+    await this.#writes.assertWriteSupport();
     const root = await deadline(this.#storage.getDirectory(), this.#readDeadlineMs);
     this.#directory = await deadline(root.getDirectoryHandle(this.#folderName, { create: true }), this.#readDeadlineMs);
   }

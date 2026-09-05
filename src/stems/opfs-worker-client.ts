@@ -55,8 +55,7 @@ export class OpfsWriteWorkerClient {
    */
   async assertWriteSupport(): Promise<void> {
     if (this.#supported()) return;
-    await this.#acquire();
-    const generation = this.#generation;
+    const generation = await this.#acquire();
     try {
       if (!this.#supported()) {
         throw new EngineWebAdapterError("capability.opfs", "Origin-private file storage cannot be written", {
@@ -71,8 +70,7 @@ export class OpfsWriteWorkerClient {
 
   async createWriter(folderName: string, name: string): Promise<StemStorageWriter> {
     const writerId = this.#writerId++;
-    await this.#acquire();
-    const generation = this.#generation;
+    const generation = await this.#acquire();
     try {
       await this.#request({ type: "write-open", requestId: this.#next(), writerId, folderName, name }, generation);
     } catch (error) {
@@ -105,7 +103,7 @@ export class OpfsWriteWorkerClient {
     this.#fail(new EngineWebAdapterError("session.closed", "OPFS write Worker closed"));
   }
 
-  async #acquire(): Promise<void> {
+  async #acquire(): Promise<number> {
     if (this.#worker === undefined) {
       let worker: OpfsWorkerLike;
       try { worker = this.#createWorker(); }
@@ -113,7 +111,8 @@ export class OpfsWriteWorkerClient {
         throw new EngineWebAdapterError("capability.module_worker", "OPFS write Worker could not start", {}, error);
       }
       this.#worker = worker;
-      const onMessage = (event: MessageEvent<OpfsWorkerResponse>) => this.#receive(event.data);
+      const generation = this.#generation;
+      const onMessage = (event: MessageEvent<OpfsWorkerResponse>) => this.#receive(event.data, generation);
       const onError = (event: ErrorEvent) => this.#fail(event.error ?? new Error(event.message));
       const onMessageError = () => this.#fail(
         new EngineWebAdapterError("capability.opfs", "OPFS write Worker message could not be cloned"),
@@ -126,20 +125,27 @@ export class OpfsWriteWorkerClient {
         worker.removeEventListener("error", onError);
         worker.removeEventListener("messageerror", onMessageError);
       };
-      this.#ready = this.#awaitReady(worker);
+      this.#ready = this.#awaitReady(worker, generation);
     }
+    const generation = this.#generation;
     this.#openWriters += 1;
     try {
       await this.#ready;
+      if (generation !== this.#generation) {
+        throw new EngineWebAdapterError("session.closed", "OPFS write Worker is closed");
+      }
+      return generation;
     } catch (error) {
       // A Worker that failed its handshake must not poison later attempts.
-      this.#openWriters -= 1;
-      if (this.#openWriters <= 0) { this.#openWriters = 0; this.#teardown(); }
+      if (generation === this.#generation) {
+        this.#openWriters -= 1;
+        if (this.#openWriters <= 0) { this.#openWriters = 0; this.#teardown(); }
+      }
       throw error;
     }
   }
 
-  #awaitReady(worker: OpfsWorkerLike): Promise<void> {
+  #awaitReady(worker: OpfsWorkerLike, generation: number): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       let settled = false;
       const timer = setTimeout(() => {
@@ -150,7 +156,7 @@ export class OpfsWriteWorkerClient {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (this.#readyReject === reject) this.#readyReject = undefined;
+        if (this.#readyReject === readyReject) this.#readyReject = undefined;
         worker.removeEventListener("message", onMessage);
         worker.removeEventListener("error", onError);
         worker.removeEventListener("messageerror", onMessageError);
@@ -158,6 +164,7 @@ export class OpfsWriteWorkerClient {
       };
       const onMessage = (event: MessageEvent<OpfsWorkerResponse>) => {
         if (event.data.type !== "worker-ready") return;
+        if (settled || generation !== this.#generation) return;
         this.#writeSupport = event.data.writeSupport;
         settle(resolve);
       };
@@ -167,7 +174,8 @@ export class OpfsWriteWorkerClient {
       const onMessageError = () => settle(() => reject(new EngineWebAdapterError(
         "capability.opfs", "OPFS write Worker message could not be cloned",
       )));
-      this.#readyReject = (reason) => settle(() => reject(reason));
+      const readyReject = (reason: unknown) => settle(() => reject(reason));
+      this.#readyReject = readyReject;
       worker.addEventListener("message", onMessage);
       worker.addEventListener("error", onError);
       worker.addEventListener("messageerror", onMessageError);
@@ -188,8 +196,6 @@ export class OpfsWriteWorkerClient {
     this.#detach = undefined;
     this.#worker = undefined;
     this.#ready = undefined;
-    this.#readyReject?.(new EngineWebAdapterError("session.closed", "OPFS write Worker is closed"));
-    this.#readyReject = undefined;
     // A Worker scope's write support does not change between instances.
     this.#generation += 1;
     try { worker?.terminate(); } catch { /* a terminated Worker cannot be re-terminated */ }
@@ -232,7 +238,8 @@ export class OpfsWriteWorkerClient {
     });
   }
 
-  #receive(message: OpfsWorkerResponse): void {
+  #receive(message: OpfsWorkerResponse, generation: number): void {
+    if (generation !== this.#generation) return;
     if (message.type === "worker-ready") return;
     const pending = this.#pending.get(message.requestId);
     if (pending === undefined) return;
