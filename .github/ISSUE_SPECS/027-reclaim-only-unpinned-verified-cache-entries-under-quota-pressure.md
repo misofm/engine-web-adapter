@@ -24,8 +24,8 @@ Matching issue misofm/engine-web-adapter#27.
 
 Astra medium implemented the bounded store change; root checkpoint `57b0b3b`
 contains only `src/stems/store.ts` and `tests/store.test.ts`. No public API,
-index schema, backend, session, feed, pump, or wire changes. Dedicated
-independent review remains pending.
+index schema, backend, session, feed, pump, or wire changes. The initial
+independent verdict and bounded correction are recorded below.
 
 An open now acquires its unique lifetime lock before verification and installs
 that ownership on each verified source before releasing the source lock. The
@@ -51,5 +51,37 @@ Validation in `/private/tmp/miso-dx-adapter-quota`:
   all 136 tests, and the existing fresh-consumer package gate. Full output:
   `/private/tmp/dx27-check.log`. No browser matrix or benchmark was added.
 
-The final README/spec evidence tranche awaits root checkpoint before dedicated
-review. These results do not claim independent review approval.
+Root committed the attempt 1 README/spec evidence at `65b6b65`; its independent
+review returned the bounded failure below.
+
+
+## Attempt 2: reclamation metadata quota classification
+
+Dedicated independent Astra medium review of `65b6b65` returned **FAIL**, one
+P2: quota failure while persisting the reclaimed index escaped as a raw
+`QuotaExceededError`, because reclamation runs outside the ingest catch.
+The first report remains at `/private/tmp/dx-27-astra-medium-review.md`;
+its reproducer is `/private/tmp/dx27-review-quota-error.mjs`. The reviewer
+reported no other blocker in this frozen slice.
+
+Root checkpoint `66ab248` contains the bounded correction in the same store
+and existing test paths. Reclamation preflight now classifies actual quota
+failures as `EngineWebAdapterError("stem.quota")`, retaining the original
+exception as cause and the incoming identity/required byte count as details.
+Non-quota failures still propagate. No ownership, reclamation ordering,
+cleanup, public API, schema, or backend changes were added.
+
+The focused regression reproduces `index.pending` writer creation failing
+after the eligible victim is removed. It asserts the typed error, original
+cause and details, no ready acknowledgment or resolver request, no pending
+index file, and released opening/mutation locks.
+
+- `npm run typecheck` and `./node_modules/.bin/tsc -p tsconfig.test.json`: PASS.
+- `node --test .test-dist/tests/store.test.js`: PASS, 28 tests.
+- `npm run check` at `66ab248`: PASS, including format, type/source policy,
+  decoder audit, all 137 tests, and fresh-consumer package validation
+  (158 files, 145288 bytes). Log: `/private/tmp/dx27-attempt2-check.log`.
+
+This final spec evidence awaits root checkpoint and the same independent
+reviewer's exact-fix recheck. Attempt 1's FAIL is retained; attempt 2 does not
+yet claim independent approval.
