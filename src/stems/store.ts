@@ -273,6 +273,7 @@ export class VerifiedStemStore implements StemStore {
     await this.#preflight(stem.bytes);
     const staging = `${STAGING_PREFIX}${this.#instanceId}-${digest(stem.identity)}`;
     await this.#backend.remove(staging);
+    const writerLifetime = new AbortController();
     let writer: StemStorageWriter | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let promoted = false;
@@ -283,7 +284,7 @@ export class VerifiedStemStore implements StemStore {
         signal,
       );
       if (!(resolved.stream instanceof ReadableStream)) throw new TypeError("Resolver must return a ReadableStream");
-      writer = await deadline(this.#backend.createWriter(staging), this.#readDeadlineMs, signal);
+      writer = await deadline(this.#backend.createWriter(staging, writerLifetime.signal), this.#readDeadlineMs, signal);
       reader = resolved.stream.getReader();
       const hash = new IncrementalSha256();
       let bytes = 0;
@@ -312,6 +313,8 @@ export class VerifiedStemStore implements StemStore {
         index.stems[stem.identity] = { bytes: stem.bytes, pins: [], lastUsedAt: this.#now() };
       }, signal);
     } catch (error) {
+      // Cancel even when the open deadline expired before returning a writer.
+      writerLifetime.abort(error);
       await writer?.abort(error).catch(() => undefined);
       await this.#backend.remove(staging).catch(() => undefined);
       if (promoted) await this.#backend.remove(finalName(stem.identity)).catch(() => undefined);

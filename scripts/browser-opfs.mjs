@@ -100,10 +100,15 @@ try {
       assert.equal(result.capabilityRefusal.code, "capability.opfs", `${label}: capability refusal code`);
       assert.equal(result.capabilityRefusal.missing, "FileSystemFileHandle", `${label}: capability refusal must name what is missing`);
       assert.ok(typeof result.capabilityRefusal.remedy === "string" && result.capabilityRefusal.remedy.length > 0, `${label}: capability refusal must carry a remedy`);
+      assert.equal(result.physicalLocks.sameExistingFileReacquired, true);
+      assert.equal(result.cleanup.stagingRemoved, true);
       assert.deepEqual(consoleErrors, [], `${label}: console errors`);
       report.push({
         engine: label,
         userAgent: result.userAgent,
+        browserVersion: context.browser()?.version(),
+        physicalLocks: result.physicalLocks,
+        cleanup: result.cleanup,
         coldBytes: result.coldIngest.bytes,
         withoutCreateWritableBytes: result.withoutCreateWritable.bytes,
         createWritableWasPresent: result.createWritableWasPresent,
@@ -138,7 +143,7 @@ function resolveChromeExecutable() {
 
 function browserSource() { return String.raw`
 import { EngineWebAdapterError, openEngineWebSession } from "@misofm/engine-web-adapter";
-import { OpfsStemStore } from "@misofm/engine-web-adapter/stems";
+import { OpfsStemStore, OpfsStorageBackend, VerifiedStemStore } from "@misofm/engine-web-adapter/stems";
 
 declare global { var __result: unknown; var __error: unknown }
 
@@ -176,7 +181,7 @@ async function ingest(folderName: string, seed: number) {
   const bytes = canonicalBytes(seed);
   const identity = await identityOf(bytes);
   const requirement = { sourceId: "source-000", identity: identity as never, bytes: bytes.length };
-  const store = new OpfsStemStore({ folderName });
+  const store = new OpfsStemStore({ folderName, assets: { createWorker: (url, options) => new Worker(url, options) } });
   const cold = await store.openSession({
     leaseId: "cold", stems: [requirement],
     resolver: { async resolve() { return { stream: streamOf(bytes) }; } },
@@ -195,6 +200,166 @@ async function ingest(folderName: string, seed: number) {
   });
   await warm.close();
   return { verified, bytes: readBack.length, declaredBytes: DECLARED_BYTES, warmResolverCalls };
+}
+
+function expect(value: unknown, label: string): asserts value {
+  if (!value) throw new Error(label);
+}
+
+// A separate probe has no package code or imports. It opens only existing files.
+function lockProbe() {
+  const source = "const held = new Map(); onmessage = async ({data: q}) => {\n    try {\n      if(q.close) { held.get(q.name).close(); held.delete(q.name); }\n      else {\n        const root = await navigator.storage.getDirectory();\n        const dir = await root.getDirectoryHandle(q.folder, {create:false});\n        const file = await dir.getFileHandle(q.name, {create:false});\n        held.set(q.name, await file.createSyncAccessHandle());\n      }\n      postMessage({id:q.id, ok:true});\n    } catch(e) { postMessage({id:q.id, ok:false, error:e.name}); }\n  };";
+  const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  const worker = new Worker(url);
+  let next = 0;
+  return {
+    async call(folder: string, name: string, close = false): Promise<{ ok: boolean; error?: string }> {
+      const id = ++next;
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { worker.removeEventListener("message", receive); reject(new Error("lock probe deadline")); }, 3_000);
+        function receive(event: MessageEvent) {
+          if (event.data.id !== id) return;
+          clearTimeout(timer); worker.removeEventListener("message", receive); resolve(event.data);
+        }
+        worker.addEventListener("message", receive);
+        worker.postMessage({ id, folder, name, close });
+      });
+    },
+    close() { worker.terminate(); URL.revokeObjectURL(url); },
+  };
+}
+
+function holdOpenAck() {
+  let notify!: (request: { folderName: string; name: string }) => void;
+  const held = new Promise<{ folderName: string; name: string }>(resolve => { notify = resolve; });
+  const timedWorkers: Worker[] = [];
+  let terminations = 0;
+  let enabled = false;
+  return {
+    held,
+    enable() { enabled = true; },
+    get terminations() { return terminations; },
+    dispose() { for (const worker of timedWorkers) worker.terminate(); },
+    assets: {
+      createWorker(url: string | URL, options: WorkerOptions) {
+        // The package chooses its shipped URL and module options unchanged.
+        expect(options.type === "module", "package selects module worker options");
+        expect(String(url).includes("engine-web-opfs-worker"), "package selects shipped OPFS worker URL");
+        const real = new Worker(url, options);
+        const events = new EventTarget();
+        let selected: { requestId: number; folderName: string; name: string } | undefined;
+        real.addEventListener("message", event => {
+          if (selected && event.data.type === "opfs-ok" && event.data.requestId === selected.requestId) {
+            notify(selected); return;
+          }
+          events.dispatchEvent(new MessageEvent("message", { data: event.data }));
+        });
+        real.addEventListener("error", event => events.dispatchEvent(new ErrorEvent("error", { error: event.error, message: event.message })));
+        real.addEventListener("messageerror", () => events.dispatchEvent(new MessageEvent("messageerror")));
+        return {
+          postMessage(request: { type: string; requestId: number; folderName: string; name: string }) {
+            if (enabled && request.type === "write-open") {
+              selected = request; enabled = false; timedWorkers.push(real);
+            }
+            real.postMessage(request);
+          },
+          terminate() {
+            if (selected) terminations += 1;
+            real.terminate(); // MUTATION: omit only this timed worker termination
+          },
+          addEventListener: events.addEventListener.bind(events),
+          removeEventListener: events.removeEventListener.bind(events),
+        } as unknown as Worker;
+      },
+    },
+  };
+}
+
+async function timeoutLocks() {
+  const folderName = "opfs-timeout-physical";
+  const root = await navigator.storage.getDirectory();
+  const folder = await root.getDirectoryHandle(folderName, { create: true });
+  await folder.getFileHandle("owned-existing", { create: true });
+  await folder.getFileHandle("sentinel", { create: true });
+  const owner = lockProbe();
+  const contender = lockProbe();
+  const gate = holdOpenAck();
+  try {
+    expect((await owner.call(folderName, "sentinel")).ok, "sentinel owner acquires existing file");
+    const backend = new OpfsStorageBackend({ folderName, assets: gate.assets, readDeadlineMs: 1_500 });
+    await backend.open();
+    gate.enable();
+    let settlements = 0;
+    const opening = backend.createWriter("owned-existing").then(
+      () => { settlements += 1; return "unexpected-success"; },
+      error => { settlements += 1; return error.name; },
+    );
+    const selected = await gate.held;
+    expect(selected.folderName === folderName && selected.name === "owned-existing", "ACK matches exact existing file");
+    expect(gate.terminations === 0, "ACK holding owner is alive before competing probe");
+    const held = await contender.call(folderName, selected.name);
+    expect(!held.ok && ["NoModificationAllowedError", "InvalidStateError"].includes(held.error ?? ""), "owned existing file is locked before deadline: " + JSON.stringify(held));
+    expect(!(await contender.call(folderName, "sentinel")).ok, "sentinel locked before deadline");
+    expect(gate.terminations === 0, "both locked probes precede owner termination");
+    expect(await opening === "TimeoutError", "held open rejects with TimeoutError");
+    expect(settlements === 1 && gate.terminations === 1, "one settlement and termination");
+    // No deletion or create:true occurs between held-lock proof and reacquisition.
+    const acquired = await contender.call(folderName, selected.name);
+    expect(acquired.ok, "same existing file reacquires after timeout termination before deletion");
+    await contender.call(folderName, selected.name, true);
+    expect(!(await contender.call(folderName, "sentinel")).ok, "sentinel remains locked after timeout");
+    await owner.call(folderName, "sentinel", true);
+    expect((await contender.call(folderName, "sentinel")).ok, "sentinel acquires only after owner release");
+    await contender.call(folderName, "sentinel", true);
+    return { lockRefusalName: held.error, heldBeforeDeadline: true, sameExistingFileReacquired: true, sentinelPreserved: true, settlements, terminations: gate.terminations };
+  } finally { gate.dispose(); owner.close(); contender.close(); }
+}
+
+async function timeoutCleanup() {
+  const folderName = "opfs-timeout-cleanup";
+  await ingest(folderName, 31);
+  const cached = canonicalBytes(31);
+  const cachedIdentity = await identityOf(cached);
+  const root = await navigator.storage.getDirectory();
+  const folder = await root.getDirectoryHandle(folderName);
+  const indexBefore = await (await (await folder.getFileHandle("index.json")).getFile()).text();
+  const gate = holdOpenAck();
+  const backend = new OpfsStorageBackend({ folderName, assets: gate.assets, readDeadlineMs: 1_500 });
+  const removalErrors: string[] = [];
+  const remove = backend.remove.bind(backend);
+  backend.remove = async name => {
+    try { await remove(name); }
+    catch (error) { removalErrors.push((error as DOMException).name); throw error; }
+  };
+  const store = new VerifiedStemStore({ backend, instanceId: "failed", readDeadlineMs: 1_500 });
+  const bytes = canonicalBytes(32);
+  const identity = await identityOf(bytes);
+  try {
+    await store.open();
+    const foreign = await backend.createWriter("staging-foreign");
+    await foreign.write(new Uint8Array([91]));
+    await foreign.close();
+    gate.enable();
+    const outcome = store.openSession({
+      leaseId: "failed", stems: [{ sourceId: "failed", identity: identity as never, bytes: bytes.length }],
+      resolver: { async resolve() { return { stream: streamOf(bytes) }; } },
+    }).then(() => "unexpected-success", error => error.code);
+    const selected = await gate.held;
+    expect(await outcome === "stem.read_deadline", "store maps timed open to stem.read_deadline");
+    expect(gate.terminations === 1, "store cleanup terminated timed worker");
+    let stagingPresent = true;
+    try { await folder.getFileHandle(selected.name, { create: false }); }
+    catch (error) { if ((error as DOMException).name === "NotFoundError") stagingPresent = false; else throw error; }
+    expect(!stagingPresent, "store removes its failed staging file after release: " + removalErrors.join(","));
+    const indexAfter = await (await (await folder.getFileHandle("index.json")).getFile()).text();
+    expect(indexAfter === indexBefore, "valid index bytes unchanged");
+    const cache = new Uint8Array(await (await (await folder.getFileHandle("sha256-" + cachedIdentity.slice(7))).getFile()).arrayBuffer());
+    expect(cache.length === cached.length && cache.every((value, i) => value === cached[i]), "valid cached PCM unchanged");
+    expect(!(await backend.exists("sha256-" + identity.slice(7))), "failed final absent");
+    expect(!Object.hasOwn(JSON.parse(indexAfter).stems, identity), "failed index row absent");
+    expect(await backend.readText("staging-foreign") === "[", "foreign staging bytes preserved");
+    return { stagingRemoved: true, validBytesPreserved: true, indexPreserved: true, failedFinalAbsent: true, foreignStagingPreserved: true };
+  } finally { backend.close(); gate.dispose(); }
 }
 
 function refusalScope(fileHandle: unknown) {
@@ -251,6 +416,9 @@ try {
   const createWritableRemoved = typeof prototype["createWritable"] !== "function";
   const withoutCreateWritable = await ingest("opfs-gate-absent-v1", 2);
 
+  const physicalLocks = await timeoutLocks();
+  const cleanup = await timeoutCleanup();
+
   // A browser with no OPFS handles must refuse at the synchronous capability
   // boundary with the typed error, not an untyped TypeError from the store.
   let capabilityRefusal: Record<string, unknown> = { name: "none" };
@@ -269,7 +437,7 @@ try {
     windowHasSyncAccessHandle: syncAccessHandleAvailable,
     createWritableWasPresent, createWritableCalls,
     createWritableRemoved, coldIngest, withoutCreateWritable,
-    capabilityRefusal,
+    capabilityRefusal, physicalLocks, cleanup,
   };
 } catch (error) {
   globalThis.__error = chain(error);

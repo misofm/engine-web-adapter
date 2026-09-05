@@ -18,7 +18,8 @@ export interface StemStorageBackend {
   exists(name: string): Promise<boolean>;
   read(name: string): Promise<Blob>;
   readText(name: string): Promise<string>;
-  createWriter(name: string): Promise<StemStorageWriter>;
+  /** Cancellation stops pending open and owned writes before cleanup. */
+  createWriter(name: string, signal?: AbortSignal): Promise<StemStorageWriter>;
   move(from: string, to: string): Promise<void>;
   remove(name: string): Promise<void>;
   estimate?(): Promise<{ readonly quota?: number; readonly usage?: number }>;
@@ -76,6 +77,10 @@ export class OpfsStorageBackend implements StemStorageBackend {
     this.#writes = new OpfsWriteWorkerClient({
       ...(options.assets === undefined ? {} : { assets: options.assets }),
       ...(options.createWorker === undefined ? {} : { createWorker: options.createWorker }),
+      // The worker generation owns the same bounded deadline as backend
+      // operations, so a stalled handshake/request is torn down with its
+      // physical handles before a replacement generation can be observed.
+      deadlineMs: this.#readDeadlineMs,
     });
   }
 
@@ -89,7 +94,7 @@ export class OpfsStorageBackend implements StemStorageBackend {
     }
     // The Worker is the only scope that can see the write method, so the
     // refusal happens here: still before any resolver, network, or decode work.
-    await deadline(this.#writes.assertWriteSupport(), this.#readDeadlineMs);
+    await this.#writes.assertWriteSupport();
     const root = await deadline(this.#storage.getDirectory(), this.#readDeadlineMs);
     this.#directory = await deadline(root.getDirectoryHandle(this.#folderName, { create: true }), this.#readDeadlineMs);
   }
@@ -128,13 +133,15 @@ export class OpfsStorageBackend implements StemStorageBackend {
     return deadline(file.text(), this.#readDeadlineMs);
   }
 
-  async createWriter(name: string): Promise<StemStorageWriter> {
+  async createWriter(name: string, signal?: AbortSignal): Promise<StemStorageWriter> {
     this.#opened();
-    const writer = await deadline(this.#writes.createWriter(this.#folderName, name), this.#readDeadlineMs);
+    // The worker client owns this deadline so a timeout terminates the shared
+    // generation before the public promise is abandoned.
+    const writer = await this.#writes.createWriter(this.#folderName, name, signal);
     return {
-      write: (chunk) => deadline(writer.write(chunk), this.#readDeadlineMs),
-      close: () => deadline(writer.close(), this.#readDeadlineMs),
-      abort: (reason) => deadline(writer.abort(reason), this.#readDeadlineMs),
+      write: (chunk) => writer.write(chunk),
+      close: () => writer.close(),
+      abort: (reason) => writer.abort(reason),
     };
   }
 
@@ -165,10 +172,22 @@ export class OpfsStorageBackend implements StemStorageBackend {
   }
 
   async remove(name: string): Promise<void> {
-    try {
-      await this.#opened().removeEntry(name);
-    } catch (error) {
-      if (domName(error) !== "NotFoundError") throw error;
+    const directory = this.#opened();
+    const expires = performance.now() + this.#readDeadlineMs;
+    while (true) {
+      const remaining = expires - performance.now();
+      if (remaining <= 0) throw new DOMException("Stem read deadline exceeded", "TimeoutError");
+      try {
+        await deadline(directory.removeEntry(name), remaining);
+        return;
+      } catch (error) {
+        if (domName(error) === "NotFoundError") return;
+        if (domName(error) !== "NoModificationAllowedError") throw error;
+        // Worker termination returns before the browser releases its OPFS lock.
+        // Retry this same entry within one cleanup budget, never restart it.
+        const delay = Math.min(10, expires - performance.now());
+        if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      }
     }
   }
 
@@ -207,16 +226,19 @@ export class MemoryStemStorageBackend implements StemStorageBackend {
   }
   async readText(name: string): Promise<string> { return new TextDecoder().decode(this.#get(name)); }
 
-  async createWriter(name: string): Promise<StemStorageWriter> {
+  async createWriter(name: string, signal?: AbortSignal): Promise<StemStorageWriter> {
+    signal?.throwIfAborted();
     const chunks: Uint8Array[] = [];
     let closed = false;
     return {
       write: async (chunk) => {
+        signal?.throwIfAborted();
         if (closed) throw new Error("writer is closed");
         chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk.slice());
       },
       close: async () => {
         if (closed) return;
+        signal?.throwIfAborted();
         const bytes = concat(chunks);
         const prior = this.files.get(name)?.byteLength ?? 0;
         const usage = this.#usage() - prior + bytes.byteLength;
