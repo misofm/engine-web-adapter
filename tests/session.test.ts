@@ -225,21 +225,30 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
       events.push("engine-worklet");
       return host;
     },
-    createAttachNode: (_context, _name) => ({
-      port: { postMessage(message: unknown) {
+    createAttachNode: (_context, _name) => {
+      const port = { onmessage: null as ((event: MessageEvent) => void) | null, postMessage(message: unknown) {
         const value = message as { op: string; rings?: SharedArrayBuffer[] };
         if (value.op === "attach") for (const ring of value.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+        else if (value.op === "prepare-seek") port.onmessage?.({ data: { ...value, op: "seek-prepared", kind: "confirmed" } } as MessageEvent);
         else events.push("feed.detach");
-      } },
-      disconnect() { events.push("feed.disconnect"); },
-    }),
+      } };
+      return { port, disconnect() { events.push("feed.disconnect"); } };
+    },
     createPump: async ({ sources }) => {
       events.push("pump.create");
       assert.deepEqual(sources.map((source) => source.sourceId), ["source", "source-z"]);
       pumpRings = sources.map((source) => source.ring);
       for (const ring of pumpRings) Atomics.store(new Int32Array(ring), MSB1_CONTROL.WROTE, 1);
       return {
-        async seekFrames(frame) { events.push(`pump.seek:${frame}`); return 2n; },
+        async seekFrames(frame) {
+          events.push(`pump.seek:${frame}`);
+          for (const ring of pumpRings) {
+            const writer = new Msb1RingWriter(ring);
+            writer.seek(2n, BigInt(frame)); writer.reserve(2);
+            writer.commit({ generation: 2n, startFrame: BigInt(frame), frames: 2, endOfRegion: true });
+          }
+          return 2n;
+        },
         close() { events.push("pump.close"); },
       };
     },
@@ -564,7 +573,7 @@ test("initial paused seeks require attachment, producer ACK, preparation and ful
   await f.session.close();
 });
 
-test("queued seeks keep play busy through the last completion; active seek and EOF remain supported", async () => {
+test("queued seeks keep play busy through the last completion; running seeks prepare and EOF remains supported", async () => {
   const f = await pausedSeekFixture();
   const first = f.session.seekFrames(100);
   const second = f.session.seekFrames(512);
@@ -576,9 +585,15 @@ test("queued seeks keep play busy through the last completion; active seek and E
   assert.equal(f.session.state, "ready", "invalid input leaves the session usable");
   await f.session.play();
   const count = f.events.filter((event) => event === "prepare").length;
-  await f.session.seekFrames(20);
+  const runningSeek = f.session.seekFrames(20);
+  await tick();
+  assert.equal(f.context.state, "suspended");
+  assert.deepEqual(f.events.slice(-4), ["context.suspend", "seek.start", "seek.ack", "prepare"]);
+  f.confirm(); await tick();
+  assert.equal(f.context.state, "suspended", "fresh target must precede restoration");
+  f.write(20n); await runningSeek;
   assert.equal(f.context.state, "running");
-  assert.equal(f.events.filter((event) => event === "prepare").length, count);
+  assert.equal(f.events.filter((event) => event === "prepare").length, count + 1);
   await f.session.close();
 });
 
@@ -623,6 +638,85 @@ test("paused preparation and fresh prefill deadlines close rather than allow pla
     assert.equal(f.session.state, "closed");
     await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
     assert.equal(f.events.includes("context.resume"), false);
+  }
+});
+
+test("running seeks preserve FIFO with later seeks and pause, without late restoration", async () => {
+  const f = await pausedSeekFixture(); await f.session.play();
+  await assert.rejects(f.session.seekFrames(-1), RangeError);
+  assert.equal(f.context.state, "running");
+  const first = f.session.seekFrames(100);
+  const second = f.session.seekFrames(200);
+  const pause = f.session.pause();
+  await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.busy");
+  await tick(); f.confirm(); f.write(100n); await first;
+  await tick(); assert.equal(f.context.state, "suspended");
+  f.confirm(); f.write(200n); await second; await pause;
+  assert.equal(f.context.state, "suspended"); assert.equal(f.session.state, "paused");
+  const resumes = f.events.filter((event) => event === "context.resume").length;
+  assert.equal(resumes, 3, "initial play plus one restoration per running seek");
+  await tick(); assert.equal(f.events.filter((event) => event === "context.resume").length, resumes);
+  await f.session.close();
+});
+
+test("seek context transitions preserve refusals and reject wrong settled states", async () => {
+  for (const transition of ["suspend", "resume"] as const) {
+    for (const fault of ["reject", "state"] as const) {
+      const f = await pausedSeekFixture(); await f.session.play();
+      const reason = new Error(transition + " refused");
+      f.context[transition] = async () => { if (fault === "reject") throw reason; };
+      const pending = f.session.seekFrames(100);
+      const rejected = assert.rejects(pending, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek"
+        && (fault === "reject" ? e.cause === reason : e.cause instanceof EngineWebAdapterError));
+      if (transition === "resume") { await tick(); f.confirm(); f.write(100n); }
+      await rejected;
+      assert.equal(f.session.state, "closed");
+      if (transition === "suspend") assert.equal(f.events.includes("seek.start"), false);
+      await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
+    }
+  }
+});
+
+test("hung seek context transitions time out and clear bounded timers", { timeout: 6000 }, async (t) => {
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  const nativeSet = globalThis.setTimeout, nativeClear = globalThis.clearTimeout;
+  t.mock.method(globalThis, "setTimeout", ((callback: () => void, ms?: number) => {
+    const timer = nativeSet(callback, ms);
+    if (ms === 2000) timers.add(timer);
+    return timer;
+  }) as typeof setTimeout);
+  t.mock.method(globalThis, "clearTimeout", ((timer: ReturnType<typeof setTimeout>) => {
+    timers.delete(timer); nativeClear(timer);
+  }) as typeof clearTimeout);
+  for (const transition of ["suspend", "resume"] as const) {
+    const f = await pausedSeekFixture(); await f.session.play();
+    f.context[transition] = () => new Promise<void>(() => undefined);
+    const rejected = assert.rejects(f.session.seekFrames(100), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek"
+      && e.cause instanceof EngineWebAdapterError && e.cause.message.includes("timed out"));
+    if (transition === "resume") { await tick(); f.confirm(); f.write(100n); }
+    await rejected;
+    assert.equal(f.session.state, "closed"); assert.equal(timers.size, 0);
+  }
+});
+
+test("close wins at every running seek await and late transitions never resume again", async () => {
+  for (const stage of ["suspend", "prepare", "refill", "resume"] as const) {
+    const f = await pausedSeekFixture(); await f.session.play();
+    const transition = deferred<void>(); let restores = 0;
+    if (stage === "suspend") f.context.suspend = () => transition.promise;
+    const resume = f.context.resume.bind(f.context);
+    f.context.resume = () => { restores++; return stage === "resume" ? transition.promise : resume(); };
+    const pending = f.session.seekFrames(100);
+    const rejected = assert.rejects(pending, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
+    await tick();
+    if (stage === "refill" || stage === "resume") f.confirm();
+    if (stage === "resume") f.write(100n);
+    await tick();
+    await f.session.close(); await rejected;
+    const expected = stage === "resume" ? 1 : 0;
+    assert.equal(restores, expected); assert.equal(f.context.state, "closed");
+    transition.resolve(); await tick();
+    assert.equal(restores, expected); assert.equal(f.session.state, "closed");
   }
 });
 

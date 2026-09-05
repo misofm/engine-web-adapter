@@ -75,7 +75,7 @@ const CODES: Record<EngineWebAdapterErrorCode, CodeRow> = {
   },
   "session.seek": {
     phase: "lifecycle",
-    remedy: "Open a new session after paused seek preparation fails; inspect the retained cause.",
+    remedy: "Open a new session after seek preparation fails; inspect the retained cause.",
     transient: false,
   },
   "capability.audio_worklet": {

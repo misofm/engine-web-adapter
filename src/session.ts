@@ -306,20 +306,28 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
         pendingSeeks++;
         return enqueue(async () => {
           assertOpen();
-          if (context.state === "running") {
-            await abortable(pump!.seekFrames(target), abort.signal);
-            return;
-          }
+          const restoreRunning = context.state === "running";
           try {
+            if (restoreRunning) {
+              await abortable(context.suspend(), abort.signal, PREFILL_TIMEOUT_MS);
+              assertOpen();
+              assertSeekContextState(context, "suspended");
+            }
             await abortable(feed!.ready(), abort.signal);
             const generation = await abortable(pump!.seekFrames(target), abort.signal);
             await abortable(feed!.prepareSeek(), abort.signal);
             await waitForSeekPrefill(orderedSources, counters, target, generation, abort.signal);
             assertOpen();
+            if (restoreRunning) {
+              await abortable(context.resume(), abort.signal, PREFILL_TIMEOUT_MS);
+              assertOpen();
+              assertSeekContextState(context, "running");
+              state = "playing";
+            }
           } catch (error) {
             if (closing) throw new EngineWebAdapterError("session.closed", "Engine Web session is closed", {}, error);
             try { await session.close(); } catch { /* retain the original preparation failure */ }
-            throw new EngineWebAdapterError("session.seek", "Paused PCM seek preparation failed", {}, error);
+            throw new EngineWebAdapterError("session.seek", "PCM seek preparation failed", {}, error);
           }
         }).finally(() => { pendingSeeks--; });
       },
@@ -631,6 +639,10 @@ async function waitForPrefill(rings: readonly SharedArrayBuffer[], signal: Abort
   }
 }
 
+function assertSeekContextState(context: EngineAudioContext, expected: "running" | "suspended"): void {
+  if (context.state !== expected) throw new EngineWebAdapterError("session.seek", `AudioContext did not become ${expected} during seek`);
+}
+
 async function waitForSeekPrefill(
   sources: readonly DeclaredStemSource[],
   observers: ReadonlyMap<string, Msb1RingObserver>,
@@ -673,12 +685,16 @@ function forwardAbort(parent: AbortSignal | undefined, child: AbortController): 
   return () => parent.removeEventListener("abort", abort);
 }
 
-function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+function abortable<T>(operation: Promise<T>, signal: AbortSignal, timeoutMs?: number): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise<T>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const abort = () => { cleanup(); reject(signal.reason ?? new DOMException("Operation aborted", "AbortError")); };
-    const cleanup = () => signal.removeEventListener("abort", abort);
+    const cleanup = () => { signal.removeEventListener("abort", abort); if (timer !== undefined) clearTimeout(timer); };
     signal.addEventListener("abort", abort, { once: true });
+    if (timeoutMs !== undefined) timer = setTimeout(() => {
+      cleanup(); reject(new EngineWebAdapterError("session.seek", "AudioContext seek transition timed out"));
+    }, timeoutMs);
     operation.then(
       (value) => { cleanup(); resolve(value); },
       (error) => { cleanup(); reject(error); },
