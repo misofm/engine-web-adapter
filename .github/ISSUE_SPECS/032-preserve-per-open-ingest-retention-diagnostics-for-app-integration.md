@@ -162,3 +162,9 @@ Attempt 1's FAIL is retained. This final spec evidence awaits root checkpoint
 and the same reviewer's bounded correction recheck; attempt 2 does not yet
 claim independent approval. App cell 10 and its existing ceilings remain
 unchanged and require downstream integration evidence.
+
+## Independent review and delivery
+
+Dedicated independent Astra medium review records **PASS** at `e6db6f1` (source `973b38d`). Both original synchronous-cancellation reproducers now release delivered ownership exactly once and preserve peaks; adjacent successful handoff and thrown-progress cases also pass. Independent focused tests: **83/83 PASS**; package policy PASS; all 77 SDK files match the reviewed SDK434 archive. Author full suite: **146 PASS**. Review record: `/private/tmp/dx-32-astra-medium-review-attempt2.md`.
+
+The one attempt-1 accounting defect and its bounded correction remain recorded above. The adapter capability is complete; actual app memory and playback acceptance remain in misofm/app#101. No app completion, publication or deployment is claimed.
