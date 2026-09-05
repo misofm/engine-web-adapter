@@ -55,7 +55,7 @@ await writeFile(join(consumer, "src", "main.ts"), browserSource(profile));
 await writeFile(join(consumer, "consumer-check.ts"), `
 import { EngineWebAdapterError, openEngineWebSession } from "@misofm/engine-web-adapter";
 import type {
-  EngineWebConsole, EngineWebSession, EngineWebSessionOptions, MeterUpdate, TelemetryUpdate, TrackMeter,
+  EngineWebConsole, EngineWebSession, EngineWebSessionOptions, SourceObservation, FeedDiagnostics, MeterUpdate, TelemetryUpdate, TrackMeter,
 } from "@misofm/engine-web-adapter";
 import { createFlacStemResolver, PcmPumpWorkerClient } from "@misofm/engine-web-adapter/stems";
 import { ADAPTER_ASSETS } from "@misofm/engine-web-adapter/assets";
@@ -68,6 +68,12 @@ const minimal: EngineWebSessionOptions = {
 };
 declare const session: EngineWebSession;
 const live: EngineWebConsole = session.console;
+const observation: SourceObservation = session.observeSource("source");
+const diagnostics: FeedDiagnostics = session.feedDiagnostics();
+observation.pull((chunk) => { const planes: readonly Float32Array[] = chunk.planes; void planes; }, 1);
+const observedBytes: number = diagnostics.allocation.observationBytes;
+const pumpFrames: number | undefined = diagnostics.allocation.pump?.windowFrames;
+void [observedBytes, pumpFrames];
 const meters: (listener: (update: MeterUpdate) => void) => Promise<() => void> = session.meters;
 const telemetry: (listener: (update: TelemetryUpdate) => void) => Promise<() => void> = session.telemetry;
 declare const update: MeterUpdate;
@@ -159,6 +165,8 @@ try {
   assert.equal(result.result?.refused, 0);
   assert.equal(result.result?.torn, 0);
   assert.equal(result.result?.errors, 0);
+  assert.equal(result.result?.observedChunks, 1);
+  assert.equal(result.result?.observationBytes, 2 * profile.channels * 128 * 4);
   assert.equal(result.result?.coldClosed, true);
   assert.equal(result.result?.warmClosed, true);
   for (const [order, observed] of [["console first", result.result?.consoleFirst], ["meters first", result.result?.meterFirst]]) {
@@ -294,6 +302,17 @@ async function exerciseControl(engine: any, consoleFirst: boolean) {
 }
 try {
   const cold = await open({ leaseId: "cold" });
+  const initialDiagnostics = cold.feedDiagnostics();
+  const sourceObservation = cold.observeSource(source.id);
+  const observedChunks = sourceObservation.pull((chunk) => {
+    if (chunk.frames < 1 || chunk.frames > 128 || chunk.planes.length !== profile.channels) throw new Error("invalid source observation");
+  }, 1);
+  if (observedChunks !== 1 || sourceObservation.sampleRateHz !== profile.sampleRateHz || sourceObservation.channels !== profile.channels) throw new Error("source observation did not map the compiled source");
+  const scratchBytes = profile.channels * 128 * Float32Array.BYTES_PER_ELEMENT;
+  const allocation = cold.feedDiagnostics().allocation;
+  if (initialDiagnostics.allocation.observationBytes !== scratchBytes || allocation.observationBytes !== 2 * scratchBytes ||
+      allocation.ringBytes !== rings.reduce((sum, ring) => sum + ring.byteLength, 0) || allocation.engineMemoryBytes !== cold.host.memoryBytes ||
+      allocation.pump?.windowFrames !== 4096 || allocation.pump.maximumWindowBytes !== 4096 * profile.channels * profile.bitDepth / 8) throw new Error("incorrect buffer projection");
   await cold.play();
   await new Promise((resolve) => setTimeout(resolve, 150));
   await cold.pause();
@@ -302,16 +321,11 @@ try {
   await cold.play();
   await new Promise((resolve) => setTimeout(resolve, 150));
   await cold.pause();
-  const control = new Int32Array(rings[0]);
-  const counters = {
-    submitted: Atomics.load(control, MSB1_CONTROL.SUBMITTED),
-    seeksApplied: Atomics.load(control, MSB1_CONTROL.SEEKS_APPLIED),
-    refused: Atomics.load(control, MSB1_CONTROL.REFUSED),
-    torn: Atomics.load(control, MSB1_CONTROL.TORN),
-    errors: Atomics.load(control, MSB1_CONTROL.ERRORS),
-  };
+  sourceObservation.pull(() => undefined, 1);
+  const counters = cold.feedDiagnostics().sources[0];
   await cold.close();
   const coldClosed = cold.state === "closed";
+  if (sourceObservation.pull(() => { throw new Error("closed observation delivered PCM"); }) !== 0) throw new Error("observer survived session close");
   const coldLocatorCalls = locatorCalls;
   const coldFlacWorkers = flacWorkers;
   const coldNetworkRequests = networkRequests;
@@ -339,7 +353,7 @@ try {
     coldFlacWorkers, warmFlacWorkers: flacWorkers,
     coldNetworkRequests, warmNetworkRequests: networkRequests,
     observedRemoteBytes, observedEtag,
-    coldClosed, warmClosed, consoleFirst, meterFirst, notAttached, meterNotAttached,
+    observedChunks, observationBytes: allocation.observationBytes, coldClosed, warmClosed, consoleFirst, meterFirst, notAttached, meterNotAttached,
     ...counters,
   };
 } catch (error) {

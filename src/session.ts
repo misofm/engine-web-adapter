@@ -1,7 +1,7 @@
 import { ABI_LAYOUT } from "@misofm/engine";
 import type { BrowserBootPolicy } from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
-import { createEngine, createDefaultHost, scratchBootOptions, MSB1_CONTROL } from "@misofm/engine/browser";
+import { createEngine, createDefaultHost, scratchBootOptions, MSB1_CONTROL, Msb1RingObserver } from "@misofm/engine/browser";
 import type { BrowserEngine, CreateEngineOptions } from "@misofm/engine/browser";
 
 import { ADAPTER_ASSETS } from "./assets.js";
@@ -19,6 +19,7 @@ import type {
   EngineWebSession,
   EngineWebSessionOptions,
   EngineWebSessionState,
+  SourceObservation,
 } from "./session-types.js";
 import {
   BoundedStemAdmission,
@@ -205,6 +206,22 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       tail = next.then(() => undefined, () => undefined);
       return next;
     };
+    const counters = new Map<string, Msb1RingObserver>();
+    const observations = new Map<SourceObservation, number>();
+    cleanup.push(() => {
+      for (const observation of observations.keys()) observation.close();
+      observations.clear();
+      for (const observer of counters.values()) observer.close();
+      counters.clear();
+    });
+    for (const [index, source] of orderedSources.entries()) {
+      counters.set(source.id, new Msb1RingObserver(feed.rings[index]!));
+    }
+    const counterBytes = [...counters.values()].reduce((bytes, observer) =>
+      bytes + observer.channels * observer.frameCapacity * Float32Array.BYTES_PER_ELEMENT, 0);
+    const assertOpen = () => {
+      if (closing || state === "closed") throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
+    };
     const session: EngineWebSession = {
       shape: engine.shape,
       context,
@@ -222,6 +239,36 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       telemetry(listener) {
         if (control === undefined) return Promise.reject(consoleNotAttached());
         return control.telemetry(listener);
+      },
+      observeSource(sourceId) {
+        assertOpen();
+        const index = orderedSources.findIndex((source) => source.id === sourceId);
+        if (index < 0) throw new EngineWebAdapterError("stem.not_found", "Session source was not found", { sourceId });
+        const observer = new Msb1RingObserver(feed!.rings[index]!);
+        const observation: SourceObservation = {
+          sampleRateHz: engine!.shape.sampleRateHz,
+          channels: observer.channels,
+          pull: (consume, maximumChunks) => observer.pull(consume, maximumChunks),
+          close() {
+            observer.close();
+            observations.delete(observation);
+          },
+        };
+        observations.set(observation, observer.channels * observer.frameCapacity * Float32Array.BYTES_PER_ELEMENT);
+        return observation;
+      },
+      feedDiagnostics() {
+        assertOpen();
+        return Object.freeze({
+          sources: Object.freeze([...counters].map(([sourceId, observer]) => Object.freeze({ sourceId, ...observer.counters() }))),
+          allocation: Object.freeze({
+            sources: counters.size,
+            ringBytes: feed!.rings.reduce((bytes, ring) => bytes + ring.byteLength, 0),
+            engineMemoryBytes: engine!.host.memoryBytes,
+            observationBytes: counterBytes + [...observations.values()].reduce((bytes, owned) => bytes + owned, 0),
+            pump: pump!.allocation === undefined ? null : Object.freeze({ ...pump!.allocation }),
+          }),
+        });
       },
       play() {
         if (closing || state === "closed") return Promise.reject(new EngineWebAdapterError("session.closed", "Engine Web session is closed"));

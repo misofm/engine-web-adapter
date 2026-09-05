@@ -230,3 +230,24 @@ browser without OPFS handles is refused with a typed `capability.opfs` error
 carrying a remedy. It needs a Chromium binary plus
 `node node_modules/playwright-core/cli.js install webkit`, so like the browser
 gates above it is not part of `npm run check`.
+
+## Source spectrum and buffer diagnostics
+
+`session.observeSource(sourceId)` returns an independent read-only source observer with
+`sampleRateHz`, `channels`, `pull(callback, maximumChunks?)` and `close()`. The callback receives
+the SDK's `PcmSourceChunk`: metadata and planar scratch are borrowed until return, and `frames`
+bounds valid samples. Keep FFT and display work in the app. Pull is bounded (default at most 32
+chunks, explicit integer 1–32), skips missed/reused data and never consumes audio. Close the
+observer when the focused source view deactivates; session close also closes every observer.
+Unknown IDs refuse with `stem.not_found` and sourceId details; calls on closed sessions refuse
+with `session.closed`. A previously closed observer's pull returns zero.
+
+`session.feedDiagnostics()` returns source-ID keyed SDK counter records and buffer allocations:
+actual feed SAB `ringBytes`, host `engineMemoryBytes`, and `observationBytes` for reusable scratch
+owned by one counter observer per source plus each open source observer. Counter observers are
+reused across snapshots. `allocation.pump` contains `windowFrames` and the Worker-reported
+`maximumWindowBytes`; a custom pump without allocation facts returns `null`. The default pump
+retains its exact requested window (4096 frames by default) and validates initialization bounds.
+These are bounded buffer facts, not JS-object/browser-heap measurements or an atomic multiword
+snapshot. The app owns diagnostic aggregation; opening still verifies/stores all PCM and prefills
+before ready.
