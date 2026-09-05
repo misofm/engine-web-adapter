@@ -29,3 +29,7 @@ src/session.ts, src/session-types.ts, src/feed.ts, src/scratch.ts (remove/delega
 4. Record tarball/source provenance and dedicated Astra review before issue completion. Downstream offline/spectrum/diagnostics compatibility and app integration are separate bounded consumers; this issue cannot claim full app success.
 
 Matching issue: misofm/engine-web-adapter#24. Implementation awaits reviewed SDK #428 and OPFS #19/#21 checkpoints.
+
+### SDK deadline translation decision
+
+The reviewed SDK uses scratch-deadline for both handshake and request deadlines. Map this discriminant to existing adapter session.open and retain the SDK error as cause. Map scratch-start/load to capability.module_worker. This intentionally normalizes the former handshake-timeout classification; do not parse messages, observe a duplicate handshake or extend SDK errors merely to preserve that incidental distinction. Existing timeout bounds and fail-close behavior remain. Focused tests and README describe the exact mapping.
