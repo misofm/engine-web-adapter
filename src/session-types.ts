@@ -1,4 +1,4 @@
-import type { ConsoleEdits, LaneEdit, SessionShape, SourceSpec } from "@misofm/engine";
+import type { CommandReport, ConsoleEdits, LaneEdit, SessionShape, SourceSpec } from "@misofm/engine";
 import type {
   AudioContextLike,
   BrowserBootPolicy,
@@ -72,23 +72,16 @@ export interface TelemetryUpdate {
  * The session's live console.
  *
  * `edit` is the Engine's own catalog-derived builder, bound to this session's
- * compiled map. `submit` is the adapter's: it stages edits on one shared
- * latest-wins writer, so a fader drag collapses to the position the hand
- * actually stopped at instead of a queue's worth of stale intermediates.
+ * compiled map. `submit` returns the SDK's strict whole-batch CommandReport;
+ * the host owns transport request identifiers and admission scheduling.
  */
 export interface EngineWebConsole {
   readonly edit: ConsoleEdits;
   /**
-   * Stage a transaction and let it land.
-   *
-   * Resolves once the edits have been admitted, superseded by a newer edit for
-   * the same address, or handed to the background flusher because the engine's
-   * queue is momentarily full. Flow-control backpressure is absorbed and never
-   * reaches the caller; a semantic refusal -- an unknown address, a malformed
-   * record -- rejects with `EngineWebAdapterError` code `console.refused`,
-   * because it will not succeed on retry.
+   * Submit one validated transaction and return its exact admission report.
+   * Semantic refusals resolve with `ok: false`; transport failures reject.
    */
-  submit(...edits: readonly LaneEdit[]): Promise<void>;
+  submit(...edits: readonly LaneEdit[]): Promise<CommandReport>;
 }
 
 export interface EngineWebSessionCommonOptions {

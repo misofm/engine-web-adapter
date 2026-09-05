@@ -72,3 +72,9 @@ Root creates and synchronizes one new adapter issue/spec after approval. Luna im
 - 2026-09-05: Root approved this existing control-boundary migration after engine #393 passed Astra. Isolated adapter checkout /private/tmp/miso-dx-adapter-control starts from main `63b4ee6212287000ff85e1cfa969d385f6246d2d`, branch codex/dx-sdk-console. It excludes the unqualified OPFS timeout changes. Exact SDK consumer package is built from reviewed `bed7634c7bb86ede24b577dc09ab9895208d803f`; tarball digest is recorded before implementation. Luna implements; dedicated Astra reviews. No implementation overlaps the active PCM test tranche.
 
 - Reviewed SDK package: `/private/tmp/dx-reviewed-sdk393/misofm-engine-0.1.0.tgz`, SHA-256 `ef9186209056170db272eec6e2bee03a8347449eaf5cf5012498c252c72f25e7`, source commit `bed7634c7bb86ede24b577dc09ab9895208d803f`. Build used the unchanged reviewed six-artifact directory and passed 11 CLI package-build tests. This is a local integration artifact, not a registry release.
+
+## Attempt 1 implementation evidence (Luna, 2026-09-05)
+
+Installed the reviewed tarball with `npm_config_cache=/private/tmp/dx-22-npm-cache npm install --no-save --ignore-scripts ...`; package metadata and lockfiles remain unchanged. Replaced the adapter's private console transport with the SDK's `createBrowserConsole(host)`, changed `submit` to return the exact `CommandReport`, and retained one host-owned payload-only lease per meter/telemetry feed with existing projections and refusals. Removed the adapter request ledger, binary command decoder, `ConsoleWriter`, retry/coalescing, and escalation paths.
+
+Validation: `npm run typecheck` passed; `npm test` passed 99/99, including full success/refusal/torn-report and meter/telemetry lease coverage. Registry publication and ordinary dependency installation remain release blockers as specified; this checkpoint proves the exact local tarball integration only.

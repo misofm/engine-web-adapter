@@ -36,25 +36,16 @@ interface Refusal {
 
 class FakeHost {
   readonly node = { connect() {}, disconnect() {} } as unknown as AudioWorkletNode;
-  readonly requestIds: number[] = [];
   readonly batches: HostCommand[][] = [];
   readonly leases: Array<readonly ["meters" | "telemetry", boolean]> = [];
   meterFrame: ((frame: MeterFrame) => void) | null = null;
   refuse: Refusal | undefined;
+  malformed = false;
   meterResult = 0;
   disposed = false;
-  #next = 0;
-
-  #take(requestId: number): void {
-    assert.ok(!this.requestIds.includes(requestId), `request id ${requestId} was reused`);
-    this.requestIds.push(requestId);
-  }
-
   async sessionMap() {
-    this.#next += 1;
     return {
       tag: "miso.sessionmap.v1" as const,
-      requestId: this.#next,
       result: 0,
       tracks: [...TRACKS],
       sources: [{ id: "source", channels: 1, frames: 4n }],
@@ -62,35 +53,36 @@ class FakeHost {
     };
   }
 
-  async command(request: { requestId: number; commands: HostCommand[] }) {
-    this.#take(request.requestId);
+  async command(request: { commands: HostCommand[] }) {
     const refusal = this.refuse;
     if (refusal !== undefined) {
       this.refuse = refusal.times > 1 ? { ...refusal, times: refusal.times - 1 } : undefined;
       return {
-        tag: "miso.ack.v1" as const, requestId: request.requestId, result: refusal.result,
+        tag: "miso.ack.v1" as const, result: refusal.result,
         reason: refusal.reason, rejectedIndex: 0, admitted: 0, appliedAtSample: 0n,
         records: new Uint8Array(),
       };
     }
     this.batches.push(request.commands);
+    if (this.malformed) return {
+      tag: "miso.ack.v1" as const, result: 0, reason: 0,
+      rejectedIndex: 0, admitted: 0, appliedAtSample: 0n, records: new Uint8Array(),
+    };
     return {
-      tag: "miso.ack.v1" as const, requestId: request.requestId, result: 0, reason: 0,
+      tag: "miso.ack.v1" as const, result: 0, reason: 0,
       rejectedIndex: 0, admitted: request.commands.length, appliedAtSample: 0n, records: new Uint8Array(),
     };
   }
 
-  async meters(request: { requestId: number; enabled: boolean; onFrame: ((frame: MeterFrame) => void) | null }) {
-    this.#take(request.requestId);
+  async meters(request: { enabled: boolean; onFrame: ((frame: MeterFrame) => void) | null }) {
     this.leases.push(["meters", request.enabled]);
     this.meterFrame = request.onFrame;
-    return { tag: "miso.ack.v1" as const, requestId: request.requestId, result: this.meterResult };
+    return { tag: "miso.ack.v1" as const, result: this.meterResult };
   }
 
-  async telemetry(request: { requestId: number; enabled: boolean }) {
-    this.#take(request.requestId);
+  async telemetry(request: { enabled: boolean }) {
     this.leases.push(["telemetry", request.enabled]);
-    return { tag: "miso.ack.v1" as const, requestId: request.requestId, result: 0 };
+    return { tag: "miso.ack.v1" as const, result: 0 };
   }
 
   async dispose() { this.disposed = true; }
@@ -125,7 +117,7 @@ test("an explicit no-console session names the missing console at first access",
   const seen: BootOptions[] = [];
   const { session, host } = await open({ onBoot: (options) => seen.push(options), options: { console: false } });
   assert.equal(seen[0]!.console, undefined, "no console words are written");
-  assert.equal(host.requestIds.length, 0, "a playback-only session never opens a control channel");
+  assert.equal(host.batches.length, 0, "a playback-only session never opens a control channel");
 
   assert.throws(
     () => session.console,
@@ -146,16 +138,17 @@ test("a first console command and a first meter subscription work in either orde
     const { session, host } = await open({});
     const updates: MeterUpdate[] = [];
     if (consoleFirst) {
-      await session.console.submit(session.console.edit.track("kick").faderDb(-6));
+      const report = await session.console.submit(session.console.edit.track("kick").faderDb(-6));
+      assert.deepEqual({ ok: report.ok, admitted: report.admitted, rejectedIndex: report.rejectedIndex, appliedAtSample: report.appliedAtSample }, { ok: true, admitted: 1, rejectedIndex: 0, appliedAtSample: 0n });
       await session.meters((update) => updates.push(update));
     } else {
       await session.meters((update) => updates.push(update));
-      await session.console.submit(session.console.edit.track("kick").faderDb(-6));
+      const report = await session.console.submit(session.console.edit.track("kick").faderDb(-6));
+      assert.equal(report.ok, true);
+      assert.equal(report.admitted, 1);
     }
     assert.equal(host.batches.length, 1, "no retry was needed");
     assert.equal(host.batches[0]![0]!.trackIndex, 0);
-    assert.equal(new Set(host.requestIds).size, host.requestIds.length, "every request id is distinct");
-    assert.deepEqual([...host.requestIds].sort((a, b) => a - b), host.requestIds, "request ids are monotonic");
     await session.close();
   }
 });
@@ -184,44 +177,21 @@ test("meters arrive keyed by track id with the master fold separated", async () 
   await session.close();
 });
 
-test("backpressure coalesces to the value the hand actually stopped at", async () => {
-  const { session, host } = await open({});
-  host.refuse = { result: 5, reason: BACKPRESSURE, times: 1 };
-  // A drag: the newer value is staged while the older one's batch is in flight.
-  const drag = [
-    session.console.submit(session.console.edit.track("kick").faderDb(-40)),
-    session.console.submit(session.console.edit.track("kick").faderDb(-3)),
-  ];
-  await Promise.all(drag);
-  const landed = host.batches.flat().filter((command) => command.trackIndex === 0);
-  assert.deepEqual(landed.map((command) => command.values[0]), [-3],
-    "one transaction lands, carrying the last staged value");
-  await session.close();
-});
-
-test("a queue that stays full is absorbed and lands once it drains", async () => {
-  const { session, host } = await open({});
-  // Longer than one drain's attempt budget: the submit must not block on it.
-  host.refuse = { result: 5, reason: BACKPRESSURE, times: 12 };
-  await session.console.submit(session.console.edit.track("kick").faderDb(-3));
-  assert.equal(host.batches.length, 0, "nothing was admitted yet");
-  const deadline = Date.now() + 2_000;
-  while (host.batches.length === 0 && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  assert.deepEqual(host.batches.flat().map((command) => command.values[0]), [-3],
-    "the background flusher lands the staged value without a caller retry");
-  await session.close();
-});
-
-test("a semantic refusal stays visible as console.refused", async () => {
+test("a semantic refusal stays visible in the strict CommandReport", async () => {
   const { session, host } = await open({});
   host.refuse = { result: 5, reason: UNSUPPORTED_KIND, times: 1 };
-  await assert.rejects(
-    session.console.submit(session.console.edit.track("kick").mute(true)),
-    (error: unknown) => error instanceof EngineWebAdapterError &&
-      error.code === "console.refused" && error.remedy.length > 0 && error.transient === false,
-  );
+  const report = await session.console.submit(session.console.edit.track("kick").mute(true));
+  assert.equal(report.ok, false);
+  assert.equal(report.admitted, 0);
+  assert.equal(report.rejectedIndex, 0);
+  assert.equal(report.reason, UNSUPPORTED_KIND);
+  await session.close();
+});
+
+test("the SDK rejects a torn success report instead of exposing it as admission", async () => {
+  const { session, host } = await open({});
+  host.malformed = true;
+  await assert.rejects(session.console.submit(session.console.edit.track("kick").mute(true)));
   await session.close();
 });
 
