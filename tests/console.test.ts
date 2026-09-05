@@ -41,10 +41,11 @@ interface Refusal {
 class FakeHost {
   readonly node = { connect() {}, disconnect() {} } as unknown as AudioWorkletNode;
   readonly batches: HostCommand[][] = [];
+  commandCalls = 0;
   readonly leases: Array<readonly ["meters" | "telemetry", boolean]> = [];
   meterFrame: ((frame: MeterFrame) => void) | null = null;
   refuse: Refusal | undefined;
-  malformed = false;
+  malformed: number | false = false;
   meterResult = 0;
   disposed = false;
   async sessionMap() {
@@ -58,6 +59,7 @@ class FakeHost {
   }
 
   async command(request: { commands: HostCommand[] }) {
+    this.commandCalls += 1;
     const refusal = this.refuse;
     if (refusal !== undefined) {
       this.refuse = refusal.times > 1 ? { ...refusal, times: refusal.times - 1 } : undefined;
@@ -68,9 +70,9 @@ class FakeHost {
       };
     }
     this.batches.push(request.commands);
-    if (this.malformed) return {
+    if (this.malformed !== false) return {
       tag: "miso.ack.v1" as const, result: 0, reason: 0,
-      rejectedIndex: 0, admitted: 0, appliedAtSample: 0n, records: new Uint8Array(),
+      rejectedIndex: 0, admitted: this.malformed, appliedAtSample: 0n, records: new Uint8Array(),
     };
     return {
       tag: "miso.ack.v1" as const, result: 0, reason: 0,
@@ -213,10 +215,25 @@ test("a multi-edit submit returns the complete strict receipt", async () => {
   await session.close();
 });
 
-test("the SDK rejects a torn success report instead of exposing it as admission", async () => {
+test("the SDK rejects zero and partial multi-edit success reports", async () => {
   const { session, host } = await open({});
-  host.malformed = true;
-  await assert.rejects(session.console.submit(session.console.edit.track("kick").mute(true)));
+  for (const admitted of [0, 1]) {
+    host.malformed = admitted;
+    await assert.rejects(session.console.submit(session.console.edit.track("kick").mute(true), session.console.edit.track("snare").mute(true)));
+  }
+  assert.equal(host.batches.length, 2, "each malformed receipt rejects without resubmission");
+  await session.close();
+});
+
+test("transport rejection stays a rejection and never retries or poisons later submissions", async () => {
+  const { session, host } = await open({});
+  const failure = new Error("transport failed");
+  const command = host.command.bind(host); let calls = 0;
+  host.command = async (request) => { calls += 1; if (calls === 1) throw failure; return command(request); };
+  await assert.rejects(session.console.submit(session.console.edit.track("kick").mute(true)), (error) => error === failure);
+  await tick(); assert.equal(calls, 1);
+  assert.equal((await session.console.submit(session.console.edit.track("kick").mute(false))).ok, true);
+  assert.equal(calls, 2);
   await session.close();
 });
 
@@ -228,7 +245,9 @@ test("backpressure is an exact strict refusal with no hidden retry", async () =>
     ok: false, result: 5, code: "refusedBudget", reason: BACKPRESSURE,
     reasonName: "backpressure", rejectedIndex: 0, admitted: 0, appliedAtSample: 0n,
   });
+  await tick();
   assert.equal(host.batches.length, 0);
+  assert.equal(host.commandCalls, 1, "backpressure does not trigger another host call");
   await session.close();
 });
 
