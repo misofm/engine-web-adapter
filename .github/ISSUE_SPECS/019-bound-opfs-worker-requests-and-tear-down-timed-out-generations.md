@@ -176,6 +176,22 @@ direct OPFS worker timeout and physical sync-handle paths remain covered by the
 neighboring worker-backed tests. No public interface or worker protocol changed;
 the storage constructor comment was corrected to describe client-owned deadline
 teardown.
+
+## Attempt 3 evidence (Luna, 2026-09-05)
+
+Replaced the remaining non-discriminating fixtures in `tests/opfs-storage.test.ts`.
+The real `OpfsStorageBackend` path now creates the requested staging file and
+acquires its sync handle before withholding `write-open`; client deadline
+termination closes that owned handle while an unrelated live handle remains
+locked. `VerifiedStemStore` then removes only the owned staging object, leaves
+the unrelated staging file and cached final/index bytes unchanged, and maps the
+timeout to `stem.read_deadline`. The reusable historical worker harness now has
+strict message/error/messageerror callback types and independent active versus
+historical tracking.
+
+Validation order: `npm run typecheck` passed; `npm test` passed 107/107;
+`git diff --check` passed. No production or protocol paths changed in this
+attempt. Focused log: `/private/tmp/dx-19-evidence-attempt3-focused.log`.
 # Adapter #19 — attempt 3 Sol-approved test-only brief
 
 ## Decision

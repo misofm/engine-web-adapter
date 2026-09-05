@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { EngineWebAdapterError } from "../src/errors.js";
-import { MemoryStemStorageBackend, OpfsStorageBackend } from "../src/stems/storage.js";
+import { OpfsStorageBackend } from "../src/stems/storage.js";
 import { OpfsWriteWorkerClient } from "../src/stems/opfs-worker-client.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { IncrementalSha256 } from "../src/stems/sha256.js";
@@ -113,7 +113,7 @@ class FakeFileHandle {
 let workerInstance = 0;
 
 /** Loads a private instance of the real Worker module and speaks the wire protocol to it. */
-function fakeOpfsWorker(root: FakeDirectory, options: { readonly scopeWithoutSyncAccess?: boolean } = {}): OpfsWorkerLike {
+function fakeOpfsWorker(root: FakeDirectory, options: { readonly scopeWithoutSyncAccess?: boolean; readonly withholdWriteOpen?: boolean } = {}): OpfsWorkerLike {
   const listeners = new Map<string, Set<(event: any) => void>>();
   const emit = (type: string, event: unknown) => {
     for (const listener of [...(listeners.get(type) ?? [])]) listener(event);
@@ -128,6 +128,7 @@ function fakeOpfsWorker(root: FakeDirectory, options: { readonly scopeWithoutSyn
   const inbox: OpfsWorkerRequest[] = [];
   let terminated = false;
   let live = false;
+  const ownedHandles: Array<{ readonly close: () => void }> = [];
   Object.defineProperty(globalThis, "self", { value: worker, configurable: true, writable: true });
   Object.defineProperty(globalThis, "navigator", {
     value: { storage: { getDirectory: async () => root } },
@@ -151,10 +152,20 @@ function fakeOpfsWorker(root: FakeDirectory, options: { readonly scopeWithoutSyn
     postMessage(message: OpfsWorkerRequest) {
       if (terminated) return;
       const cloned = structuredClone(message);
+      if (options.withholdWriteOpen === true && cloned.type === "write-open") {
+        queueMicrotask(async () => {
+          const folder = await root.getDirectoryHandle(cloned.folderName, { create: true });
+          const file = await folder.getFileHandle(cloned.name, { create: true });
+          const handle = await file.createSyncAccessHandle();
+          ownedHandles.push({ close: handle.close });
+          inbox.push(cloned);
+        });
+        return;
+      }
       if (live) worker.onmessage?.({ data: cloned } as never);
       else { inbox.push(cloned); void loaded; }
     },
-    terminate() { terminated = true; live = false; },
+    terminate() { terminated = true; live = false; for (const handle of ownedHandles.splice(0)) handle.close(); },
     addEventListener(type, listener) {
       const set = listeners.get(type) ?? new Set();
       set.add(listener);
@@ -261,7 +272,7 @@ function controlledWorkerHarness() {
   const listeners = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
   const history = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
   const errorListeners = new Set<(event: ErrorEvent) => void>();
-  const messageErrorListeners = new Set<() => void>();
+  const messageErrorListeners = new Set<(event?: unknown) => void>();
   const messages: OpfsWorkerRequest[] = [];
   let terminations = 0;
   const worker = {
@@ -411,39 +422,35 @@ test("timed staging open maps stem.read_deadline and preserves verified bytes an
   const identity = `sha256:${contentHash.digestHex()}` as StemIdentity;
   const finalName = `sha256-${cachedIdentity.slice("sha256:".length)}`;
   const index = JSON.stringify({ version: 1, stems: { [cachedIdentity]: { bytes: cachedBytes.byteLength, pins: [], lastUsedAt: 1 } } }) + "\n";
-  const ownedStaging = `staging-owned-${identity.slice("sha256:".length)}`;
-  const base = new MemoryStemStorageBackend({ files: {
-    [finalName]: cachedBytes,
-    "index.json": index,
-    [ownedStaging]: new Uint8Array([7]),
-    "staging-foreign": new Uint8Array([8]),
-  } });
-  const timedBackend = {
-    open: () => base.open(),
-    list: () => base.list(),
-    exists: (name: string) => base.exists(name),
-    read: (name: string) => base.read(name),
-    readText: (name: string) => base.readText(name),
-    createWriter: async (name: string) => {
-      if (name.startsWith("staging-")) throw new DOMException("Stem read deadline exceeded", "TimeoutError");
-      return base.createWriter(name);
-    },
-    move: (from: string, to: string) => base.move(from, to),
-    remove: (name: string) => base.remove(name),
-    estimate: () => base.estimate(),
-  };
-  const store = new VerifiedStemStore({ backend: timedBackend, instanceId: "owned", readDeadlineMs: 15 });
-  const beforeIndex = await base.readText("index.json");
+  const root = new FakeDirectory();
+  const folder = new FakeDirectory();
+  root.directories.set("opfs-store-timeout-v1", folder);
+  folder.files.set(finalName, { bytes: cachedBytes.slice() });
+  folder.files.set("index.json", { bytes: new TextEncoder().encode(index) });
+  folder.files.set("staging-foreign", { bytes: new Uint8Array([8]) });
+  const backend = new OpfsStorageBackend({
+    folderName: "opfs-store-timeout-v1",
+    storage: { getDirectory: async () => root } as never,
+    readDeadlineMs: 20,
+    createWorker: () => fakeOpfsWorker(root, { withholdWriteOpen: true }),
+  });
+  await backend.open();
+  const unrelated = await folder.getFileHandle("unrelated", { create: true });
+  const unrelatedHandle = await unrelated.createSyncAccessHandle();
+  const store = new VerifiedStemStore({ backend, instanceId: "owned", readDeadlineMs: 20 });
+  const beforeIndex = folder.files.get("index.json")!.bytes.slice();
   const session = store.openSession({
     leaseId: "lease-timeout",
     stems: [{ sourceId: "source", identity, bytes: bytes.byteLength }],
     resolver: { async resolve() { return { stream: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } }) }; } },
   });
   await assert.rejects(session, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.read_deadline");
-  assert.deepEqual([...new Uint8Array(await (await base.read(finalName)).arrayBuffer())], [...cachedBytes]);
-  assert.equal(await base.readText("index.json"), beforeIndex);
-  assert.equal(await base.exists(ownedStaging), false);
-  assert.deepEqual([...new Uint8Array(await (await base.read("staging-foreign")).arrayBuffer())], [8]);
+  assert.deepEqual([...folder.files.get(finalName)!.bytes], [...cachedBytes]);
+  assert.deepEqual([...folder.files.get("index.json")!.bytes], [...beforeIndex]);
+  assert.equal(folder.files.has(`staging-owned-${identity.slice("sha256:".length)}`), false);
+  assert.deepEqual([...folder.files.get("staging-foreign")!.bytes], [8]);
+  assert.equal(folder.locked.has("unrelated"), true);
+  unrelatedHandle.close();
 });
 
 test("a timed-out write invalidates the writer and makes its historical reply inert", async () => {
