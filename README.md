@@ -175,6 +175,31 @@ backends, the FLAC resolver, the pump, and the ring control words a `createPump`
 override reads. Ring arithmetic, digests, admission width, the decoder pool and
 the Worker wire protocols are package-owned and are not exported.
 
+## Shared cache ownership
+
+`OpfsStemStore` accepts `folderName` so an application can continue using its
+existing version-1 cache. `store.read(identity)` returns its stored Blob;
+`await store.setOfflinePin(identity, pinId, true)` adds durable `offline:<pinId>`
+intent, and `false` removes only that pin. Repeating the same operation is a
+no-op. Adding a missing identity rejects with `stem.not_found`; removing a
+missing pin does nothing. Persistence failures reject.
+
+Each `openSession` owns a unique session pin even when caller `leaseId` values
+repeat. Closing one lease leaves every other session and offline pin intact.
+Failed close persistence retains ownership and can be retried. Pinning never
+skips byte-count or digest verification, and successful repair retains pins.
+
+For cache overlap, mutations take the prior adapter's global resource lock
+first (`miso:engine-web:v1:index` or `:stem:<digest>`), then the historical
+folder resource lock (`miso:stem-store:v1:<folder>:index` or
+`:ingest:<digest>`). Ingest may acquire index locks; index work never acquires
+ingest locks. Each lease also holds its historical folder-qualified
+`:pin:<session-pin>` lifetime lock so existing app recovery recognizes it.
+Recovery preserves ambiguous session pins and offline pins; it leaves the
+historical `staging/` directory alone. Explicit unsupported index versions
+refuse with `stem.corrupt` before recovery changes any file. This API does not
+perform quota eviction.
+
 ## Verification
 
 `npm run test:browser` builds a fresh consumer from the packed tarball and runs

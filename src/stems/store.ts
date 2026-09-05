@@ -144,6 +144,7 @@ export class VerifiedStemStore implements StemStore {
       pinned = true;
       options.signal?.throwIfAborted();
       options.onProgress?.({ stage: "ready", sourcesReady: declared.length, sourcesTotal: declared.length });
+      options.signal?.throwIfAborted();
       return new VerifiedStemSessionLease(this, leaseId, pin, declared, releaseLock);
     } catch (error) {
       try { if (pinned) await this.release(pin, declared); }
@@ -164,9 +165,10 @@ export class VerifiedStemStore implements StemStore {
       const row = index.stems[identity];
       if (row === undefined) {
         if (pinned) throw new EngineWebAdapterError("stem.not_found", "Cannot pin a missing stem", { identity });
-        return;
+        return false;
       }
-      if (pinned) { if (!row.pins.includes(pin)) row.pins.push(pin); }
+      if (row.pins.includes(pin) === pinned) return false;
+      if (pinned) row.pins.push(pin);
       else row.pins = row.pins.filter((candidate) => candidate !== pin);
     });
   }
@@ -436,10 +438,10 @@ export class VerifiedStemStore implements StemStore {
     }
   }
 
-  async #mutateIndex(mutation: (index: StoreIndex) => void, signal?: AbortSignal): Promise<void> {
+  async #mutateIndex(mutation: (index: StoreIndex) => void | false, signal?: AbortSignal): Promise<void> {
     await this.#withLock("index", signal, async () => {
       const index = await this.#readIndex();
-      mutation(index);
+      if (mutation(index) === false) return;
       await this.#writeIndex(index);
     });
   }

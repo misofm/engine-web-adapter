@@ -29,3 +29,63 @@ Matching issue misofm/engine-web-adapter#25.
 ### Unsupported-version preservation correction
 
 Inspection confirms #readIndex currently rebuilds a parseable future-version index and writes version1, losing its pins. Before app adoption, distinguish an explicitly unsupported parsed index version and refuse with existing stem.corrupt before any recovery mutation. Read/check the index before deleting index.pending or staging during recovery. Existing supported malformed/missing-index behavior stays bounded; no new schema support or migration is added. Existing store tests must prove unsupported index and all files remain byte-identical on refusal. This exact store.ts correction is authorized within the cache-preservation slice.
+
+## Implementation evidence — awaiting independent Astra review
+
+Astra medium implemented the bounded cache slice; coherent implementation was
+checkpointed at `aa04262` before the final no-op/cancellation checks. No SDK,
+session/feed, decoder, backend selection, quota eviction, or metadata registry
+changed.
+
+`VerifiedStemStore`/`OpfsStemStore.setOfflinePin` use the existing version-1 row
+and `offline:<pinId>` encoding. Existing or missing removals and already-present
+adds do not rewrite the index; missing adds refuse with `stem.not_found`.
+Persistence errors reject. Each session opening gets a distinct pin, including
+repeated caller lease IDs, and holds its corresponding historical lifetime
+lock. Failed close persistence retains ownership for retry. Cancellation after
+pin persistence or during the ready callback removes only that opening's pin
+and releases its lock before rejection. Valid pinned metadata is retained while
+corrupt bytes are removed and successfully reingested; pins never skip hashing.
+
+Folder identity comes from the existing OPFS backend. Lock acquisition order is
+prior-adapter global resource first, then historical folder resource. Ingest may
+acquire index locks; index operations never acquire ingest locks. Recovery checks
+both ingest namespaces before touching ambiguous files and leaves historical
+`staging/` alone. Ambiguous/unknown session pins remain conservative. The explicit
+unsupported-version refusal runs before recovery cleanup, preserving every
+seeded file byte-for-byte.
+
+Compatibility was checked against the *current app store's lock semantics* at
+app `2af14140ef3534b4bea4133a5273d6b16706b6df`, file
+`src/lib/mixer/stem-store/vendor/stem-store/opfs-store.js` (index/ingest/pin names
+and lifetime lock behavior only). No source was copied and no legacy engine
+architecture was inspected or inherited.
+
+Validation:
+
+- Strict `npm run typecheck`: PASS.
+- Focused store/OPFS/public-types tests: **41 PASS**; existing OPFS lifecycle and
+  physical-removal unit regressions remain green. Log:
+  `/private/tmp/dx25-final-focused.log`.
+- Final `npm run check`: **130 PASS**, including decoder, strict types and package
+  policy; `/private/tmp/dx25-final-check.log`. This includes the final cancellation
+  callback regression added after the earlier focused invocation.
+- Fresh extracted packed consumer compiles both concrete store classes under
+  strict DOM/NodeNext types with `skipLibCheck: false`, using public `read` and
+  `setOfflinePin` return types. PASS: `/private/tmp/dx25-packed-types.log`;
+  consumer `/private/tmp/dx25-packed-48fn0qn0`. Reproducer:
+  `/private/tmp/dx25-packed-types.py` (uses the same npm-pack/extraction pattern,
+  adds no repository framework or dependency).
+
+The existing deterministic WebLock provider proves that both prior-adapter and
+historical-app index lock holders block the new mutation and that the old and
+new pin sets both survive. It also reports distinct held historical lifetime
+locks for same-ID leases and exact release behavior. The historical seeded
+index/final read, durable repair, no-write idempotence, persistence rejection,
+unsupported-version refusal and cancellation tests are retained in the existing
+store suite. No additional browser matrix was needed for this lock-name and
+ownership slice; downstream app adoption remains separate.
+
+These are implementation gates, not an independent PASS verdict. Root must
+checkpoint/push the final tranche and obtain the requested separate Astra medium
+review before closing this issue or claiming app adoption complete.

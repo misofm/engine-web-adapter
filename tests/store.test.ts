@@ -463,6 +463,16 @@ test("durable offline pins share the historical cache and preserve metadata acro
   assert.deepEqual(backend.files.get(`sha256-${item.identity.slice(7)}`), item.bytes);
 });
 
+test("missing and already-equal offline mutations are true no-ops without persistence", async () => {
+  const { item, backend } = seededCache(["offline:keep"]);
+  const store = new VerifiedStemStore({ backend: { ...backendView(backend), async createWriter() { throw new Error("no index writes allowed"); } } });
+  const before = backend.files.get("index.json")!.slice();
+  await store.setOfflinePin(item.identity, "keep", true);
+  await store.setOfflinePin(item.identity, "absent", false);
+  await store.setOfflinePin(fixture([202]).identity, "absent", false);
+  assert.deepEqual(backend.files.get("index.json"), before);
+});
+
 test("same caller lease IDs own distinct historical lifetime locks and close independently", async () => {
   const { item, backend, row } = seededCache(["offline:keep"]);
   const locks = new TestLocks();
@@ -514,17 +524,19 @@ test("pin persistence failure never acknowledges and a failed lease close retain
 });
 
 test("cancellation racing pin persistence rolls back only its own pin and releases its lock", async () => {
+  for (const phase of ["persist", "ready"] as const) {
   const { item, backend, row } = seededCache(["offline:keep"]);
   const locks = new TestLocks();
   const controller = new AbortController();
   const view = { ...backendView(backend), async move(from: string, to: string) {
     await backend.move(from, to);
-    if (to === "index.json" && row().pins.some(pin => pin.startsWith("session:"))) controller.abort();
+    if (phase === "persist" && to === "index.json" && row().pins.some(pin => pin.startsWith("session:"))) controller.abort();
   } };
   const store = new VerifiedStemStore({ backend: view, locks });
-  await assert.rejects(store.openSession({ leaseId: "cancel", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}), signal: controller.signal }), { code: "stem.cancelled" });
+  await assert.rejects(store.openSession({ leaseId: "cancel", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}), signal: controller.signal, onProgress: event => { if (phase === "ready" && event.stage === "ready") controller.abort(); } }), { code: "stem.cancelled" });
   assert.deepEqual(row().pins, ["offline:keep"]);
   assert.deepEqual((await locks.query()).held, []);
+  }
 });
 
 test("prior adapter and historical app index clients serialize pin mutations in fixed order", async () => {
