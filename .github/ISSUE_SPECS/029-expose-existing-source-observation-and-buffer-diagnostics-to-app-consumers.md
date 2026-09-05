@@ -35,3 +35,13 @@ Reviewed SDK434 archive hash matched the frozen digest. Its local no-save/no-loc
 ### Exact provenance test update
 
 The existing foundation test pins the prior reviewed SDK source/archive, so it fails after the authorized consumer update to SDK434. Allow tests/foundation.test.ts only to update those two existing expected source/archive literals to the exact consumed8a19a848 archive recorded above. No test weakening or unrelated foundation change.
+
+## Attempt 1 final evidence
+
+Production checkpoint `604afbe`; narrow provenance-fixture amendment `7db74f2`. Initial full check had 137 passes and one stale foundation expectation for the previous SDK commit (`/private/tmp/dx29-check.log`). The authorized correction refreshes only that existing expected commit literal to the consumed SDK434 revision. No production code changed after the focused checkpoint.
+
+- `npm run check`: PASS, 138 tests; format, types/source policy, decoder validation, build and package checks all pass (`/private/tmp/dx29-check-final.log`).
+- `npm run check:package`: PASS; 150 packed files (`/private/tmp/dx29-package.log`), also repeated as the required final full-check step.
+- `npm run test:browser`: PASS in actual Google Chrome 152.0.7977.76 with the existing packed fixture (`/private/tmp/dx29-browser.log`). Extracted public consumer types/imports pass. The source observer delivers one bounded chunk before playback, reports correct shape and 1024 observation bytes (counter plus source observer), and returns zero after session close. Actual SAB/host bytes and the default pump's 4096-frame reported allocation are checked. Existing playback submits 32 chunks, applies one seek, closes cold/warm sessions, keeps refusal/torn/error counters zero, and warm reopen adds no FLAC workers/network requests. The initial sandbox denied localhost binding; the same existing gate passed with authorized localhost access, without source changes.
+
+Final diff check is clean; only the authorized foundation literal and this evidence remain for the final checkpoint. Ready for dedicated independent Astra review; no review PASS or issue closure is claimed here.
