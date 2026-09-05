@@ -438,13 +438,13 @@ async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
     context.resume = async () => {
       resumeCalls++;
       if (mode === "running") {
-        prepared = await readPreparation();
         const observation = engine.observeSource("seek-source");
         try {
           if (observation.pull((chunk) => {
             if (chunk.generation !== 2n || chunk.startFrame !== 10_000n) throw new Error("automatic resume preceded target PCM");
           }, 1) !== 1) throw new Error("automatic resume preceded prefill");
         } finally { observation.close(); }
+        prepared = await readPreparation();
         // Arm only at the actual suspended resume boundary, so earlier audio cannot satisfy it.
         capture = captureNext();
       }
