@@ -185,7 +185,10 @@ no-op. Adding a missing identity rejects with `stem.not_found`; removing a
 missing pin does nothing. Persistence failures reject.
 
 Each `openSession` owns a unique session pin even when caller `leaseId` values
-repeat. Closing one lease leaves every other session and offline pin intact.
+repeat. Each successfully verified source is pinned before its stem lock is
+released, including while the rest of a multi-source open is unfinished. Failed
+opens remove only their own pins. Closing one lease leaves every other session
+and offline pin intact.
 Failed close persistence retains ownership and can be retried. Pinning never
 skips byte-count or digest verification, and successful repair retains pins.
 
@@ -197,8 +200,16 @@ ingest locks. Each lease also holds its historical folder-qualified
 `:pin:<session-pin>` lifetime lock so existing app recovery recognizes it.
 Recovery preserves ambiguous session pins and offline pins; it leaves the
 historical `staging/` directory alone. Explicit unsupported index versions
-refuse with `stem.corrupt` before recovery changes any file. This API does not
-perform quota eviction.
+refuse with `stem.corrupt` before recovery changes any file.
+
+When a known storage estimate cannot fit a cold source, the store reclaims
+unpinned indexed entries by oldest `lastUsedAt`, breaking ties by identity,
+until the estimate shows enough space. It rechecks ownership under the victim's
+stem and index locks before deletion. Live leases, unfinished opens, offline
+pins, and ambiguous session pins remain protected. Reclamation never waits for
+a victim while holding the ingest stem lock. Insufficient reclaimable space
+rejects with `stem.quota`; unavailable estimates retain normal write behavior,
+and actual storage quota failures remain typed.
 
 ## Verification
 
