@@ -176,7 +176,7 @@ async function ingest(folderName: string, seed: number) {
   const bytes = canonicalBytes(seed);
   const identity = await identityOf(bytes);
   const requirement = { sourceId: "source-000", identity: identity as never, bytes: bytes.length };
-  const store = new OpfsStemStore({ folderName });
+  const store = new OpfsStemStore({ folderName, assets: { createWorker: (url, options) => new Worker(url, options) } });
   const cold = await store.openSession({
     leaseId: "cold", stems: [requirement],
     resolver: { async resolve() { return { stream: streamOf(bytes) }; } },

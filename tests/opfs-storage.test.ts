@@ -48,6 +48,7 @@ class FakeDirectory {
   }
 
   async removeEntry(name: string): Promise<void> {
+    if (this.locked.has(name)) throw named(`${name} is locked`, "NoModificationAllowedError");
     if (!this.files.delete(name)) throw named(`${name} was not found`, "NotFoundError");
   }
 
@@ -266,35 +267,163 @@ function historicalWorkerHarness(options: { readonly ready?: boolean } = {}) {
   return { worker, messages, emit, emitError, emitMessageError, listeners, history, errors, messageErrors, get terminations() { return terminations; } };
 }
 
-/** A deterministic worker seam for lifecycle tests. It retains historical listeners
- * after terminate so late events exercise the client's generation guards. */
+/** Retains removed callbacks deliberately, so stale delivery is real. */
 function controlledWorkerHarness() {
-  const listeners = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
-  const history = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
-  const errorListeners = new Set<(event: ErrorEvent) => void>();
-  const messageErrorListeners = new Set<(event?: unknown) => void>();
+  type Message = (event: MessageEvent<OpfsWorkerResponse>) => void;
+  type Failure = (event: ErrorEvent) => void;
+  type CloneFailure = () => void;
+  const listeners = new Set<Message>();
+  const history = new Set<Message>();
+  const errorListeners = new Set<Failure>();
+  const errorHistory = new Set<Failure>();
+  const messageErrorListeners = new Set<CloneFailure>();
+  const messageErrorHistory = new Set<CloneFailure>();
   const messages: OpfsWorkerRequest[] = [];
   let terminations = 0;
   const worker = {
     postMessage(message: OpfsWorkerRequest) { messages.push(message); },
     terminate() { terminations += 1; },
-    addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
-      if (type === "message") { listeners.add(listener); history.add(listener); }
-      if (type === "error") errorListeners.add(listener);
-      if (type === "messageerror") messageErrorListeners.add(listener);
+    addEventListener(type: "message" | "error" | "messageerror", listener: Message | Failure | CloneFailure) {
+      if (type === "message") { listeners.add(listener as Message); history.add(listener as Message); }
+      if (type === "error") { errorListeners.add(listener as Failure); errorHistory.add(listener as Failure); }
+      if (type === "messageerror") { messageErrorListeners.add(listener as CloneFailure); messageErrorHistory.add(listener as CloneFailure); }
     },
-    removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
-      if (type === "message") listeners.delete(listener);
-      if (type === "error") errorListeners.delete(listener);
-      if (type === "messageerror") messageErrorListeners.delete(listener);
+    removeEventListener(type: "message" | "error" | "messageerror", listener: Message | Failure | CloneFailure) {
+      if (type === "message") listeners.delete(listener as Message);
+      if (type === "error") errorListeners.delete(listener as Failure);
+      if (type === "messageerror") messageErrorListeners.delete(listener as CloneFailure);
     },
   } satisfies OpfsWorkerLike;
-  const emit = (message: OpfsWorkerResponse) => {
-    for (const listener of [...history]) listener({ data: message } as never);
+  return {
+    worker, messages, listeners, history, errorListeners, messageErrorListeners,
+    counts: () => [listeners.size, errorListeners.size, messageErrorListeners.size],
+    historicalCounts: () => [history.size, errorHistory.size, messageErrorHistory.size],
+    emit(message: OpfsWorkerResponse) { for (const listener of history) listener({ data: message } as MessageEvent<OpfsWorkerResponse>); },
+    emitError() { for (const listener of errorHistory) listener({ error: new Error("retired"), message: "retired" } as ErrorEvent); },
+    emitMessageError() { for (const listener of messageErrorHistory) listener(); },
+    get terminations() { return terminations; },
   };
-  const emitError = () => { for (const listener of [...errorListeners]) listener({ error: new Error("late") } as never); };
-  const emitMessageError = () => { for (const listener of [...messageErrorListeners]) listener(); };
-  return { worker, messages, emit, emitError, emitMessageError, listeners, history, errorListeners, messageErrorListeners, get terminations() { return terminations; } };
+}
+
+for (const phase of ["handshake", "open", "write", "shared", "close"] as const) {
+  test(`retired generation lifecycle accounting: ${phase}`, async () => {
+    const flush = async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); };
+    const originalSet = globalThis.setTimeout;
+    const originalClear = globalThis.clearTimeout;
+    const timers = new Map<ReturnType<typeof setTimeout>, () => void>();
+    let created = 0;
+    let cleared = 0;
+    let fired = 0;
+    globalThis.setTimeout = ((callback: () => void) => {
+      const id = ++created as unknown as ReturnType<typeof setTimeout>;
+      timers.set(id, callback);
+      return id;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((id: ReturnType<typeof setTimeout>) => {
+      cleared += 1;
+      timers.delete(id);
+    }) as typeof clearTimeout;
+    const first = controlledWorkerHarness();
+    const second = controlledWorkerHarness();
+    let generations = 0;
+    const client = new OpfsWriteWorkerClient({ createWorker: () => (generations++ === 0 ? first : second).worker });
+    let unsettled = 0;
+    let settlements = 0;
+    const tracked = <T>(promise: Promise<T>) => {
+      unsettled += 1;
+      return promise.then(value => { unsettled -= 1; settlements += 1; return { value }; }, error => {
+        unsettled -= 1; settlements += 1; return { error: error as unknown };
+      });
+    };
+    try {
+      const count = phase === "shared" ? 2 : 1;
+      const openings = Array.from({ length: count }, (_, i) => tracked(client.createWriter("folder", `old-${i}`)));
+      if (phase !== "handshake") {
+        first.emit({ type: "worker-ready", writeSupport: true });
+        await flush();
+      }
+      const writers: Awaited<ReturnType<typeof client.createWriter>>[] = [];
+      let pending = openings;
+      if (phase === "write" || phase === "shared" || phase === "close") {
+        for (const request of first.messages) first.emit({ type: "opfs-ok", requestId: request.requestId });
+        for (const result of await Promise.all(openings)) { assert.ok("value" in result); writers.push(result.value); }
+        // The tracked value is irrelevant here; keep one result shape for the table.
+        pending = writers.map(writer => tracked(writer.write(new Uint8Array([1])).then(() => writer)));
+      }
+      const oldCreated = phase === "handshake" ? 1 : phase === "open" ? 2 : 1 + count * 2;
+      assert.equal(created, oldCreated, phase);
+      assert.equal(timers.size, phase === "handshake" ? 1 : count, phase);
+      if (phase === "close") client.close();
+      else {
+        const [id, callback] = timers.entries().next().value!;
+        timers.delete(id); fired += 1; callback();
+      }
+      // Replacement starts synchronously before old rejection continuations run.
+      const replacement = tracked(client.createWriter("folder", "replacement"));
+      const replay = (requestId: number) => {
+        first.emit({ type: "worker-ready", writeSupport: true });
+        first.emit({ type: "opfs-ok", requestId });
+        first.emitError();
+        first.emitMessageError();
+      };
+      replay(999);
+      assert.deepEqual(second.counts(), [2, 2, 2], phase);
+      assert.equal(second.terminations, 0, phase);
+      for (const result of await Promise.all(pending)) {
+        assert.ok("error" in result);
+        if (phase === "close") assert.ok(result.error instanceof EngineWebAdapterError && result.error.code === "session.closed");
+        else assert.ok(result.error instanceof DOMException && result.error.name === "TimeoutError");
+      }
+      assert.deepEqual(first.counts(), [0, 0, 0], phase);
+      assert.deepEqual(first.historicalCounts(), [2, 2, 2], phase);
+      assert.equal(first.terminations, 1, phase);
+      assert.equal(first.messages.length, oldCreated - 1, phase);
+      assert.equal(timers.size, 1, phase);
+      assert.equal(unsettled, 1, phase);
+      second.emit({ type: "worker-ready", writeSupport: true });
+      await flush();
+      assert.equal(second.terminations, 0, "retired open catch must preserve replacement");
+      assert.equal(second.messages.length, 1, "replacement posts its own open");
+      const open = second.messages[0]!;
+      replay(open.requestId); // deliberately colliding ID tests the actual receive guard
+      await flush();
+      assert.equal(unsettled, 1, "old success cannot acknowledge replacement open");
+      assert.equal(timers.size, 1, phase);
+      second.emit({ type: "opfs-ok", requestId: open.requestId });
+      const fresh = await replacement;
+      assert.ok("value" in fresh);
+      replay(open.requestId);
+      for (const writer of writers) {
+        await assert.rejects(writer.write(new Uint8Array([2])), { code: "session.closed" });
+        if (writer === writers[1]) await writer.abort(new Error("old"));
+        else await assert.rejects(writer.close(), { code: "session.closed" });
+      }
+      assert.equal(second.messages.length, 1, phase);
+      assert.equal(second.terminations, 0, "stale writer release must preserve replacement ownership");
+      assert.deepEqual(second.counts(), [1, 1, 1], phase);
+      assert.equal(client.workersActive, 1, phase);
+      assert.equal(unsettled, 0, phase);
+      assert.equal(timers.size, 0, phase);
+      assert.equal(created, oldCreated + 2, phase);
+      assert.equal(cleared, created, phase);
+      assert.equal(fired, phase === "close" ? 0 : 1, phase);
+      assert.equal(settlements, (writers.length ? count * 2 : count) + 1, phase);
+      const closing = tracked(fresh.value.close());
+      const close = second.messages[1]!;
+      second.emit({ type: "opfs-ok", requestId: close.requestId });
+      await closing;
+      assert.equal(second.terminations, 1, phase);
+      assert.deepEqual(second.counts(), [0, 0, 0], phase);
+      assert.equal(second.messages.length, 2, phase);
+      assert.equal(created, oldCreated + 3, phase);
+      assert.equal(cleared, created, phase);
+      assert.equal(unsettled + timers.size, 0, phase);
+    } finally {
+      client.close();
+      globalThis.setTimeout = originalSet;
+      globalThis.clearTimeout = originalClear;
+    }
+  });
 }
 
 test("a never-ready generation times out once and a late ready cannot poison its replacement", async () => {

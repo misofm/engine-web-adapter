@@ -76,3 +76,26 @@ The single allowed attempt is consumed. Astra confirmed the experiment failed on
 ## Renewed execution for the confirmed app goal
 
 After the historical stop, the user explicitly confirmed the layer plan, requested execution of the rest with Astra medium, and required real end-to-end operation in misofm/app without shortcuts. Resume the existing OPFS reliability and cleanup proof under that instruction, retaining prior evidence and the original functional/resource requirements. Use the existing packed runner with the package-selected real Worker URL and host-side event interception; do not relocate worker module source or replace real locks with a modeled handle. Complete the remaining real-lock, stale-generation and owned-cleanup checks with a compact existing fixture. No alternate backend, codec, protocol or general test framework is added. Source stays unchanged unless a concrete product defect is reported and the same bounded correction scope is amended before implementation. A separate Astra medium reviewer verifies the completed result.
+
+### Renewed Astra qualification findings (2026-09-05)
+
+The unchanged package factory path now has a minimal concrete reproducer: the
+existing packed ingest receives only `assets: { createWorker: (url, options) =>
+new Worker(url, options) }`. No module source rewriting or Blob is involved.
+Packed Chromium fails with 404s for `/errors.js` and
+`/stems/opfs-worker-protocol.js`: Vite treats the override's package-selected
+`ADAPTER_ASSETS` URL as a copied asset, while its relative module imports are
+not copied alongside it. This establishes a factory deployment defect that the
+historical wrapper experiment did not isolate. Log:
+`/private/tmp/dx-21-renewed-factory-escalated.log` (Node 26.8.1).
+
+A second discriminator makes `FakeDirectory.removeEntry` refuse a locked file.
+The existing timed staging test then fails because staging remains: the outer
+store deadline can fire before the worker request deadline, so store catch
+cleanup encounters the still-owned lock and swallows removal failure. This is
+a modeled reproduction requiring browser confirmation once factory loading is
+fixed, not yet physical-lock evidence. Focused run: 13/14 PASS, failure at the
+staging-absence assertion; `/private/tmp/dx-21-renewed-focused.log`.
+
+Both findings were reported to root before production edits. The working
+qualification changes are not a PASS claim. Prior failed evidence is retained.
