@@ -13,10 +13,10 @@ npm install @misofm/engine-web-adapter@0.3.0 @misofm/engine@0.2.0
 ```
 
 The package is ESM-only and remains pinned to exactly Engine `0.2.0`.
-The current integration was qualified with the reviewed archive from Engine
-`79900f3f1d296b2b9af215e2a87acf1628fadb06`, SHA256
-`28492361d76a6a0815302d756c98003b202155691ab9011c7884fac377deb587`.
-This is archive provenance; registry publication is a separate delivery step.
+The current integration was qualified with the published Engine 0.2.0 archive
+from commit `bb5ed498a2c0934498d964befb2cd5b7c2a45264`, SHA256
+`77a2c78046428db40e3a9408c3a35ba1a05b3905a2595838fadf423631e92981`.
+This identifies the SDK dependency; adapter publication is a separate delivery step.
 
 ## Open a native-FLAC session
 
