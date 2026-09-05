@@ -45,3 +45,7 @@ Production checkpoint `604afbe`; narrow provenance-fixture amendment `7db74f2`. 
 - `npm run test:browser`: PASS in actual Google Chrome 152.0.7977.76 with the existing packed fixture (`/private/tmp/dx29-browser.log`). Extracted public consumer types/imports pass. The source observer delivers one bounded chunk before playback, reports correct shape and 1024 observation bytes (counter plus source observer), and returns zero after session close. Actual SAB/host bytes and the default pump's 4096-frame reported allocation are checked. Existing playback submits 32 chunks, applies one seek, closes cold/warm sessions, keeps refusal/torn/error counters zero, and warm reopen adds no FLAC workers/network requests. The initial sandbox denied localhost binding; the same existing gate passed with authorized localhost access, without source changes.
 
 Final diff check is clean; only the authorized foundation literal and this evidence remain for the final checkpoint. Ready for dedicated independent Astra review; no review PASS or issue closure is claimed here.
+
+## Dedicated Astra medium PASS
+
+Independent review at ae45870 passes types, 27 focused tests, package checks, and actual packed Chromium observation, playback, seek, and close. The SDK archive matches the frozen digest; the browser observed one chunk, 1024 observation bytes, 32 submissions and one seek, with no additional warm fetches or workers. Report attached to the projection PR. This completes the source/buffer projection seam; ingest retention and app adoption remain separate work.
