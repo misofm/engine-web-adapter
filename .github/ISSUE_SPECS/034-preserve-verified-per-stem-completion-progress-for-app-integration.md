@@ -25,3 +25,9 @@ Use existing storage fixtures to prove one source completes while another is hel
 Gap demonstrated by adapter store.ts aggregate emission after runBounded, app gate-machine ingestAdapter marking all rows together, and existing browser9c/9d predicates. Read-only record /private/tmp/dx101-per-source-proof-gap.md. This issue is the smallest adapter correction required to preserve the already-approved app behavior; no unrelated browser tooling is included. Matching GitHub issue number must be confirmed before implementation.
 
 Matching GitHub issue: misofm/engine-web-adapter#34; number and title confirmed before implementation. Root approves the frozen scope and gates.
+
+## Source checkpoint evidence
+
+The new required-identity/byte-count source-ready variant is emitted after awaited #ensure, including verified final content and persisted opening ownership. Cancellation is checked immediately before and after the callback. Aggregate ready and session prefill are unchanged. Existing fixtures prove a held pin commit emits no proof, cold and warm completion while a second source is held, one event for aliased identities, no event on hash/length/pin failure, and cancellation cleanup without aggregate readiness.
+
+Typecheck and test compilation PASS; existing store/session/public-types focused suites PASS 47/47. Diff check is clean. Logs `/private/tmp/dx34-{type,compile,focused}.log`. Root checkpoints this focused-green source before documentation/full package gates and dedicated independent Astra review. No final issue PASS or app browser completion is claimed.
