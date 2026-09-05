@@ -26,6 +26,12 @@ Gap demonstrated by adapter store.ts aggregate emission after runBounded, app ga
 
 Matching GitHub issue: misofm/engine-web-adapter#34; number and title confirmed before implementation. Root approves the frozen scope and gates.
 
+## Independent review and delivery
+
+Dedicated independent Astra medium review PASS at 38b10cb8e6108b2de35585248144720b49672ffc (source c9ab9b1). Independent focused tests PASS 47/47; an additional concurrent sibling-failure scenario preserves the first verified source's cache bytes, releases all opening pins, emits no aggregate ready and returns the sibling error. Full author checks PASS 148/148 plus type/source/format/decoder/build/package policy. README and evidence match the reviewed temporal ownership contract. Review record `/private/tmp/dx-34-astra-medium-review.md`.
+
+The adapter event capability is complete; app #101 still owns package adoption, per-row mapping and browser recovery qualification. No app completion, publication or deployment is claimed. Root pushes this evidence and synchronizes/ closes issue #34 in the same workflow.
+
 ## Source checkpoint evidence
 
 The new required-identity/byte-count source-ready variant is emitted after awaited #ensure, including verified final content and persisted opening ownership. Cancellation is checked immediately before and after the callback. Aggregate ready and session prefill are unchanged. Existing fixtures prove a held pin commit emits no proof, cold and warm completion while a second source is held, one event for aliased identities, no event on hash/length/pin failure, and cancellation cleanup without aggregate readiness.
