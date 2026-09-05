@@ -128,9 +128,10 @@ export class VerifiedStemStore implements StemStore {
 
     // Independent openings own independent pins, even when caller lease IDs repeat.
     const pin = `session:${this.#instanceId}:${leaseId}:${randomId()}`;
-    const releaseLock = await this.#holdPinLock(pin, options.signal);
+    let releaseLock: (() => Promise<void>) | undefined;
     let pinned = false;
     try {
+      releaseLock = await this.#holdPinLock(pin, options.signal);
       await this.#mutateIndex((index) => {
         for (const stem of unique) {
           const row = index.stems[stem.identity];
@@ -148,7 +149,7 @@ export class VerifiedStemStore implements StemStore {
       return new VerifiedStemSessionLease(this, leaseId, pin, declared, releaseLock);
     } catch (error) {
       try { if (pinned) await this.release(pin, declared); }
-      finally { await releaseLock(); }
+      finally { await releaseLock?.(); }
       if (options.signal?.aborted || isAbort(error)) {
         throw new EngineWebAdapterError("stem.cancelled", "Stem session open was cancelled", {}, error);
       }

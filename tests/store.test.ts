@@ -539,6 +539,41 @@ test("cancellation racing pin persistence rolls back only its own pin and releas
   }
 });
 
+test("abort before lifetime pin lock grant retains typed cancellation without persisting ownership", async () => {
+  const { item, backend } = seededCache(["offline:keep"]);
+  const before = backend.files.get("index.json")!.slice();
+  const controller = new AbortController();
+  const waiting = deferred<void>();
+  const proceed = deferred<void>();
+  const locks = new TestLocks();
+  let pinGranted = false;
+  const provider: WebLockProvider = {
+    async request(name, options, callback) {
+      if (name.includes(":pin:")) {
+        waiting.resolve();
+        await proceed.promise;
+        options.signal?.throwIfAborted();
+        pinGranted = true;
+      }
+      return locks.request(name, options, callback);
+    },
+    query: () => locks.query(),
+  };
+  const opening = new VerifiedStemStore({ backend, locks: provider }).openSession({
+    leaseId: "pre-grant", stems: [requirement("source", item.identity, item.bytes.length)],
+    resolver: new MemoryStemResolver({}), signal: controller.signal,
+  });
+  await waiting.promise;
+  const reason = new Error("caller cancellation reason");
+  controller.abort(reason);
+  proceed.resolve();
+  await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError
+    && error.code === "stem.cancelled" && error.cause === reason);
+  assert.equal(pinGranted, false);
+  assert.deepEqual(backend.files.get("index.json"), before);
+  assert.deepEqual((await locks.query()).held, []);
+});
+
 test("prior adapter and historical app index clients serialize pin mutations in fixed order", async () => {
   for (const legacy of ["miso:engine-web:v1:index", "miso:stem-store:v1:miso-stems-v1:index"]) {
     const { item, backend, row } = seededCache();
