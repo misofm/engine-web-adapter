@@ -188,6 +188,31 @@ override reads. The existing ring control exports are SDK re-exports. Digests,
 admission width, the decoder pool and adapter Worker protocols remain internal;
 PCM ring arithmetic is owned by the SDK.
 
+## Shared cache ownership
+
+`OpfsStemStore` accepts `folderName` so an application can continue using its
+existing version-1 cache. `store.read(identity)` returns its stored Blob;
+`await store.setOfflinePin(identity, pinId, true)` adds durable `offline:<pinId>`
+intent, and `false` removes only that pin. Repeating the same operation is a
+no-op. Adding a missing identity rejects with `stem.not_found`; removing a
+missing pin does nothing. Persistence failures reject.
+
+Each `openSession` owns a unique session pin even when caller `leaseId` values
+repeat. Closing one lease leaves every other session and offline pin intact.
+Failed close persistence retains ownership and can be retried. Pinning never
+skips byte-count or digest verification, and successful repair retains pins.
+
+For cache overlap, mutations take the prior adapter's global resource lock
+first (`miso:engine-web:v1:index` or `:stem:<digest>`), then the historical
+folder resource lock (`miso:stem-store:v1:<folder>:index` or
+`:ingest:<digest>`). Ingest may acquire index locks; index work never acquires
+ingest locks. Each lease also holds its historical folder-qualified
+`:pin:<session-pin>` lifetime lock so existing app recovery recognizes it.
+Recovery preserves ambiguous session pins and offline pins; it leaves the
+historical `staging/` directory alone. Explicit unsupported index versions
+refuse with `stem.corrupt` before recovery changes any file. This API does not
+perform quota eviction.
+
 ## Verification
 
 `npm run test:browser` builds a fresh consumer from the packed tarball and runs
@@ -205,3 +230,24 @@ browser without OPFS handles is refused with a typed `capability.opfs` error
 carrying a remedy. It needs a Chromium binary plus
 `node node_modules/playwright-core/cli.js install webkit`, so like the browser
 gates above it is not part of `npm run check`.
+
+## Source spectrum and buffer diagnostics
+
+`session.observeSource(sourceId)` returns an independent read-only source observer with
+`sampleRateHz`, `channels`, `pull(callback, maximumChunks?)` and `close()`. The callback receives
+the SDK's `PcmSourceChunk`: metadata and planar scratch are borrowed until return, and `frames`
+bounds valid samples. Keep FFT and display work in the app. Pull is bounded (default at most 32
+chunks, explicit integer 1–32), skips missed/reused data and never consumes audio. Close the
+observer when the focused source view deactivates; session close also closes every observer.
+Unknown IDs refuse with `stem.not_found` and sourceId details; calls on closed sessions refuse
+with `session.closed`. A previously closed observer's pull returns zero.
+
+`session.feedDiagnostics()` returns source-ID keyed SDK counter records and buffer allocations:
+actual feed SAB `ringBytes`, host `engineMemoryBytes`, and `observationBytes` for reusable scratch
+owned by one counter observer per source plus each open source observer. Counter observers are
+reused across snapshots. `allocation.pump` contains `windowFrames` and the Worker-reported
+`maximumWindowBytes`; a custom pump without allocation facts returns `null`. The default pump
+retains its exact requested window (4096 frames by default) and validates initialization bounds.
+These are bounded buffer facts, not JS-object/browser-heap measurements or an atomic multiword
+snapshot. The app owns diagnostic aggregation; opening still verifies/stores all PCM and prefills
+before ready.

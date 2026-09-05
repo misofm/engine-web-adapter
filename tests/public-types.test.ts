@@ -1,6 +1,7 @@
 import test from "node:test";
 
-import type { EngineWebSessionOptions } from "../src/index.js";
+import type { EngineWebSessionOptions, EngineWebSession, SourceObservation, FeedDiagnostics, PumpAllocation } from "../src/index.js";
+import type { VerifiedStemStore, OpfsStemStore, StemIdentity } from "../src/stems/index.js";
 import type { StemResolver } from "../src/stems/index.js";
 import type { CommandReport } from "@misofm/engine";
 import type { EngineWebConsole } from "../src/session-types.js";
@@ -32,3 +33,25 @@ function voidReceiptProbe(strictConsole: EngineWebConsole): Promise<void> {
 void [strictReceiptProbe, voidReceiptProbe];
 
 test("public session input union compiles", () => undefined);
+
+function cachePins(store: VerifiedStemStore | OpfsStemStore, identity: StemIdentity): [Promise<Blob>, Promise<void>] {
+  return [store.read(identity), store.setOfflinePin(identity, "library", true)];
+}
+void cachePins;
+
+function sourceProjection(session: EngineWebSession): [SourceObservation, FeedDiagnostics, PumpAllocation | null] {
+  const observation = session.observeSource("source");
+  observation.pull((chunk) => {
+    const generation: bigint = chunk.generation;
+    const frames: number = chunk.frames;
+    const planes: readonly Float32Array[] = chunk.planes;
+    // @ts-expect-error SDK borrowed metadata is readonly.
+    chunk.frames = 0;
+    void [generation, frames, planes];
+  }, 2);
+  const diagnostics = session.feedDiagnostics();
+  // @ts-expect-error projected sources are readonly.
+  diagnostics.sources.push({});
+  return [observation, diagnostics, diagnostics.allocation.pump];
+}
+void sourceProjection;

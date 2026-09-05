@@ -1,6 +1,7 @@
 import { createPumpWorker } from "../assets.js";
 import type { AdapterAssetOverrides } from "../assets.js";
 import { EngineWebAdapterError } from "../errors.js";
+import type { PumpAllocation } from "../session-types.js";
 import type { PcmPumpSource } from "./pump.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "./worker-protocol.js";
 import type { StemSessionLease } from "./types.js";
@@ -19,6 +20,9 @@ export class PcmPumpWorkerClient {
   readonly #onWorkerError = (event: ErrorEvent) => this.#terminate(event.error ?? new Error(event.message));
   readonly #onMessageError = () => this.#terminate(new EngineWebAdapterError("session.open", "PCM pump Worker message could not be cloned"));
   readonly #requestDeadlineMs: number;
+  #allocation!: PumpAllocation;
+  get allocation(): PumpAllocation { return this.#allocation; }
+
   #detachAbort: (() => void) | undefined;
   #failureReason: unknown;
   #requestId = 1;
@@ -50,6 +54,8 @@ export class PcmPumpWorkerClient {
     if (!Number.isSafeInteger(deadline) || deadline <= 0) throw new RangeError("requestDeadlineMs must be positive");
     const client = new PcmPumpWorkerClient(worker, deadline);
     try {
+      const windowFrames = options.windowFrames ?? 4096;
+      if (!Number.isSafeInteger(windowFrames) || windowFrames <= 0) throw new RangeError("windowFrames must be positive");
       options.signal?.throwIfAborted();
       if (options.signal !== undefined) {
         const abort = () => client.#terminate(options.signal?.reason ?? new DOMException("PCM pump Worker aborted", "AbortError"));
@@ -63,11 +69,11 @@ export class PcmPumpWorkerClient {
       }
       options.signal?.throwIfAborted();
       const requestId = client.#next();
-      await client.#request({
+      const reply = await client.#request({
         type: "initialize",
         requestId,
         sources: options.sources.map((source) => ({ ...source, blob: blobs.get(source.identity)! })),
-        windowFrames: options.windowFrames ?? 4096,
+        windowFrames,
         idleMs: options.idleMs ?? 4,
         generation: options.generation ?? 1n,
       });
@@ -75,6 +81,14 @@ export class PcmPumpWorkerClient {
       // later in that same task, before this async continuation runs.
       client.#throwIfTerminated();
       options.signal?.throwIfAborted();
+      if (reply.type !== "initialized" || !reply.bounds ||
+          !Number.isSafeInteger(reply.bounds.windowBytes) || reply.bounds.windowBytes < 0 ||
+          (options.sources.length > 0 && reply.bounds.windowBytes === 0) ||
+          !Number.isSafeInteger(reply.bounds.ringBytes) ||
+          reply.bounds.ringBytes !== options.sources.reduce((bytes, source) => bytes + source.ring.byteLength, 0)) {
+        throw new EngineWebAdapterError("session.open", "PCM pump Worker returned invalid initialization bounds");
+      }
+      client.#allocation = Object.freeze({ windowFrames, maximumWindowBytes: reply.bounds.windowBytes });
       return client;
     } catch (error) {
       client.#terminate(error);

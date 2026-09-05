@@ -1,0 +1,51 @@
+# Expose existing source observation and buffer diagnostics to app consumers
+
+## Existing app behavior and ownership
+
+App#101 needs its existing focused input-source spectrum and feed/buffer diagnostics. Reviewed SDK#434 supplies a bounded read-only observer and existing wire counters. Adapter owns mapping compiled source IDs to feed rings and pump allocations; app keeps FFT/display and diagnostic aggregation. Expose these facts without private app ring arithmetic, new telemetry, graph taps or a diagnostics framework.
+
+## Minimal public contract
+
+Add EngineWebSession.observeSource(sourceId): SourceObservation with sampleRateHz, channels, pull(consume:(chunk:PcmSourceChunk)=>void,maximumChunks?:number):number and close():void. Validate source ID; unknown source uses existing stem.not_found with sourceId detail, closed session uses session.closed. Delegate to a fresh SDK observer for independent cursors, track lifetime, and close all on session close. Callback planes remain borrowed and frames is authoritative. App retains its2048 FFT and focused-view activation.
+
+Add EngineWebSession.feedDiagnostics() returning a read-only snapshot {sources: readonly (Msb1RingCounters & {sourceId:string})[], allocation:{sources:number,ringBytes:number,engineMemoryBytes:number,observationBytes:number,pump:null|{windowFrames:number,maximumWindowBytes:number}}}. Read counters through SDK observers, never duplicate offsets or ring arithmetic. Reuse one counter observer per source; do not create them per snapshot. Include their fixed reusable scratch buffers plus registered source observers honestly in observationBytes (channels*quantum*4 per observer), so this small duration-independent allocation is visible rather than hidden. Close/release adapter-owned observer references at session cleanup. Do not claim JS objects, browser heap or atomic multiword snapshots are measured by this buffer projection.
+
+Extend existing EnginePump with optional readonly allocation:{windowFrames,maximumWindowBytes}. Default PcmPumpWorkerClient retains and validates its existing initialized bounds reply and exact requested/default windowFrames; wrong reply/invalid bounds fails with owned cleanup. Existing protocol already carries windowBytes/ringBytes, so no new messages/worker protocol needed. Actual feed SAB byteLength sum and host.memoryBytes are authoritative. A custom pump with no allocation returns null; never fabricate zeros/default estimates. Preserve all startup/prefill/play/seek/close behavior.
+
+## Scope and provenance
+
+Start isolated codex/dx-app-projections from reviewed adapter#24 +#25. Consume reviewed SDK#434 source8a19a848 archive /private/tmp/dx-reviewed-sdk434/misofm-engine-0.1.0.tgz SHA2565694c21f1e4eb99f6366d7bcc0330f0af06744768810edc3cc6e0e186df09488 using local no-save install. Preserve dependency metadata until exact vendored app adoption; no fake registry version. Update source provenance/NOTICE only to actual SDK ownership as needed.
+
+Allowed src/session.ts, src/session-types.ts, src/index.ts, src/stems/worker-client.ts, src/provenance.ts/NOTICE, README, existing session/pump-worker/public-type tests and packed browser/package gate only for narrow assertions, this spec. No store/storage/decoder/ingest changes (quota#27 independent), no SDK source edits, no generated artifact, ring/prelude or schema change. Per-open ingest retention remains its own bounded slice.
+
+## Evidence
+
+Existing tests prove source mapping, unknown/closed errors, independent bounded observer cursors and session-close cleanup; compare observer/counters against actual SDK rings, never a copied layout. Allocation snapshot uses actual odd-source mono/stereo SAB sizes, default pump requested frames/reported bounds, and custom-pump null. Verify wrong/invalid initialized reply cleanup with existing worker fixture. Read-only observation cannot move playback indices or change prefill ordering. Run type/focused first, pause rootcheckpoint; full npm run check and existing packed browser playback/seek/close with source observation afterward. No new matrix/framework or performance benchmark. Astra medium implements; a dedicated independent Astra medium reviewer checks final source/evidence.
+
+Matching issue misofm/engine-web-adapter#29.
+
+## Attempt 1 focused checkpoint
+
+Astra adds the public SourceObservation, FeedDiagnostics and PumpAllocation projections. Sessions reuse one SDK counter observer per compiled source and create independent observers for each source subscription; snapshots count both kinds of scratch, actual SAB bytes and host.memoryBytes. Closing observations releases their allocation count; session cleanup closes all remaining observers. Existing startup/prefill and lifecycle sequencing remain intact. Default pump clients retain requested/default windowFrames and the initialized Worker window bound, validate reply kind and safe nonnegative bounds (positive window for nonempty sources), and compare reported ringBytes with actual source SAB sizes. Invalid replies terminate and detach owned listeners before rejection; custom pumps without facts project null.
+
+Reviewed SDK434 archive hash matched the frozen digest. Its local no-save/no-lock/offline installation used an isolated temporary npm prefix, then the installed SDK package was copied into this checkout's own dependencies; package.json/package-lock.json are unchanged. The initial direct install could not write the default npm cache, and whole-checkout offline resolution requested uncached registry metadata; no other checkout or SDK source was changed. NOTICE/provenance now name the consumed 8a19a848 SDK source and exact archive.
+
+`npm run typecheck`: PASS (`/private/tmp/dx29-typecheck.log`). Build + existing session/pump/public-type suites: PASS, 27 tests (`/private/tmp/dx29-build.log`, `/private/tmp/dx29-focused.log`). The three-source mono/stereo fixture compares counters with real SDK observers, preserves all shared bytes during observation, traps counter-snapshot scratch allocations, and proves observer cleanup. Pump fixtures cover requested/default frames, retained reported bounds, invalid replies and owned cleanup. The existing packed consumer/browser gate now includes narrow source observation and buffer assertions; full/package/browser validation follows root's exact-path checkpoint and is not yet claimed.
+
+### Exact provenance test update
+
+The existing foundation test pins the prior reviewed SDK source/archive, so it fails after the authorized consumer update to SDK434. Allow tests/foundation.test.ts only to update those two existing expected source/archive literals to the exact consumed8a19a848 archive recorded above. No test weakening or unrelated foundation change.
+
+## Attempt 1 final evidence
+
+Production checkpoint `604afbe`; narrow provenance-fixture amendment `7db74f2`. Initial full check had 137 passes and one stale foundation expectation for the previous SDK commit (`/private/tmp/dx29-check.log`). The authorized correction refreshes only that existing expected commit literal to the consumed SDK434 revision. No production code changed after the focused checkpoint.
+
+- `npm run check`: PASS, 138 tests; format, types/source policy, decoder validation, build and package checks all pass (`/private/tmp/dx29-check-final.log`).
+- `npm run check:package`: PASS; 150 packed files (`/private/tmp/dx29-package.log`), also repeated as the required final full-check step.
+- `npm run test:browser`: PASS in actual Google Chrome 152.0.7977.76 with the existing packed fixture (`/private/tmp/dx29-browser.log`). Extracted public consumer types/imports pass. The source observer delivers one bounded chunk before playback, reports correct shape and 1024 observation bytes (counter plus source observer), and returns zero after session close. Actual SAB/host bytes and the default pump's 4096-frame reported allocation are checked. Existing playback submits 32 chunks, applies one seek, closes cold/warm sessions, keeps refusal/torn/error counters zero, and warm reopen adds no FLAC workers/network requests. The initial sandbox denied localhost binding; the same existing gate passed with authorized localhost access, without source changes.
+
+Final diff check is clean; only the authorized foundation literal and this evidence remain for the final checkpoint. Ready for dedicated independent Astra review; no review PASS or issue closure is claimed here.
+
+## Dedicated Astra medium PASS
+
+Independent review at ae45870 passes types, 27 focused tests, package checks, and actual packed Chromium observation, playback, seek, and close. The SDK archive matches the frozen digest; the browser observed one chunk, 1024 observation bytes, 32 submissions and one seek, with no additional warm fetches or workers. Report attached to the projection PR. This completes the source/buffer projection seam; ingest retention and app adoption remain separate work.

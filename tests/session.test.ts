@@ -682,3 +682,78 @@ test("SDK host defaults wait for verified lease, forward URLs and install the SD
   assert.deepEqual(context.modules, ["chosen-feed", "disposed"]);
   assert.ok(events.indexOf("context.close") < events.indexOf("lease.close"));
 });
+
+test("source observation maps compiled sources and reports owned buffers without consuming audio", async (t) => {
+  const { Msb1RingObserver, Msb1RingWriter } = await import("@misofm/engine/browser");
+  const declarations: DeclaredStemSource[] = [
+    { id: "z", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
+    { id: "a", spec: { channels: 2, bitDepth: 24, frames: 4, content: IDENTITY_Z } },
+    { id: "m", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
+  ];
+  const ordered = [declarations[1]!, declarations[2]!, declarations[0]!];
+  for (const allocation of [undefined, { windowFrames: 17, maximumWindowBytes: 170 }]) {
+    const rings: SharedArrayBuffer[] = [];
+    const events: string[] = [];
+    const session = await openEngineWebSession({
+      ...baseOptions(), sources: declarations, document: documentFor(declarations), console: false,
+      capabilityScope: capabilities(), createContext: () => fakeContext(events),
+      scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+        backend: "simd128", tracks: [], sources: ordered.map((source) => ({ id: source.id, channels: source.spec.channels, frames: 4n })) }),
+      store: { async open() { return this; }, async openSession() {
+        return { leaseId: "lease", stems: [], async read() { throw new Error("custom pump owns reads"); }, async close() {} };
+      } },
+      createHost: async () => ({ node: { connect() {}, disconnect() {} }, memoryBytes: 123456, async dispose() {} }) as unknown as BrowserEngine["host"],
+      createAttachNode: () => ({ port: { postMessage() {} }, disconnect() {} }),
+      createPump: async ({ sources }) => {
+        assert.deepEqual(sources.map((source) => source.sourceId), ["a", "m", "z"]);
+        for (const [index, source] of sources.entries()) {
+          rings.push(source.ring);
+          const writer = new Msb1RingWriter(source.ring);
+          writer.engage(1n);
+          for (let chunk = 0; chunk < 2; chunk++) {
+            const planes = writer.reserve(3)!;
+            for (const [channel, plane] of planes.entries()) plane.set([index * 10 + channel + chunk, 2, 3]);
+            writer.commit({ generation: 1n, startFrame: BigInt(chunk * 3), frames: 3, endOfRegion: chunk === 1 });
+          }
+        }
+        return { ...(allocation === undefined ? {} : { allocation }), async seekFrames() { return 2n; }, close() {} };
+      },
+    });
+    assert.equal(session.state, "ready");
+    const before = rings.map((ring) => Buffer.from(new Uint8Array(ring)));
+    const first = session.observeSource("a"), second = session.observeSource("a"), mono = session.observeSource("z");
+    assert.equal(first.channels, 2); assert.equal(mono.channels, 1); assert.equal(first.sampleRateHz, 48_000);
+    let borrowed: Float32Array | undefined;
+    assert.equal(first.pull((chunk) => { borrowed = chunk.planes[0]; assert.equal(chunk.startFrame, 0n); assert.deepEqual([...chunk.planes[1]!], [1, 2, 3, 0]); }, 1), 1);
+    assert.equal(first.pull((chunk) => { assert.equal(chunk.planes[0], borrowed); assert.equal(chunk.startFrame, 3n); assert.equal(chunk.frames, 3); }, 1), 1);
+    assert.equal(second.pull((chunk) => assert.equal(chunk.startFrame, 0n), 1), 1);
+    assert.equal(mono.pull((chunk) => assert.equal(chunk.planes[0]![0], 20), 1), 1);
+    assert.throws(() => first.pull(() => {}, 33), RangeError);
+    assert.throws(() => session.observeSource("missing"), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.not_found" && error.details.sourceId === "missing");
+    const snapshot = session.feedDiagnostics();
+    assert.deepEqual(snapshot.sources, rings.map((ring, index) => {
+      const sdk = new Msb1RingObserver(ring); const counters = sdk.counters(); sdk.close();
+      return { sourceId: ordered[index]!.id, ...counters };
+    }));
+    assert.deepEqual(snapshot.allocation, { sources: 3, ringBytes: rings.reduce((bytes, ring) => bytes + ring.byteLength, 0),
+      engineMemoryBytes: 123456, observationBytes: (4 + 2 + 2 + 1) * 4 * 4, pump: allocation ?? null });
+    const constructor = t.mock.method(globalThis, "Float32Array", new Proxy(Float32Array, { construct() { throw new Error("counter snapshot constructed an observer"); } }));
+    try { assert.deepEqual(session.feedDiagnostics(), snapshot); assert.deepEqual(session.feedDiagnostics(), snapshot); }
+    finally { constructor.mock.restore(); }
+    first.close(); first.close();
+    assert.equal(first.pull(() => assert.fail("closed source observer")), 0);
+    assert.equal(session.feedDiagnostics().allocation.observationBytes, (4 + 2 + 1) * 4 * 4);
+    for (const [index, ring] of rings.entries()) assert.deepEqual(Buffer.from(new Uint8Array(ring)), before[index]);
+    const originalClose = Msb1RingObserver.prototype.close;
+    const closed = new Set<object>();
+    const closeHook = t.mock.method(Msb1RingObserver.prototype, "close", function (this: InstanceType<typeof Msb1RingObserver>) { closed.add(this); originalClose.call(this); });
+    try { await session.close(); await session.close(); }
+    finally { closeHook.mock.restore(); }
+    assert.equal(closed.size, 5, "three counter observers and two remaining source observers are released");
+    assert.equal(second.pull(() => assert.fail("session-closed observation")), 0);
+    assert.equal(mono.pull(() => assert.fail("session-closed observation")), 0);
+    for (const call of [() => session.observeSource("a"), () => session.feedDiagnostics()]) {
+      assert.throws(call, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+    }
+  }
+});

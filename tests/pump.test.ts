@@ -366,3 +366,39 @@ function deferred<T>() {
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+test("pump client retains requested window and validates initialized allocation with owned cleanup", async () => {
+  const shared = ring("bounds", 1, 4, 2);
+  const source = { sourceId: "bounds", identity: IDENTITY, channels: 1 as const, bitDepth: 16 as const, frames: 4, ring: shared };
+  const lease = { read: async () => new Blob([new Uint8Array(8)]) };
+  for (const windowFrames of [undefined, 17]) {
+    const worker = new FakePumpWorker(false, (message, self) => {
+      if (message.type === "initialize") {
+        assert.equal(message.windowFrames, windowFrames ?? 4096);
+        self.reply({ type: "initialized", requestId: message.requestId, bounds: { windowBytes: 12345, ringBytes: shared.byteLength } });
+      } else if (message.type === "stop") self.reply({ type: "stopped", requestId: message.requestId });
+    });
+    const client = await PcmPumpWorkerClient.create({ lease, sources: [source], worker, ...(windowFrames === undefined ? {} : { windowFrames }) });
+    assert.deepEqual(client.allocation, { windowFrames: windowFrames ?? 4096, maximumWindowBytes: 12345 });
+    assert.equal(Object.isFrozen(client.allocation), true);
+    await client.close();
+  }
+  const replies = [
+    { type: "stopped" }, { type: "initialized" },
+    ...[-1, 0, 1.5, Infinity, NaN].map((windowBytes) => ({ type: "initialized", bounds: { windowBytes, ringBytes: shared.byteLength } })),
+    ...[-1, 1.5, shared.byteLength + 1].map((ringBytes) => ({ type: "initialized", bounds: { windowBytes: 8, ringBytes } })),
+  ];
+  for (const reply of replies) {
+    const worker = new FakePumpWorker(false, (message, self) => {
+      if (message.type === "initialize") self.reply({ ...reply, requestId: message.requestId } as PumpWorkerResponse);
+    });
+    await assert.rejects(PcmPumpWorkerClient.create({ lease, sources: [source], worker }), (error: unknown) => {
+      assert.equal(worker.terminateCount, 1);
+      assert.ok([...worker.listeners.values()].every((listeners) => listeners.size === 0));
+      return error instanceof EngineWebAdapterError && error.code === "session.open";
+    });
+  }
+  const worker = new FakePumpWorker();
+  await assert.rejects(PcmPumpWorkerClient.create({ lease, sources: [source], worker, windowFrames: 0 }), RangeError);
+  assert.equal(worker.terminateCount, 1);
+});

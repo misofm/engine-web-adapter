@@ -3,6 +3,8 @@ import type {
   AudioContextLike,
   BrowserBootPolicy,
   BrowserEngine,
+  Msb1RingCounters,
+  PcmSourceChunk,
 } from "@misofm/engine/browser";
 
 import type { AdapterAssetOverrides } from "./assets.js";
@@ -26,7 +28,33 @@ export interface EngineAudioContext extends AudioContextLike {
   suspend(): Promise<void>;
 }
 
+export interface PumpAllocation {
+  readonly windowFrames: number;
+  readonly maximumWindowBytes: number;
+}
+
+/** Source PCM is borrowed until the callback returns; only frames samples are valid. */
+export interface SourceObservation {
+  readonly sampleRateHz: number;
+  readonly channels: number;
+  pull(consume: (chunk: PcmSourceChunk) => void, maximumChunks?: number): number;
+  close(): void;
+}
+
+/** Buffer facts only; excludes JS objects/browser heap and is not a multiword atomic snapshot. */
+export interface FeedDiagnostics {
+  readonly sources: readonly (Msb1RingCounters & { readonly sourceId: string })[];
+  readonly allocation: {
+    readonly sources: number;
+    readonly ringBytes: number;
+    readonly engineMemoryBytes: number;
+    readonly observationBytes: number;
+    readonly pump: PumpAllocation | null;
+  };
+}
+
 export interface EnginePump {
+  readonly allocation?: PumpAllocation;
   seekFrames(frame: number | bigint): Promise<bigint>;
   close(): Promise<void> | void;
 }
@@ -165,6 +193,8 @@ export interface EngineWebSession {
   meters(listener: (update: MeterUpdate) => void): Promise<() => void>;
   /** Subscribe to the render-telemetry feed. Resolves to an unsubscribe function. */
   telemetry(listener: (update: TelemetryUpdate) => void): Promise<() => void>;
+  observeSource(sourceId: string): SourceObservation;
+  feedDiagnostics(): FeedDiagnostics;
   play(): Promise<void>;
   pause(): Promise<void>;
   seekFrames(frame: number | bigint): Promise<void>;
