@@ -23,7 +23,7 @@ Support the package FLAC resolver plus package `VerifiedStemStore`/`OpfsStemStor
 - `src/stems/types.ts`, `src/stems/store.ts`: add only an optional collector to existing `StemStore.openSession` options. The package store acknowledges participation internally, initializes the snapshot for the package FLAC path, owns per-stem admission completion, and releases handed-off decoded ownership. A custom store that ignores the option never acknowledges participation, so its snapshot stays unknown. Use internal registration of the package resolver to distinguish it from arbitrary injected producers; the session's expectation-checking wrapper must retain that registration. No public capability registry or backend special case.
 - `src/stems/flac-delivery.ts`, `src/stems/flac-resolver.ts`: instrument existing physical buffer ownership sites below, including actual queue disposal. No download/decode algorithm change.
 - `src/stems/flac-admission.ts`: expose the existing reservation facts through the collector and explicitly itemize the in-flight store and OPFS clone allowances from existing headroom. Keep admission sizing and the 8 MiB reservation unchanged.
-- Extend existing `tests/flac-delivery-worker.test.ts`, `tests/store.test.ts`, `tests/session.test.ts`, and `tests/public-types.test.ts` only where their existing fixtures exercise the corresponding contract. README documents owned main-realm bytes versus fixed reservations. No pool, Worker, codec, storage protocol, SDK, Rust, generated artifact, or app implementation change in this first slice.
+- Extend existing `tests/flac-delivery-worker.test.ts`, `tests/store.test.ts`, `tests/session.test.ts`, and `tests/public-types.test.ts`, plus the existing exact reservation assertion in `tests/native-flac-foundation.test.ts`, only where their existing fixtures exercise the corresponding contract. README documents owned main-realm bytes versus fixed reservations. No pool, Worker, codec, storage protocol, SDK, Rust, generated artifact, or app implementation change in this first slice.
 
 ## Ownership transitions that must be implemented
 
@@ -62,3 +62,62 @@ There is an explicit runtime unknown: the protocol maximum for two 384 KiB block
 This closes only per-open ingest ownership observability. Allocator export telemetry, worker heartbeats, profiling, metadata registries, progress-as-memory, protocol changes, and additional matrices remain out of scope.
 
 Matching issue: misofm/engine-web-adapter#32.
+
+
+## Attempt 1 implementation and evidence
+
+Astra medium implemented the frozen ownership slice; root source checkpoint
+`92a5fdb` contains the collector, session/store threading, physical range and
+PCM ownership sites, and focused tests. Root approved updating the existing
+reservation assertion in `tests/native-flac-foundation.test.ts` because the
+specified in-flight and OPFS clone allowances replace its old component list
+and headroom assertion. No admission envelope, app memory ceiling, Worker
+protocol, allocator telemetry, backend, or generated SDK artifact changed.
+
+The collector binds before asynchronous session boot. Only registered package
+FLAC producers paired with the package store initialize it; the expectation
+wrapper preserves that registration. A per-open producer binding retains the
+existing shared pool/admission, without sharing counters between opens.
+Mutable numeric state and decoded ownership live in WeakMaps; snapshots expose
+no retained buffer. Each logical two-pass `#ensure` acquires its active marker
+at the first admitted verification callback and releases it once in its final
+cleanup. Quota reclamation and lock ordering are unchanged.
+
+Physical range attempt finalizers release failed/retried allocations; successful
+ranges retain ownership through scoped parsing or the input-slot copy. PCM
+queue disposal removes actual references. The same decoded backing-buffer
+ownership follows the view into the store and releases in the per-read finally
+after the awaited write deadline settles. Unconsumed streams are cancelled on
+store failure so queued ownership drains, including when the physical Worker
+already completed. Peaks are never cleared centrally on session rejection.
+
+Validation in `/private/tmp/miso-dx-adapter-app-ready`:
+
+- `npm run typecheck` and `./node_modules/.bin/tsc -p tsconfig.test.json`: PASS.
+- Existing store/session/delivery/public-types/native-foundation focused files:
+  **82 PASS**, `/private/tmp/dx32-focused.log`. The extended two-credit fixture
+  observes exactly three received fixture bytes: two queued buffers plus one
+  awaiting a deferred store write. It observes active=1 after the physical
+  Worker releases its slot, then live counters drain with peaks retained on
+  success, cancellation, and write rejection. The physical retry fixture
+  observes deliveredPeakBytes=42 rather than retaining failed or parsed ranges.
+  Session evidence covers warm verification while open is pending, independent
+  collectors and limits, cancellation before admission, known empty-session
+  zeroes, unknown custom paths, and refusal of collector reuse. Public snapshot
+  methods, fields, and reservation components are readonly.
+- `npm run check` at `92a5fdb`: PASS, including format/type/source policy,
+  decoder audit, all **145 tests**, and the existing fresh-consumer package
+  validation. Log: `/private/tmp/dx32-check.log`.
+- Dependencies were copied into this checkout and populated with the exact
+  reviewed SDK #434 archive named above; its SHA256 matched
+  `5694c21f1e4eb99f6366d7bcc0330f0af06744768810edc3cc6e0e186df09488`.
+  No SDK rebuild, package metadata edit, or registry publication occurred.
+
+The configured component sum is 4,198,416 bytes and headroom is 4,190,192 bytes
+inside the unchanged 8,388,608-byte slot. These are reservations, not observed
+live allocations. Actual app fixture peaks, memory cell 10, and the separate
+origin-owned heap discriminator remain app #101 integration evidence; this
+adapter gate does not certify their PASS or alter their ceilings.
+
+Final README/spec evidence awaits root checkpoint and one dedicated independent
+Astra medium review. No independent approval is claimed yet.

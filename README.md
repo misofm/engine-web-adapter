@@ -168,10 +168,10 @@ asset fields without discarding the other common fields; the low-level
 
 ## Bounds and integrity
 
-- Delivery chunks and the sole compressed input slot are each 256 KiB.
+- Exact HTTP range buffers and the sole compressed input slot are each at most 256 KiB.
 - Canonical output blocks are at most 384 KiB.
 - Each Worker has one synchronous decoder call and two decoded-output credits.
-- One active FLAC Worker reserves 8 MiB of package-owned memory.
+- Each admitted FLAC slot has a conservative 8 MiB ingest reservation.
 - The decoder memory is fixed at 2 MiB; package-owned buffers are independent of
   compressed-stem duration. Browser network, Worker, and compiled-code memory is
   opaque and excluded.
@@ -187,6 +187,54 @@ backends, the FLAC resolver, the pump, and the ring control words a `createPump`
 override reads. The existing ring control exports are SDK re-exports. Digests,
 admission width, the decoder pool and adapter Worker protocols remain internal;
 PCM ring arithmetic is owned by the SDK.
+
+## Per-open ingest diagnostics
+
+Create a collector before opening and pass it as `ingestDiagnostics`:
+
+```ts
+import { createIngestDiagnostics, openEngineWebSession } from "@misofm/engine-web-adapter";
+
+const ingestDiagnostics = createIngestDiagnostics();
+const opening = openEngineWebSession({ document, flac: { locate }, ingestDiagnostics });
+const duringOpen = ingestDiagnostics.snapshot();
+const session = await opening;
+const afterOpen = ingestDiagnostics.snapshot();
+```
+
+The collector belongs to one open invocation, including a failed invocation;
+reuse rejects. Every snapshot is a fresh readonly value. Live values drain as
+their owners finish, while peaks remain readable after ready, cancellation, or
+failure. Before the participating pipeline initializes, both `residency` and
+`reservation` are `null`. Arbitrary injected producers or stores retain that
+unknown result. Package FLAC resolvers paired with `VerifiedStemStore` or
+`OpfsStemStore` participate, including injected stores using an existing folder.
+An empty package FLAC session initializes known zero counters and its limit.
+
+`residency` contains `limit`, `deliveredBytes`, `deliveredPeakBytes`,
+`decodedBytes`, `decodedPeakBytes`, `containers`, `containersPeak`, `active`,
+and `activePeak`. Delivered bytes count actual exact-range allocations through
+parsing or copying into the input SAB, including physical retry attempts.
+Containers count distinct stems currently retaining those ranges. Decoded
+backing buffers stay counted through queueing and enqueue until the awaited
+store write settles; discarded queued buffers are released on cancellation or
+failure. Active counts admitted, unfinished stem operations, including warm
+verification and trailing writes after a decode Worker finishes.
+
+`reservation` reports fixed `components`, their `fixedBufferBytes` sum,
+`slotBytes`, `headroomBytes`, and selected `limit`. Each 8,388,608-byte slot
+includes 4,198,416 named bytes: the exact range, input SAB, fixed 2,097,152-byte
+libFLAC memory, two output credits, one 393,216-byte in-flight store write,
+one 393,216-byte OPFS write-clone allowance, and metadata/control. The remaining
+4,190,192 bytes are headroom. Admission sizing is unchanged.
+
+These live counters measure owned main-realm buffers, not allocator or total
+heap residency. Shared buffers, decoder memory, browser fetch/Blob internals,
+GC timing, and the OPFS worker-side clone are not live counters; custom storage
+backends may retain additional unknown copies. An HTTP response chunk's internal
+buffering is not bounded by the requested range. The reservation already
+includes the dynamically counted buffers: do not add the live snapshot to it
+again, or add transient ingest slots to the steady-state playing budget.
 
 ## Shared cache ownership
 
