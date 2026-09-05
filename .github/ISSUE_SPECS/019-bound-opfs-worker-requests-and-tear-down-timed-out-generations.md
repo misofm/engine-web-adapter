@@ -97,3 +97,46 @@ No other tracked path may change without amending the issue.
 ## Delivery stop
 
 Root creates and synchronizes the new numbered issue/spec, then commits that issue-only checkpoint before Luna begins. Luna stops after one coherent implementation tranche and focused evidence. Root performs the status/commit audit before Astra review. The normal three-attempt limit remains in force; quota or broader storage work requires a separate issue.
+# Adapter issue #19 — attempt 2 addendum (Sol approved)
+
+**Attempt 1 verdict:** FAIL at `acf86f5`; Astra review: `/private/tmp/dx-19-astra-review.md`.  
+**Implementer/reviewer:** Luna performs this bounded revision; Astra re-reviews attempt 2.  
+**Baseline evidence:** `npm run check` is green with 101 tests and the real packed OPFS gate is green. Preserve both.
+
+The original issue #19 contract and all eleven gates remain frozen. This revision fixes the generation race and handshake callback retention, then supplies every missing gate. It adds no storage feature.
+
+## Required production corrections
+
+1. In `OpfsWriteWorkerClient.#acquire()`, capture the generation that owns the acquire before awaiting `#ready`. Every success/failure continuation and ownership release must use that captured generation. A close/timeout may reset ownership and advance the generation; the old continuation must then be a no-op. It must never decrement `#openWriters`, reject, or tear down a replacement worker.
+2. Make the ready rejection callback one stable closure identity. Store that identity in `#readyReject`, and have the handshake's single settlement path clear it only when it still owns the field. Healthy ready, error, messageerror, timeout, explicit close, and teardown each clear their timer/listeners/callback exactly once.
+3. Keep the current client-owned request deadlines and generation checks. Do not restore an outer writer-operation race that can abandon live work. Resolve the `deadlineMs - 1` comment/behavior consistently: `open()` may retain its outer deadline for main-thread directory operations, but worker handshake/request cleanup must complete through the client before its promise rejects. Avoid depending on timer ordering as correctness.
+
+The concrete red case is `/private/tmp/dx-19-generation-repro.mjs`: pending acquire → `close()` → replacement acquire/ready → old catch. After correction, the first rejects `session.closed`, the replacement succeeds and stays active, the old worker terminates once, and the replacement is not terminated by stale cleanup.
+
+## Missing mandatory evidence to add
+
+- Replace the attempt-1 fake that suppresses events after terminate with a historical-listener fake capable of delivering late ready/request replies after termination. Track listeners, timers, posts, terminations, simulated handles, and locks explicitly.
+- Never-ready handshake: timeout rejects once, terminates once, clears pending/listeners/timer, then a new generation succeeds.
+- Late-ready handshake: historical reply is inert and cannot set support or settle/tear down the replacement.
+- No-reply and late-reply `write-open`, plus one already-open `write` or `write-close`: all same-generation pending calls reject exactly once, all physical handles/locks disappear on termination, and stale replies are inert.
+- Two concurrent writers: timeout one request, prove both writers invalidate and settle without underflow/double release; their later calls cannot post to a replacement.
+- Explicit `close()` during each of handshake, open, and write: all pending operations settle once with existing close behavior, termination occurs once, repeated close is inert, and healthy reopen starts only after teardown.
+- `VerifiedStemStore` timeout: remove only its owned staging file, publish no final/index row, preserve a pre-existing verified stem and index bytes, and retain existing `stem.read_deadline` mapping. Direct backend timeout remains `TimeoutError`; abort/close reasons remain unchanged.
+- Existing healthy sync-access, abort, concurrent writers, capability refusal, ingest/promotion, warm reopen, and last-writer worker release remain green.
+
+## Allowed paths
+
+- `.github/ISSUE_SPECS/019-bound-opfs-worker-requests-and-tear-down-timed-out-generations.md` (attempt/evidence record)
+- `src/stems/opfs-worker-client.ts`
+- `src/stems/storage.ts`
+- `tests/opfs-storage.test.ts`
+
+No worker protocol/worker edit is needed or authorized. No quota, move/promotion, manifest, hashing, backend, SDK/engine, decoder, pump, public interface, error-code, or directory-wide cleanup change.
+
+## Validation before Astra re-review
+
+Run the focused issue-19 tests including the independent generation reproducer before/after, then `npm test`, `npm run check`, and `npm run test:browser:opfs`. Attach exact counts and tested engines. Evidence must include a table for handshake/open/write timeout and close, listing settlement count, termination count, listener/timer/pending counts, handle/lock state, and replacement-generation result.
+
+Attempt 2 passes only when both Astra findings and every omitted original gate have executable evidence. Do not lower gates or treat termination behavior supplied by a fake as client proof.
+
+Root qualification update: `npm run test:browser:opfs` passed outside the sandbox on `acf86f5`, preserving packed cold ingest and warm reuse in Chromium 152 and Playwright WebKit 26.5. This does not replace missing adversarial unit evidence and is not shipping Safari/iOS qualification. Log: `/private/tmp/dx-baseline-evidence/adapter-opfs-pr20.log`. Astra attempt 1 remains FAIL until the generation race and all frozen missing gates are corrected.
