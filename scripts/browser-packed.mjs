@@ -197,7 +197,9 @@ try {
   const { createOfflineEngine } = await import("@misofm/engine/headless");
   for (const proof of result.result.seekProofs) {
     assert.equal(proof.busy, "session.busy");
-    assert.equal(proof.resumeCallsDuringSeek, 0);
+    assert.equal(proof.resumeCallsDuringSeek, proof.mode === "running" ? 1 : 0);
+    assert.equal(proof.suspendedBeforeProducer, true);
+    if (proof.mode === "running") assert.equal(proof.stateAfterSeek, "running");
     assert.equal(proof.staleOccupancy, 64);
     assert.equal(proof.internalBackpressure, 6);
     assert.equal(proof.prepared.state, "suspended");
@@ -219,7 +221,7 @@ try {
       assert.deepEqual(proof.pcm, [[...rendered.left], [...rendered.right]], `${proof.mode}: exact first target output`);
     } finally { oracle.dispose(); }
   }
-  assert.deepEqual(result.result.seekProofs.map((proof) => proof.mode), ["initial", "resumed"]);
+  assert.deepEqual(result.result.seekProofs.map((proof) => proof.mode), ["initial", "resumed", "running"]);
   assert.deepEqual(consoleErrors, []);
   const requested = [...requests.entries()];
   assert.ok(requested.some(([path, mime]) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm") && mime === "application/wasm"), "decoder Wasm asset/MIME not observed");
@@ -344,7 +346,7 @@ async function exerciseControl(engine: any, consoleFirst: boolean) {
     meterHasMaster: last === undefined ? false : typeof last.master.peak === "number",
   };
 }
-async function exercisePausedSeek(mode: "initial" | "resumed") {
+async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
   globalThis.__seekStage = { mode, stage: "open" };
   const frames = 48_000;
   const pcm = new Uint8Array(frames * 4);
@@ -360,9 +362,16 @@ async function exercisePausedSeek(mode: "initial" | "resumed") {
     .output("seek-output")
     .route({ id: "seek-route", source: { kind: "track", trackId: "seek-track", tap: "post_matrix" },
       destination: { kind: "output_input", outputId: "seek-output" } });
+  let beforeProducerSeek = async () => {};
   const engine = await openEngineWebSession({ document: model, leaseId: "seek-" + mode, console: false,
     policy: { sourceRingFrames: 512 },
     resolver: { async resolve() { return { stream: new Blob([pcm]).stream(), canonicalBytes: pcm.length }; } },
+    createPump: async (options) => {
+      const pump = await PcmPumpWorkerClient.create(options);
+      return { allocation: pump.allocation,
+        async seekFrames(frame) { await beforeProducerSeek(); return pump.seekFrames(frame); },
+        close: () => pump.close() };
+    },
   });
   const context = engine.context as AudioContext;
   globalThis.__seekStage = { mode, stage: "opened" };
@@ -377,49 +386,83 @@ async function exercisePausedSeek(mode: "initial" | "resumed") {
       engine.host.node.connect(capture); capture.connect(context.destination);
       return { first, close() { engine.host.node.disconnect(capture); capture.disconnect(); } };
     };
-    if (mode === "resumed") {
+    if (mode !== "initial") {
       globalThis.__seekStage = { mode, stage: "initial-play" };
       const initial = captureNext();
-      await engine.play(); await initial.first; await engine.pause(); initial.close();
+      await engine.play();
+      const started = await initial.first;
+      if (!started.some((plane) => plane.some((sample) => sample !== 0))) throw new Error("initial playback was silent");
+      if (mode === "resumed") await engine.pause();
+      initial.close();
     }
-    const deadline = performance.now() + 2000;
-    globalThis.__seekStage = { mode, stage: "fill" };
-    while (engine.feedDiagnostics().sources[0]!.occupancy !== 64) {
-      if (performance.now() >= deadline) throw new Error("old shared queue did not fill");
-      await sleep();
-    }
-    const old = engine.feedDiagnostics().sources[0]!;
-    let nextFrame = old.submitted * 128;
+    let old: ReturnType<typeof engine.feedDiagnostics>["sources"][number];
+    let before: Awaited<ReturnType<typeof engine.host.status>>;
+    let beforeTime = 0;
+    let suspendedBeforeProducer = false;
     let internalBackpressure = 0;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const result = await engine.host.submitSource({ sourceId: "seek-source", generation: 1n,
-        startFrame: BigInt(nextFrame), sampleRateHz: 48_000, frames: 128,
-        planes: [new Float32Array(128).fill(.25), new Float32Array(128).fill(-.25)], endOfRegion: false,
-      }).catch((error) => error);
-      if (result.result === 6) { internalBackpressure = 6; break; }
-      if (result.result !== 0) throw new Error("old internal PCM admission failed: " + result.result);
-      nextFrame += 128;
-    }
-    if (internalBackpressure !== 6) throw new Error("old internal queue was not full");
-    const before = await engine.host.status(); const beforeTime = context.currentTime;
+    const fillOldQueues = async () => {
+      suspendedBeforeProducer = context.state === "suspended";
+      if (!suspendedBeforeProducer) throw new Error("adapter did not suspend before producer seek");
+      const deadline = performance.now() + 2000;
+      globalThis.__seekStage = { mode, stage: "fill" };
+      while (engine.feedDiagnostics().sources[0]!.occupancy !== 64) {
+        if (performance.now() >= deadline) throw new Error("old shared queue did not fill");
+        await sleep();
+      }
+      old = engine.feedDiagnostics().sources[0]!;
+      let nextFrame = old.submitted * 128;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const result = await engine.host.submitSource({ sourceId: "seek-source", generation: 1n,
+          startFrame: BigInt(nextFrame), sampleRateHz: 48_000, frames: 128,
+          planes: [new Float32Array(128).fill(.25), new Float32Array(128).fill(-.25)], endOfRegion: false,
+        }).catch((error) => error);
+        if (result.result === 6) { internalBackpressure = 6; break; }
+        if (result.result !== 0) throw new Error("old internal PCM admission failed: " + result.result);
+        nextFrame += 128;
+      }
+      if (internalBackpressure !== 6) throw new Error("old internal queue was not full");
+      before = await engine.host.status(); beforeTime = context.currentTime;
+    };
+    if (mode === "running") beforeProducerSeek = fillOldQueues;
+    else await fillOldQueues();
     globalThis.__seekStage = { mode, stage: "seek" };
     let resumeCalls = 0;
+    let capture: ReturnType<typeof captureNext>;
+    let prepared: { state: string; timeUnchanged: boolean; sampleUnchanged: boolean };
+    const readPreparation = async () => {
+      const after = await engine.host.status();
+      return { state: context.state, timeUnchanged: context.currentTime === beforeTime,
+        sampleUnchanged: after.nextAbsoluteSample === before.nextAbsoluteSample };
+    };
     const nativeResume = context.resume.bind(context);
-    context.resume = () => { resumeCalls++; return nativeResume(); };
+    context.resume = async () => {
+      resumeCalls++;
+      if (mode === "running") {
+        prepared = await readPreparation();
+        const observation = engine.observeSource("seek-source");
+        try {
+          if (observation.pull((chunk) => {
+            if (chunk.generation !== 2n || chunk.startFrame !== 10_000n) throw new Error("automatic resume preceded target PCM");
+          }, 1) !== 1) throw new Error("automatic resume preceded prefill");
+        } finally { observation.close(); }
+        // Arm only at the actual suspended resume boundary, so earlier audio cannot satisfy it.
+        capture = captureNext();
+      }
+      await nativeResume();
+    };
     const seeking = engine.seekFrames(10_000);
     let busy = "";
     try { await engine.play(); } catch (error) { busy = (error as { code?: string }).code ?? ""; }
     await seeking;
-    const after = await engine.host.status();
+    const stateAfterSeek = context.state;
     const resumeCallsDuringSeek = resumeCalls;
     context.resume = nativeResume;
-    const prepared = { state: context.state, timeUnchanged: context.currentTime === beforeTime,
-      sampleUnchanged: after.nextAbsoluteSample === before.nextAbsoluteSample };
-    const capture = captureNext();
+    if (mode !== "running") { prepared = await readPreparation(); capture = captureNext(); }
     globalThis.__seekStage = { mode, stage: "target-play", prepared };
-    await engine.play(); const first = await capture.first; await engine.pause(); capture.close();
+    if (mode !== "running") await engine.play();
+    const first = await capture.first; await engine.pause(); capture.close();
     const counters = engine.feedDiagnostics().sources[0]!;
-    return { mode, document: model.toJson(), busy, resumeCallsDuringSeek, staleOccupancy: old.occupancy,
+    return { mode, document: model.toJson(), busy, resumeCallsDuringSeek, suspendedBeforeProducer, stateAfterSeek, staleOccupancy: old.occupancy,
       internalBackpressure, prepared, pcm: first, staleReleased: counters.stale - old.stale,
       underruns: counters.underruns - old.underruns, refused: counters.refused - old.refused,
       torn: counters.torn - old.torn, errors: counters.errors - old.errors };
@@ -473,7 +516,7 @@ try {
   try { await playbackOnly.meters(() => undefined); }
   catch (error) { meterNotAttached = (error as { code?: string }).code ?? ""; }
   await playbackOnly.close();
-  const seekProofs = [await exercisePausedSeek("initial"), await exercisePausedSeek("resumed")];
+  const seekProofs = [await exercisePausedSeek("initial"), await exercisePausedSeek("resumed"), await exercisePausedSeek("running")];
   globalThis.__result = {
     coldLocatorCalls, warmLocatorCalls: locatorCalls,
     coldFlacWorkers, warmFlacWorkers: flacWorkers,
