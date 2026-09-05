@@ -68,3 +68,7 @@ Per the stop rule, this qualification attempt stops for independent Astra
 review. This experimental wrapper failure establishes neither a browser OPFS
 limitation nor a defect in the shipped worker. No successor or further repair is
 authorized by this record; no product or protocol change was attempted.
+
+## Dedicated Astra verdict — FAIL to qualify (2026-09-05)
+
+The single allowed attempt is consumed. Astra confirmed the experiment failed on worker-module import 404s before any physical-lock probe. The shipped runner, package, tests, and product source are unchanged; this establishes no browser OPFS limitation or package regression. The original remaining teardown claims stay unqualified. The dedicated review is attached to PR #20. No further qualification iteration or production change is authorized under this issue.
