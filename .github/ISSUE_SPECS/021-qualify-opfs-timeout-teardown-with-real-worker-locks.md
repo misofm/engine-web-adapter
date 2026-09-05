@@ -178,3 +178,7 @@ Validation:
 Historical failures remain recorded above. These are implementation evidence,
 not an independent PASS verdict; root must checkpoint/push this tranche and
 obtain the separately requested Astra review before claiming completion.
+
+## Dedicated Astra medium final PASS
+
+Independent reviewer verified c7af187: full113 tests, focused19, packed Chromium152.0.7977.76/WebKit26.5 physical lock and surgical cleanup, plus five meaningful negative discriminators. No release-blocking defect remains in the renewed bounded scope. Report attached to PR20. Historical failures remain retained; this PASS describes the completed renewed execution. App migration and cache policy are separate work.
