@@ -1,7 +1,7 @@
 # @misofm/engine-web-adapter
 
 Headless, framework-neutral browser session hosting for
-`@misofm/engine@0.1.0`. Version 0.2 streams standards-compliant native FLAC
+`@misofm/engine@0.2.0`. Version 0.3 streams standards-compliant native FLAC
 through bounded HTTP ranges and a one-stem universal libFLAC Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
 rings. URL, authentication, and request mapping remain caller-owned.
@@ -9,10 +9,10 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.2.0 @misofm/engine@0.1.0
+npm install @misofm/engine-web-adapter@0.3.0 @misofm/engine@0.2.0
 ```
 
-The package is ESM-only and remains pinned to exactly Engine `0.1.0`.
+The package is ESM-only and remains pinned to exactly Engine `0.2.0`.
 The current integration was qualified with the reviewed archive from Engine
 `79900f3f1d296b2b9af215e2a87acf1628fadb06`, SHA256
 `28492361d76a6a0815302d756c98003b202155691ab9011c7884fac377deb587`.

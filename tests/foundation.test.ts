@@ -14,10 +14,10 @@ import { MemoryStemResolver } from "../src/stems/memory-resolver.js";
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
 
 test("foundation is pinned to the exact public Engine release", () => {
-  assert.equal(ADAPTER_PROVENANCE.engine.package, "@misofm/engine@0.1.0");
+  assert.equal(ADAPTER_PROVENANCE.engine.package, "@misofm/engine@0.2.0");
   assert.equal(
     ADAPTER_PROVENANCE.engine.commit,
-    "175755e9cb94c4eebba164e0bf68c3b3d89582b1",
+    "bb5ed498a2c0934498d964befb2cd5b7c2a45264",
   );
   assert.equal(ADAPTER_PROVENANCE.safeBaselines.stemStore, "bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c");
 });

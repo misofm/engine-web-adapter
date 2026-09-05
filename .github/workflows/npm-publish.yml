@@ -23,12 +23,12 @@ concurrency:
 
 env:
   PACKAGE_NAME: "@misofm/engine-web-adapter"
-  PACKAGE_VERSION: "0.2.0"
+  PACKAGE_VERSION: "0.3.0"
   NPM_CONFIG_REGISTRY: "https://registry.npmjs.org"
 
 jobs:
   publish:
-    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.1.0
+    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.3.0
     runs-on: ubuntu-24.04
     steps:
       - name: Refuse a non-main or mismatched dispatch
@@ -63,7 +63,7 @@ jobs:
           [[ "$(node -p "require('./package.json').version")" == "$PACKAGE_VERSION" ]]
           [[ "$(node -p "require('./package-lock.json').name")" == "$PACKAGE_NAME" ]]
           [[ "$(node -p "require('./package-lock.json').version")" == "$PACKAGE_VERSION" ]]
-          [[ "$(node -p "require('./package.json').dependencies['@misofm/engine']")" == "0.1.0" ]]
+          [[ "$(node -p "require('./package.json').dependencies['@misofm/engine']")" == "0.2.0" ]]
           [[ "$(node -p "require('./package.json').repository.url")" == "git+https://github.com/misofm/engine-web-adapter.git" ]]
 
       - name: Install and qualify
@@ -75,10 +75,23 @@ jobs:
         if: inputs.mode == 'publish'
         run: |
           set -euo pipefail
-          if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+          registry_result="$RUNNER_TEMP/npm-version-check.json"
+          registry_stderr="$RUNNER_TEMP/npm-version-check.stderr"
+          registry_status=0
+          npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version --json >"$registry_result" 2>"$registry_stderr" || registry_status=$?
+          printf '%s\n' "$registry_status" >"$RUNNER_TEMP/npm-version-check.status"
+          cat "$registry_stderr" >&2
+          if [[ "$registry_status" == 0 ]]; then
             echo "$PACKAGE_NAME@$PACKAGE_VERSION already exists" >&2
             exit 1
           fi
+          node --input-type=module - "$registry_result" <<'NODE'
+          import { readFileSync } from "node:fs";
+          const result = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (result?.error?.code !== "E404") {
+            throw new Error("refusing publication: registry lookup did not return parsed E404");
+          }
+          NODE
 
       - name: Publish through OIDC only
         if: inputs.mode == 'publish'
@@ -102,7 +115,7 @@ jobs:
             [[ "$attempt" == 60 ]] && { echo "registry did not converge" >&2; exit 1; }
             sleep 5
           done
-          [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dependencies.@misofm/engine)" == "0.1.0" ]]
+          [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dependencies.@misofm/engine)" == "0.2.0" ]]
           consumer=$(mktemp -d)
           trap 'rm -rf -- "$consumer"' EXIT
           cd "$consumer"

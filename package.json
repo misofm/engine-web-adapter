@@ -1,6 +1,6 @@
 {
   "name": "@misofm/engine-web-adapter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Bounded native-FLAC browser session adapter for @misofm/engine",
   "license": "Apache-2.0",
   "repository": {
@@ -57,7 +57,7 @@
     "check": "npm run format:check && npm run lint && npm run check:decoder && npm test && npm run check:package"
   },
   "dependencies": {
-    "@misofm/engine": "0.1.0",
+    "@misofm/engine": "0.2.0",
     "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
