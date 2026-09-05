@@ -113,10 +113,15 @@ export class OpfsWriteWorkerClient {
       this.#worker = worker;
       const generation = this.#generation;
       const onMessage = (event: MessageEvent<OpfsWorkerResponse>) => this.#receive(event.data, generation);
-      const onError = (event: ErrorEvent) => this.#fail(event.error ?? new Error(event.message));
-      const onMessageError = () => this.#fail(
+      const onError = (event: ErrorEvent) => {
+        if (generation === this.#generation) this.#fail(event.error ?? new Error(event.message));
+      };
+      const onMessageError = () => {
+        if (generation !== this.#generation) return;
+        this.#fail(
         new EngineWebAdapterError("capability.opfs", "OPFS write Worker message could not be cloned"),
-      );
+        );
+      };
       worker.addEventListener("message", onMessage);
       worker.addEventListener("error", onError);
       worker.addEventListener("messageerror", onMessageError);

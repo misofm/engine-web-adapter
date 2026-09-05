@@ -224,6 +224,10 @@ test("a timed-out writer open terminates its generation and ignores a late reply
 function historicalWorkerHarness(options: { readonly ready?: boolean } = {}) {
   const listeners = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
   const history = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
+  const errors = new Set<(event: ErrorEvent) => void>();
+  const errorHistory = new Set<(event: ErrorEvent) => void>();
+  const messageErrors = new Set<(event?: unknown) => void>();
+  const messageErrorHistory = new Set<(event?: unknown) => void>();
   const messages: OpfsWorkerRequest[] = [];
   let terminations = 0;
   const worker = {
@@ -231,16 +235,24 @@ function historicalWorkerHarness(options: { readonly ready?: boolean } = {}) {
     terminate() { terminations += 1; },
     addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
       if (type === "message") { listeners.add(listener); history.add(listener); }
+      if (type === "error") { errors.add(listener); errorHistory.add(listener); }
+      if (type === "messageerror") { messageErrors.add(listener); messageErrorHistory.add(listener); }
     },
     removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
       if (type === "message") listeners.delete(listener);
+      if (type === "error") errors.delete(listener);
+      if (type === "messageerror") messageErrors.delete(listener);
     },
   } satisfies OpfsWorkerLike;
   const emit = (message: OpfsWorkerResponse) => {
     for (const listener of [...history]) listener({ data: message } as never);
   };
+  const emitError = (error = new Error("historical worker error")) => {
+    for (const listener of [...errorHistory]) listener({ error, message: error.message } as never);
+  };
+  const emitMessageError = () => { for (const listener of [...messageErrorHistory]) listener(); };
   if (options.ready === true) queueMicrotask(() => emit({ type: "worker-ready", writeSupport: true }));
-  return { worker, messages, emit, listeners, history, get terminations() { return terminations; } };
+  return { worker, messages, emit, emitError, emitMessageError, listeners, history, errors, messageErrors, get terminations() { return terminations; } };
 }
 
 test("a timed-out write invalidates the writer and makes its historical reply inert", async () => {
