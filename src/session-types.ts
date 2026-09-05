@@ -152,11 +152,9 @@ export interface EngineWebSession {
   readonly shape: SessionShape;
   readonly context: EngineAudioContext;
   /**
-   * The raw Engine worklet host.
-   *
-   * An escape hatch, and the one place the adapter's request-identifier ledger
-   * does not reach: a call made here allocates its own identifier and can
-   * collide with the console's. Prefer `console`, `meters` and `telemetry`.
+   * The raw Engine worklet host. Its host implementation allocates request
+   * identifiers for every payload-only call, including calls made here.
+   * Prefer `console`, `meters` and `telemetry` when their typed projections fit.
    */
   readonly host: BrowserEngine["host"];
   /** Refuses with `console.not_attached` when the session opted out of a console. */

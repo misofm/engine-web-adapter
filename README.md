@@ -38,10 +38,10 @@ await engine.play()
 await engine.seekFrames(48_000)
 await engine.pause()
 
-// One transaction. A fader drag stages latest-wins, so what lands is the
-// position the hand stopped at; engine backpressure never reaches the caller.
+// One strict SDK transaction. Inspect the exact whole-batch admission report.
 const kick = engine.console.edit.track("kick")
-await engine.console.submit(kick.faderDb(-6), kick.mute(false))
+const report = await engine.console.submit(kick.faderDb(-6), kick.mute(false))
+if (!report.ok) console.warn(report.reasonName, report.rejectedIndex)
 
 // A subscription, keyed by track id. The returned function unsubscribes; the
 // lease is taken on the first listener and released after the last.
@@ -98,10 +98,12 @@ identical operation is `transient`, frozen `details`, and the underlying
 `cause`. No Engine host object, Worker message or Effect value reaches a caller
 through it.
 
-Console refusals split along the line the Engine itself draws: flow-control
-backpressure is absorbed and coalesced, and a semantic refusal -- an unknown
-address, a malformed record -- rejects with `console.refused`, because it will
-not succeed on retry.
+Console submission returns the SDK `CommandReport` unchanged. A semantic
+refusal has `ok: false`, `admitted: 0`, and its original reason, rejected index,
+and application sample; transport failures reject. Request identifiers are
+allocated by the raw host, so direct `session.host` calls no longer collide with
+console, meter, or telemetry operations. Prefer the typed adapter surfaces when
+possible.
 
 ## Deployment requirements
 

@@ -2,6 +2,8 @@ import test from "node:test";
 
 import type { EngineWebSessionOptions } from "../src/index.js";
 import type { StemResolver } from "../src/stems/index.js";
+import type { CommandReport } from "@misofm/engine";
+import type { EngineWebConsole } from "../src/session-types.js";
 
 const common = {
   document: "{}",
@@ -19,5 +21,14 @@ const neither: EngineWebSessionOptions = common;
 // @ts-expect-error FLAC and canonical PCM resolver paths are mutually exclusive
 const both: EngineWebSessionOptions = { ...common, resolver, flac: { locate: () => "https://caller.invalid/stem" } };
 void [neither, both];
+
+function strictReceiptProbe(strictConsole: EngineWebConsole): Promise<CommandReport> {
+  return strictConsole.submit(strictConsole.edit.track("track").mute(true));
+}
+function voidReceiptProbe(strictConsole: EngineWebConsole): Promise<void> {
+  // @ts-expect-error submit is a strict SDK receipt, never Promise<void>
+  return strictConsole.submit(strictConsole.edit.track("track").mute(true));
+}
+void [strictReceiptProbe, voidReceiptProbe];
 
 test("public session input union compiles", () => undefined);

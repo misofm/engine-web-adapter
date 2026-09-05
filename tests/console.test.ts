@@ -206,6 +206,24 @@ test("a refused meter lease is the one public error class", async () => {
   await session.close();
 });
 
+test("SDK console, leases, session map, and raw host interleave without caller IDs", async () => {
+  const { session, host } = await open({});
+  const stopMeters = await session.meters(() => undefined);
+  const stopTelemetry = await session.telemetry(() => undefined);
+  const [report, map, raw] = await Promise.all([
+    session.console.submit(session.console.edit.track("kick").faderDb(-2)),
+    session.host.sessionMap(),
+    session.host.command({ commands: [] }),
+  ]);
+  assert.equal(report.ok, true);
+  assert.deepEqual(map.tracks, TRACKS);
+  assert.equal(raw.result, 0);
+  stopMeters(); stopTelemetry();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(host.leases, [["meters", true], ["telemetry", true], ["meters", false], ["telemetry", false]]);
+  await session.close();
+});
+
 test("the session derives declarations and a lease id from the document alone", async () => {
   let observedLeaseId = "";
   let observedStems: unknown;
