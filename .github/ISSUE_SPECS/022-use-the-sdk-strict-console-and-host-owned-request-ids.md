@@ -78,3 +78,43 @@ Root creates and synchronizes one new adapter issue/spec after approval. Luna im
 Installed the reviewed tarball with `npm_config_cache=/private/tmp/dx-22-npm-cache npm install --no-save --ignore-scripts ...`; package metadata and lockfiles remain unchanged. Replaced the adapter's private console transport with the SDK's `createBrowserConsole(host)`, changed `submit` to return the exact `CommandReport`, and retained one host-owned payload-only lease per meter/telemetry feed with existing projections and refusals. Removed the adapter request ledger, binary command decoder, `ConsoleWriter`, retry/coalescing, and escalation paths.
 
 Validation: `npm run typecheck` passed; `npm test` passed 100/100, including full success/refusal/torn-report, payload-only interleaving, and meter/telemetry lease coverage. `npm run check` and `npm run check:package` passed. The existing packed browser gate passed in Chromium with the fixture report (`submitted: 32`, `refused: 0`, `torn: 0`, `errors: 0`); its log is `/private/tmp/dx-22-browser-escalated.log`. Registry publication and ordinary dependency installation remain release blockers as specified; this checkpoint proves the exact local tarball integration only.
+
+## Dedicated Astra attempt 1 verdict — FAIL (2026-09-05)
+
+Astra independently passed the 100-test repository check and verified all 65 installed and packed-consumer SDK files against the exact reviewed tarball. The implementation nevertheless has a real meter/telemetry lifecycle defect: resubscribing during pending release receives result6 and permanently caches the rejected arm promise. Frozen interleaving, strict receipt, fan-out and pending-close regressions also remain incomplete. The full review is attached to PR #23. Root approves the following Sol-authored bounded attempt2 brief; no other product boundary changes are authorized.
+
+## Attempt 2 authorization — per-feed lifecycle correction
+
+**Verdict basis:** Attempt 1 at `1005224cc70ff83d76361b67873f00a6ba6f3dec` is a useful checkpoint but FAILS Astra review. Preserve its SDK console migration, strict `CommandReport`, payload-only calls, host-owned IDs, and deleted shadow transport. Attempt 2 is limited to the confirmed lease defect and the frozen #22 test gaps below.
+
+## Smallest closable correction
+
+Correct `HostFeed` so each meter/telemetry feed has at most one unsettled host lease call. When the last listener unsubscribes, retain the pending disable transition. If a listener resubscribes before that acknowledgement, wait for the disable to settle and then arm once; do not overlap it and receive host result 6. A rejected arm must be cleared after settling so it cannot poison later subscriptions.
+
+Use only a bounded per-feed lifecycle transition. It may remember acknowledged armed state, one current lease operation, desired listener state, and close state. It is not a global request serializer, request ledger, retry loop, coalescer, or transport broker. The host still allocates every request ID.
+
+Close clears listeners immediately and prevents new calls. If an arm is already pending, let it settle through the existing host response/disposal path and, if it succeeded after close, issue the ordinary disable after it; never re-arm. This is ordered cleanup, not stronger cancellation. Repeated unsubscribe/control/session close remains safe.
+
+Do not change public types, projections, refusal vocabulary, session orchestration, SDK code, or package dependencies.
+
+## Exact implementation constraints
+
+- One first listener starts one arm; concurrent listeners share that arm. One last unsubscribe starts one release.
+- A resubscribe during release awaits that exact transition, then starts at most one arm for all waiting listeners.
+- A nonzero arm acknowledgement rejects current subscribers with the existing `console.lease_refused` fields and leaves no cached rejected promise. A later subscription makes a fresh host call. Do not automatically retry the refused call.
+- A late arm acknowledgement after listener removal or close cannot leave a live lease: reconcile once to disabled. A late release acknowledgement may lead to one arm only when live listeners still require it.
+- Continue to call only `host.meters({ enabled, onFrame })` and `host.telemetry({ enabled, onFrame })`. No caller ID, timer, backoff, queue, or new cancellation primitive is allowed.
+
+## Required regressions and frozen evidence completion
+
+1. Convert `/private/tmp/dx-22-astra-probe.mjs` into a focused regression using the exact installed reviewed packed SDK host implementation unchanged. For both meters and telemetry: acknowledge an initial arm, hold the last-listener disable, resubscribe, acknowledge disable, then acknowledge the single new arm. Prove no result-6 overlap, the later listener receives frames, request IDs are host-generated/strictly increasing, and close during the same transition produces no late re-arm. This boundary must not be proved only with `FakeHost`.
+2. Add one multi-edit success assertion over the exact full `CommandReport`. Add one semantic refusal with nonzero schedule/rejected index and exact `result`, `code`, `reason`, `reasonName`, `admitted`, and `appliedAtSample`, followed by a valid successful submit. Add exact backpressure-report coverage and retain torn/partial-success rejection; assert no retry or later hidden submission.
+3. On the real reviewed-host fixture, interleave console command, meter/telemetry arm and release, `status()`, `sessionMap()`, and a raw-host command. Assert payload-only requests, strictly increasing host IDs, and one settlement each.
+4. Add focused fan-out/projection coverage: two listeners share one arm per feed; first unsubscribe keeps the lease; last unsubscribe releases once; meter updates retain track order/IDs, L/R/peak, track/master gain reduction, sequence, windows, first/end sample; telemetry retains every published field. Exercise the existing typed nonzero lease refusal and fresh recovery.
+5. Cover a pending arm and pending submit across control close with delayed host response/disposal, no late re-arm, and one settlement. Prove a cached console reference rejects post-close submission/subscription with existing `session.closed`. Do not promise immediate cancellation or command retraction.
+
+## Allowed paths and gates
+
+Allowed: `src/console.ts`, `tests/console.test.ts`, and `.github/ISSUE_SPECS/022-use-the-sdk-strict-console-and-host-owned-request-ids.md` for candid attempt-2 evidence. Use another already-approved #22 test path only if a compile-time assertion cannot live in `console.test.ts`; no production path beyond `src/console.ts` may change.
+
+Run the focused console test first, then `npm test`, `npm run check`, `npm run check:package`, and the existing packed-browser check. Reuse and re-verify SDK tarball SHA-256 `ef9186209056170db272eec6e2bee03a8347449eaf5cf5012498c252c72f25e7`; do not rebuild or replace it merely for another run. Record exact pass counts/browser version and correct the attempt-1 evidence claim. Registry engine `0.1.0` remains the merge/release blocker; local tarball success is compatibility evidence only. A fresh dedicated Astra review is required before PASS.
