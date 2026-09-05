@@ -234,3 +234,9 @@ The prior tests that merely call healthy `writer.abort()`, fabricate an immediat
 5. Record commands, exit status, and concise discriminator results in issue #19's local evidence section.
 
 No broader browser matrix is required. Attempt 3 receives one implementation pass and one independent Astra review. If any frozen gate fails, stop: there is no fourth attempt; preserve the evidence and rescope under a successor issue.
+
+## Attempt series stopped — Astra final FAIL
+
+Dedicated Astra reviewed final attempt 3 at `5ddd140` and returned FAIL. Strict repository checks and the packed Chromium 152/WebKit 26.5 gate pass, and the original production generation reproducer passes. However, removing owned-handle termination cleanup from the fixture still leaves its test green; historical callback, stale-release and resource-accounting assertions remain incomplete. Removing store catch cleanup correctly makes the surgical staging regression red. Full report is attached to PR #20 and retained at `/private/tmp/dx-19-astra-dedicated-review-attempt3.md`, with independent mutants under `/private/tmp/dx-19-astra-attempt3-mutants/`.
+
+The three-attempt stop applies. No further implementation/revision is authorized under this issue and no PASS or completed capability is claimed. Preserve the pushed production and test evidence. Sol is scoping a separate, smaller fault-fixture qualification issue with a changed verification approach; it must retain the original unmet resource-lifecycle claims without treating another patch as a fourth attempt.
