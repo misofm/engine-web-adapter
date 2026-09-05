@@ -107,53 +107,43 @@ export class VerifiedStemStore implements StemStore {
 
     const controller = new AbortController();
     const detach = forwardAbort(options.signal, controller);
-    try {
-      await runBounded(
-        unique,
-        options.admission?.limit ?? 1,
-        (stem) => this.#ensure(stem, options.resolver, controller.signal, options.onProgress, options.admission),
-        (error) => controller.abort(error),
-      );
-    } catch (error) {
-      if (options.signal?.aborted || isAbort(error)) {
-        throw new EngineWebAdapterError("stem.cancelled", "Stem session open was cancelled", {}, error);
-      }
-      throw error;
-    } finally {
-      detach();
-    }
-    if (options.signal?.aborted) {
-      throw new EngineWebAdapterError("stem.cancelled", "Stem session open was cancelled", {}, options.signal.reason);
-    }
-
-    // Independent openings own independent pins, even when caller lease IDs repeat.
+    // The opening owns each verified source before releasing its stem lock.
+    // The same unique ownership becomes the returned lease without a pin gap.
     const pin = `session:${this.#instanceId}:${leaseId}:${randomId()}`;
+    const owned: StemRequirement[] = [];
     let releaseLock: (() => Promise<void>) | undefined;
-    let pinned = false;
     try {
       releaseLock = await this.#holdPinLock(pin, options.signal);
-      await this.#mutateIndex((index) => {
-        for (const stem of unique) {
+      const own = async (stem: StemRequirement): Promise<void> => {
+        await this.#mutateIndex((index) => {
           const row = index.stems[stem.identity];
           if (row === undefined || row.bytes !== stem.bytes) {
             throw new EngineWebAdapterError("stem.corrupt", "Verified stem disappeared before leasing", { identity: stem.identity });
           }
           row.pins.push(pin);
           row.lastUsedAt = this.#now();
-        }
-      }, options.signal);
-      pinned = true;
+        }, controller.signal);
+        owned.push(stem);
+      };
+      await runBounded(
+        unique,
+        options.admission?.limit ?? 1,
+        (stem) => this.#ensure(stem, options.resolver, controller.signal, own, options.onProgress, options.admission),
+        (error) => controller.abort(error),
+      );
       options.signal?.throwIfAborted();
       options.onProgress?.({ stage: "ready", sourcesReady: declared.length, sourcesTotal: declared.length });
       options.signal?.throwIfAborted();
       return new VerifiedStemSessionLease(this, leaseId, pin, declared, releaseLock);
     } catch (error) {
-      try { if (pinned) await this.release(pin, declared); }
+      try { if (owned.length > 0) await this.release(pin, owned); }
       finally { await releaseLock?.(); }
       if (options.signal?.aborted || isAbort(error)) {
         throw new EngineWebAdapterError("stem.cancelled", "Stem session open was cancelled", {}, error);
       }
       throw error;
+    } finally {
+      detach();
     }
   }
 
@@ -235,15 +225,25 @@ export class VerifiedStemStore implements StemStore {
     stem: StemRequirement,
     resolver: StemResolver,
     signal: AbortSignal,
+    own: (stem: StemRequirement) => Promise<void>,
     onProgress?: (progress: StemProgress) => void,
     admission?: BoundedStemAdmission,
   ): Promise<void> {
+    const verify = () => admission === undefined
+      ? this.#verifyIndexed(stem, signal, onProgress)
+      : admission.run(() => this.#verifyIndexed(stem, signal, onProgress), signal);
+    const warm = await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
+      if (!(await verify())) return false;
+      await own(stem);
+      return true;
+    });
+    if (warm) return;
+    // Eviction may wait for another stem. Never retain this stem's lock here.
+    await this.#preflight(stem.bytes, signal, true);
     await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
-      const verified = admission === undefined
-        ? await this.#verifyIndexed(stem, signal, onProgress)
-        : await admission.run(() => this.#verifyIndexed(stem, signal, onProgress), signal);
-      if (verified) return;
-      await this.#ingest(stem, resolver, signal, onProgress);
+      // A concurrent opener may have installed the final while we reclaimed.
+      if (!(await verify())) await this.#ingest(stem, resolver, signal, onProgress);
+      await own(stem);
     });
   }
 
@@ -301,7 +301,7 @@ export class VerifiedStemStore implements StemStore {
     onProgress?: (progress: StemProgress) => void,
   ): Promise<void> {
     signal.throwIfAborted();
-    await this.#preflight(stem.bytes);
+    await this.#preflight(stem.bytes, signal, false);
     const staging = `${STAGING_PREFIX}${this.#instanceId}-${digest(stem.identity)}`;
     await this.#backend.remove(staging);
     const writerLifetime = new AbortController();
@@ -368,15 +368,42 @@ export class VerifiedStemStore implements StemStore {
     }
   }
 
-  async #preflight(requiredBytes: number): Promise<void> {
-    const estimate: { readonly quota?: number; readonly usage?: number } =
-      await this.#backend.estimate?.().catch(() => ({})) ?? {};
-    if (estimate?.quota !== undefined && estimate.usage !== undefined && estimate.quota - estimate.usage < requiredBytes) {
-      throw new EngineWebAdapterError("stem.quota", "Origin-private storage quota is insufficient", {
-        requiredBytes,
-        availableBytes: Math.max(0, estimate.quota - estimate.usage),
-      });
+  async #availableBytes(): Promise<number | undefined> {
+    const estimate: { readonly quota?: number; readonly usage?: number } = await this.#backend.estimate?.().catch(() => ({})) ?? {};
+    if (estimate.quota === undefined || estimate.usage === undefined) return undefined;
+    return Math.max(0, estimate.quota - estimate.usage);
+  }
+
+  async #preflight(requiredBytes: number, signal: AbortSignal, reclaim: boolean): Promise<void> {
+    let availableBytes = await this.#availableBytes();
+    if (availableBytes === undefined || availableBytes >= requiredBytes) return;
+    if (reclaim) {
+      const index = await this.#withLock("index", signal, () => this.#readIndex());
+      const victims = Object.entries(index.stems)
+        .filter(([, row]) => row.pins.length === 0)
+        .sort(([a, left], [b, right]) => left.lastUsedAt - right.lastUsedAt || (a < b ? -1 : a > b ? 1 : 0));
+      // One finite snapshot, with ownership rechecked at the protected mutation.
+      // Unknown and stale-looking pins are deliberately retained.
+      for (const [identity] of victims) {
+        assertStemIdentity(identity);
+        await this.#withLock(this.#stemLock(identity), signal, () =>
+          this.#withLock("index", signal, async () => {
+            const current = await this.#readIndex();
+            const row = current.stems[identity];
+            availableBytes = await this.#availableBytes();
+            if (availableBytes === undefined || availableBytes >= requiredBytes || row === undefined || row.pins.length > 0) return;
+            signal.throwIfAborted();
+            await this.#backend.remove(finalName(identity));
+            delete current.stems[identity];
+            await this.#writeIndex(current);
+          }));
+        availableBytes = await this.#availableBytes();
+        if (availableBytes === undefined || availableBytes >= requiredBytes) return;
+      }
     }
+    throw new EngineWebAdapterError("stem.quota", "Origin-private storage quota is insufficient", {
+      requiredBytes, availableBytes,
+    });
   }
 
   async #demote(identity: StemIdentity): Promise<void> {

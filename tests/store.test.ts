@@ -665,3 +665,107 @@ function deferred<T>() {
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+function quotaCache(items: readonly ReturnType<typeof fixture>[], capacity: number) {
+  const storage = new MemoryStemStorageBackend();
+  const stems = Object.fromEntries(items.map(item => {
+    storage.files.set(`sha256-${item.identity.slice(7)}`, item.bytes);
+    return [item.identity, { bytes: item.bytes.length, pins: [] as string[], lastUsedAt: 0 }];
+  }));
+  storage.files.set("index.json", new TextEncoder().encode(JSON.stringify({ version: 1, stems })));
+  const backend: StemStorageBackend = { ...backendView(storage), async estimate() {
+    return { quota: capacity, usage: [...storage.files].reduce((sum, [name, bytes]) =>
+      sum + (name.startsWith("sha256-") || name.startsWith("staging-") ? bytes.length : 0), 0) };
+  } };
+  const open = (store: VerifiedStemStore, id: string, entries: readonly ReturnType<typeof fixture>[]) => store.openSession({
+    leaseId: id, stems: entries.map(item => requirement(item.identity, item.identity, item.bytes.length)),
+    resolver: new MemoryStemResolver(Object.fromEntries(entries.map(item => [item.identity, item.bytes]))),
+  });
+  return { storage, backend, open, row: async () => JSON.parse(await storage.readText("index.json")).stems };
+}
+
+test("quota reclaims oldest unpinned entries with identity ties and stops at sufficient capacity", async () => {
+  const items = [fixture([1]), fixture([2]), fixture([3])].sort((a, b) => a.identity < b.identity ? -1 : 1);
+  const cache = quotaCache(items, 3);
+  const index = await cache.row();
+  index[items[2]!.identity].lastUsedAt = -1;
+  cache.storage.files.set("index.json", new TextEncoder().encode(JSON.stringify({ version: 1, stems: index })));
+  const lease = await cache.open(new VerifiedStemStore({ backend: cache.backend }), "new", [fixture([8, 9])]);
+  const rows = await cache.row();
+  assert.equal(rows[items[2]!.identity], undefined, "oldest first");
+  assert.equal(rows[items[0]!.identity], undefined, "identity breaks equal timestamps");
+  assert.ok(rows[items[1]!.identity], "does not over-reclaim");
+  await lease.close();
+});
+
+test("quota preserves every offline and independent live pin", async () => {
+  const item = fixture([11, 12]);
+  const cache = quotaCache([item], 2);
+  const store = new VerifiedStemStore({ backend: cache.backend, locks: new TestLocks() });
+  const a = await cache.open(store, "same", [item]);
+  const b = await cache.open(store, "same", [item]);
+  await store.setOfflinePin(item.identity, "one", true);
+  await store.setOfflinePin(item.identity, "two", true);
+  const refuse = () => assert.rejects(cache.open(store, "pressure", [fixture([13])]), { code: "stem.quota" });
+  await refuse(); await a.close(); await refuse(); await b.close(); await refuse();
+  await store.setOfflinePin(item.identity, "one", false); await refuse();
+  assert.deepEqual((await cache.row())[item.identity].pins, ["offline:two"]);
+  await store.setOfflinePin(item.identity, "two", false);
+  await (await cache.open(store, "fits", [fixture([13])])).close();
+});
+
+test("provisional verified sources survive quota pressure and failed opens roll back only their ownership", async () => {
+  const first = fixture([21, 22]);
+  const cache = quotaCache([first], 2);
+  const store = new VerifiedStemStore({ backend: cache.backend, locks: new TestLocks() });
+  await assert.rejects(cache.open(store, "partial", [first, fixture([23])]), { code: "stem.quota" });
+  assert.deepEqual((await cache.row())[first.identity].pins, []);
+  assert.deepEqual(cache.storage.files.get(`sha256-${first.identity.slice(7)}`), first.bytes);
+  const lease = await cache.open(store, "other", [first]);
+  await assert.rejects(cache.open(store, "partial", [first, fixture([24])]), { code: "stem.quota" });
+  assert.equal((await cache.row())[first.identity].pins.length, 1);
+  assert.deepEqual(new Uint8Array(await (await lease.read(first.identity)).arrayBuffer()), first.bytes);
+  await lease.close();
+});
+
+test("pin admitted after victim selection wins the coordinated eviction recheck", async () => {
+  const item = fixture([31]);
+  const cache = quotaCache([item], 1);
+  const locks = new TestLocks();
+  const selected = deferred<void>();
+  const proceed = deferred<void>();
+  const provider: WebLockProvider = {
+    query: () => locks.query(),
+    async request(name, options, callback) {
+      if (name === `miso:engine-web:v1:stem:${item.identity.slice(7)}`) {
+        selected.resolve(); await proceed.promise;
+      }
+      return locks.request(name, options, callback);
+    },
+  };
+  const evictor = new VerifiedStemStore({ backend: cache.backend, locks: provider });
+  const other = new VerifiedStemStore({ backend: cache.backend, locks });
+  await other.open();
+  const opening = cache.open(evictor, "pressure", [fixture([32])]);
+  await selected.promise;
+  await other.setOfflinePin(item.identity, "race", true);
+  proceed.resolve();
+  await assert.rejects(opening, { code: "stem.quota" });
+  assert.deepEqual((await cache.row())[item.identity].pins, ["offline:race"]);
+  assert.ok(cache.storage.files.has(`sha256-${item.identity.slice(7)}`));
+});
+
+test("two concurrent cold opens finish without nested victim and ingest lock deadlock", { timeout: 2000 }, async () => {
+  const cache = quotaCache([fixture([41]), fixture([42])], 2);
+  const locks = new TestLocks();
+  const results = await Promise.allSettled([43, 44].map(value =>
+    cache.open(new VerifiedStemStore({ backend: cache.backend, locks }), String(value), [fixture([value])])));
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      for (const stem of result.value.stems) assert.equal((await result.value.read(stem.identity)).size, stem.bytes);
+      await result.value.close();
+    } else assert.equal(result.reason.code, "stem.quota");
+  }
+  assert.ok(results.some(result => result.status === "fulfilled"));
+  assert.deepEqual((await locks.query()).held, []);
+});
