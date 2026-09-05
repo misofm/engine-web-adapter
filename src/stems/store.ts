@@ -239,7 +239,17 @@ export class VerifiedStemStore implements StemStore {
     });
     if (warm) return;
     // Eviction may wait for another stem. Never retain this stem's lock here.
-    await this.#preflight(stem.bytes, signal, true);
+    try {
+      await this.#preflight(stem.bytes, signal, true);
+    } catch (error) {
+      // Reclamation persists metadata outside the ingest error boundary.
+      if (isQuota(error)) {
+        throw new EngineWebAdapterError("stem.quota", "Origin-private storage quota is insufficient", {
+          identity: stem.identity, requiredBytes: stem.bytes,
+        }, error);
+      }
+      throw error;
+    }
     await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
       // A concurrent opener may have installed the final while we reclaimed.
       if (!(await verify())) await this.#ingest(stem, resolver, signal, onProgress);

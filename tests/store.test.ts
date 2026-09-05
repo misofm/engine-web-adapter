@@ -769,3 +769,36 @@ test("two concurrent cold opens finish without nested victim and ingest lock dea
   assert.ok(results.some(result => result.status === "fulfilled"));
   assert.deepEqual((await locks.query()).held, []);
 });
+
+
+test("quota failure persisting reclamation metadata remains typed without acknowledging a lease", async () => {
+  const victim = fixture([51]);
+  const incoming = fixture([52]);
+  const cache = quotaCache([victim], 1);
+  const reason = new DOMException("Metadata quota exhausted", "QuotaExceededError");
+  const locks = new TestLocks();
+  const backend: StemStorageBackend = { ...cache.backend, async createWriter(name) {
+    if (name === "index.pending") throw reason;
+    return cache.storage.createWriter(name);
+  } };
+  const resolver = new MemoryStemResolver({ [incoming.identity]: incoming.bytes });
+  let ready = false;
+  await assert.rejects(new VerifiedStemStore({ backend, locks }).openSession({
+    leaseId: "metadata-pressure",
+    stems: [requirement("incoming", incoming.identity, incoming.bytes.length)],
+    resolver,
+    onProgress: event => { if (event.stage === "ready") ready = true; },
+  }), (error: unknown) => {
+    assert.ok(error instanceof EngineWebAdapterError);
+    assert.equal(error.code, "stem.quota");
+    assert.equal(error.cause, reason);
+    assert.deepEqual(error.details, { identity: incoming.identity, requiredBytes: incoming.bytes.length });
+    return true;
+  });
+  assert.equal(ready, false);
+  assert.equal(resolver.requests.length, 0);
+  assert.equal(cache.storage.files.has(`sha256-${victim.identity.slice(7)}`), false, "failure occurred after victim removal");
+  assert.equal(cache.storage.files.has("index.pending"), false);
+  assert.deepEqual((await cache.row())[victim.identity].pins, []);
+  assert.deepEqual((await locks.query()).held, [], "failed opening releases lifetime and mutation locks");
+});
