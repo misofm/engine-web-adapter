@@ -42,6 +42,12 @@ await engine.play()
 await engine.seekFrames(48_000)
 await engine.pause()
 
+// A suspended seek prepares the consumer and waits for target-generation PCM.
+// This also works before the first play. After it resolves, call play() from
+// a playback gesture; play rejects session.busy while any seek is pending.
+await engine.seekFrames(24_000)
+// A failed paused preparation closes the session; open a new one to retry.
+
 // One strict SDK transaction. Inspect the exact whole-batch admission report.
 const kick = engine.console.edit.track("kick")
 const report = await engine.console.submit(kick.faderDb(-6), kick.mute(false))

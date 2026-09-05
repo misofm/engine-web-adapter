@@ -10,6 +10,8 @@ export type EngineWebAdapterErrorCode =
   | "console.not_attached"
   | "console.refused"
   | "session.closed"
+  | "session.busy"
+  | "session.seek"
   | "session.declaration_mismatch"
   | "session.input_path"
   | "session.open"
@@ -66,6 +68,16 @@ interface CodeRow {
  * one of the sixty call sites, a table row cannot.
  */
 const CODES: Record<EngineWebAdapterErrorCode, CodeRow> = {
+  "session.busy": {
+    phase: "lifecycle",
+    remedy: "Await seekFrames() before calling play() from a user gesture.",
+    transient: true,
+  },
+  "session.seek": {
+    phase: "lifecycle",
+    remedy: "Open a new session after paused seek preparation fails; inspect the retained cause.",
+    transient: false,
+  },
   "capability.audio_worklet": {
     phase: "capability",
     remedy: "Serve over HTTPS or localhost in a browser with AudioWorklet, and confirm the feed worklet module URL resolves.",

@@ -27,6 +27,10 @@ export function attachEngineFeed(options: Parameters<typeof attachSdkFeed<BaseAu
       try { await feed.ready(settings); }
       catch (error) { throw translated(error); }
     },
+    async prepareSeek(settings) {
+      try { await feed.prepareSeek(settings); }
+      catch (error) { throw translated(error); }
+    },
     close: () => feed.close(),
   };
 }
@@ -34,6 +38,7 @@ export function attachEngineFeed(options: Parameters<typeof attachSdkFeed<BaseAu
 function translated(error: unknown): unknown {
   if (!(error instanceof PcmFeedError)) return error;
   const code = error.operation === "moduleLoad" ? "capability.audio_worklet"
-    : error.operation === "closed" ? "session.closed" : "session.open";
-  return new EngineWebAdapterError(code, error.message, { operation: error.operation }, error);
+    : error.operation === "closed" ? "session.closed"
+    : error.operation.startsWith("prepare") ? "session.seek" : "session.open";
+  return new EngineWebAdapterError(code, error.message, { operation: error.operation, result: error.result }, error);
 }
