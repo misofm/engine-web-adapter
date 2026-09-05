@@ -53,3 +53,18 @@ Budget one implementation attempt and one independent Astra review. This success
 ## Decision record
 
 - 2026-09-05: Sol briefed this qualification-only successor with dedicated Astra input. Root approved scope. Matching GitHub issue is misofm/engine-web-adapter#21, title exactly as above. Luna implements one attempt; a dedicated Astra reviewer verifies it. Issue #19 remains stopped, with no completion claim. Production changes are forbidden here.
+
+## Luna attempt evidence (2026-09-05)
+
+`npm run typecheck` passed against the existing test fixture. A bounded packed
+runner probe was attempted in `scripts/browser-opfs.mjs` and reverted after the
+first escalated Chromium execution: the custom worker wrapper reached a worker
+load failure with 404s for `/errors.js` and `/stems/opfs-worker-protocol.js`.
+The page reported only a worker `Error` before any OPFS lock probe ran, so no
+physical-lock claim is made. The original runner is restored unchanged. Logs:
+`/private/tmp/dx-21-evidence-browser.log` (sandbox `listen EPERM`) and
+`/private/tmp/dx-21-evidence-browser-escalated2.log` (worker asset 404).
+Per the stop rule, this qualification attempt stops for independent Astra
+review. This experimental wrapper failure establishes neither a browser OPFS
+limitation nor a defect in the shipped worker. No successor or further repair is
+authorized by this record; no product or protocol change was attempted.
