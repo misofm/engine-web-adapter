@@ -114,3 +114,67 @@ Keep existing protocol, cache identity, verification, error semantics and reques
 ### Physical lock-release correction
 
 Real Chromium proves termination returns before its OPFS lock is released: same-existing-file lock and unrelated sentinel checks pass, but immediate failed-staging removal reports NoModificationAllowedError and leaves the file at public rejection. Root authorizes a bounded correction in OpfsStorageBackend.remove: retry only NoModificationAllowedError for the same requested filename, using one absolute monotonic deadline bounded by existing readDeadlineMs and timer yields of at most 10ms. Bound each attempt by remaining time, treat NotFound as success, propagate other failures immediately, and retain the original finite failure path on expiry. Never recreate the file, delete unrelated entries, add another worker, or special-case OPFS in the generic store. Cover transient recovery and permanent-lock expiry in existing tests; prove staging absence before public rejection and preserve foreign staging plus valid cache/index in the existing real-browser runner. The existing copy-assets build may silence Vite logs so npm pack --json remains valid. This fixes the demonstrated cleanup race; it adds no storage capability or fallback.
+
+## Renewed completion evidence — awaiting independent Astra review
+
+Astra implemented the approved corrections and remaining discriminators. The
+public forwarding factory is exercised unchanged: package-selected URL and
+`{ type: "module" }` construct a real Worker. Only main-realm delivery of one
+successful `write-open` ACK is withheld. A separate tiny probe worker opens
+existing files with `create: false`; it contains no copied package code.
+
+The packed gate passes Chromium **152.0.7977.76** and Playwright WebKit **26.5**
+(Playwright **1.62.1**, Node **26.8.1**, Vite **8.2.2**). Both prove a competing
+lock refusal before timed-owner termination, reacquisition on the same existing
+file before any deletion, exactly one timed termination/settlement, and an
+unrelated sentinel lock that remains held until its own owner releases it.
+Chromium refuses competing acquisition with `NoModificationAllowedError`;
+WebKit reports `InvalidStateError`. This is Playwright WebKit evidence, **not
+shipping Safari or iOS qualification**.
+
+The separate real store scenario now removes failed staging before public
+`stem.read_deadline` rejection, preserves valid PCM and index byte-for-byte,
+preserves foreign staging, and leaves no failed final file or index row. The
+browser reproduction proved that `Worker.terminate()` returns before physical
+OPFS release; the approved same-entry removal retry uses one monotonic deadline,
+bounds each attempt by remaining time, yields at most 10ms between lock refusals,
+and retries only `NoModificationAllowedError`. Unit coverage also refuses
+permanent locks by deadline, bounds a never-settling remove, and immediately
+propagates unrelated errors. Silent Vite build logging preserves `npm pack
+--json` stdout as machine-readable JSON.
+
+Five deterministic client rows cover handshake, held open, held write, shared
+writers and explicit close. Each starts a live replacement before old rejection
+continuations settle, invokes removed historical message/error/messageerror
+callbacks before and after replacement readiness, and checks stale writer calls
+leave replacement ownership intact. Accounting covers per-generation posts,
+active/historical listeners, terminations, signal subscriptions, pending calls,
+active timers, created timers, clear calls (including fired timers), timer firing
+and promise settlements. Pending accounting means observed unsettled calls plus
+live request timers; it does not claim access to private implementation fields.
+
+Validation:
+
+- `npm run typecheck` and focused OPFS suite: PASS, **19 tests**.
+- `npm run check`: PASS, **113 tests**, decoder and package policy included;
+  `/private/tmp/dx-21-final-check.log`.
+- Existing packed `node scripts/browser-opfs.mjs`: PASS both configured engines;
+  `/private/tmp/dx-21-final-browser.log`.
+- Isolated compiled artifact baseline: PASS. Removing actual client receive
+  generation guard: FAIL, `old success cannot acknowledge replacement open`.
+  Removing actual stale-release guard: FAIL,
+  `stale writer release must preserve replacement ownership`.
+- Removing actual store catch cleanup: FAIL, failed staging still present.
+  Removing actual store cancellation: FAIL,
+  `store cancellation does not wait for the worker deadline` (store deadline
+  20ms, worker deadline 1000ms makes the ownership discriminator independent of
+  eventual worker timeout). Logs/copies: `/private/tmp/dx-21-final-mutants/`.
+- Isolated runner mutant skips termination of the real ACK-holding worker:
+  FAIL, `same existing file reacquires after timeout termination before deletion`.
+  Source/log: `/private/tmp/dx-21-no-termination.mjs` and
+  `/private/tmp/dx-21-no-termination.log`. The fixture does not delete/recreate
+  the path, so disabling actual termination cannot pass by cleanup side effects.
+
+Historical failures remain recorded above. These are implementation evidence,
+not an independent PASS verdict; root must checkpoint/push this tranche and
+obtain the separately requested Astra review before claiming completion.

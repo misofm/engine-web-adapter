@@ -172,10 +172,22 @@ export class OpfsStorageBackend implements StemStorageBackend {
   }
 
   async remove(name: string): Promise<void> {
-    try {
-      await this.#opened().removeEntry(name);
-    } catch (error) {
-      if (domName(error) !== "NotFoundError") throw error;
+    const directory = this.#opened();
+    const expires = performance.now() + this.#readDeadlineMs;
+    while (true) {
+      const remaining = expires - performance.now();
+      if (remaining <= 0) throw new DOMException("Stem read deadline exceeded", "TimeoutError");
+      try {
+        await deadline(directory.removeEntry(name), remaining);
+        return;
+      } catch (error) {
+        if (domName(error) === "NotFoundError") return;
+        if (domName(error) !== "NoModificationAllowedError") throw error;
+        // Worker termination returns before the browser releases its OPFS lock.
+        // Retry this same entry within one cleanup budget, never restart it.
+        const delay = Math.min(10, expires - performance.now());
+        if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      }
     }
   }
 

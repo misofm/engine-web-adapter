@@ -568,7 +568,7 @@ test("timed staging open maps stem.read_deadline and preserves verified bytes an
   const backend = new OpfsStorageBackend({
     folderName: "opfs-store-timeout-v1",
     storage: { getDirectory: async () => root } as never,
-    readDeadlineMs: 20,
+    readDeadlineMs: 1_000,
     createWorker: () => fakeOpfsWorker(root, { withholdWriteOpen: true }),
   });
   await backend.open();
@@ -576,18 +576,57 @@ test("timed staging open maps stem.read_deadline and preserves verified bytes an
   const unrelatedHandle = await unrelated.createSyncAccessHandle();
   const store = new VerifiedStemStore({ backend, instanceId: "owned", readDeadlineMs: 20 });
   const beforeIndex = folder.files.get("index.json")!.bytes.slice();
+  const started = performance.now();
   const session = store.openSession({
     leaseId: "lease-timeout",
     stems: [{ sourceId: "source", identity, bytes: bytes.byteLength }],
     resolver: { async resolve() { return { stream: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } }) }; } },
   });
   await assert.rejects(session, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.read_deadline");
+  assert.ok(performance.now() - started < 250, "store cancellation does not wait for the worker deadline");
   assert.deepEqual([...folder.files.get(finalName)!.bytes], [...cachedBytes]);
   assert.deepEqual([...folder.files.get("index.json")!.bytes], [...beforeIndex]);
   assert.equal(folder.files.has(`staging-owned-${identity.slice("sha256:".length)}`), false);
   assert.deepEqual([...folder.files.get("staging-foreign")!.bytes], [8]);
   assert.equal(folder.locked.has("unrelated"), true);
   unrelatedHandle.close();
+});
+
+test("OPFS removal retries transient locks and bounds permanent locks and stalled removal", async () => {
+  for (const scenario of ["transient", "permanent", "stalled", "other"] as const) {
+    const root = new FakeDirectory();
+    const folder = await root.getDirectoryHandle("remove", { create: true });
+    folder.files.set("owned", { bytes: new Uint8Array([1]) });
+    folder.files.set("sentinel", { bytes: new Uint8Array([9]) });
+    let attempts = 0;
+    const remove = folder.removeEntry.bind(folder);
+    folder.removeEntry = async name => {
+      assert.equal(name, "owned");
+      attempts += 1;
+      if (scenario === "stalled") return await new Promise<void>(() => undefined);
+      if (scenario === "other") throw named("denied", "SecurityError");
+      if (scenario === "permanent" || attempts < 3) throw named("locked", "NoModificationAllowedError");
+      await remove(name);
+    };
+    const backend = new OpfsStorageBackend({
+      folderName: "remove", storage: { getDirectory: async () => root } as never,
+      createWorker: () => fakeOpfsWorker(root), readDeadlineMs: 35,
+    });
+    await backend.open();
+    const started = performance.now();
+    if (scenario === "transient") {
+      await backend.remove("owned");
+      assert.equal(attempts, 3);
+      assert.equal(folder.files.has("owned"), false);
+    } else {
+      await assert.rejects(backend.remove("owned"), { name: scenario === "other" ? "SecurityError" : "TimeoutError" });
+      assert.equal(folder.files.has("owned"), true);
+      if (scenario === "permanent") assert.ok(attempts >= 2 && attempts <= 5, `bounded attempts: ${attempts}`);
+      else assert.equal(attempts, 1);
+      assert.ok(performance.now() - started < 250, "one bounded removal budget");
+    }
+    assert.deepEqual([...folder.files.get("sentinel")!.bytes], [9]);
+  }
 });
 
 test("a timed-out write invalidates the writer and makes its historical reply inert", async () => {

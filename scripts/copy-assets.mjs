@@ -9,6 +9,7 @@ await copyFile(
 // Factory overrides receive an asset URL, so this entry must carry its imports.
 await build({
   configFile: false,
+  logLevel: "silent",
   build: {
     emptyOutDir: false,
     outDir: "dist/internal",
