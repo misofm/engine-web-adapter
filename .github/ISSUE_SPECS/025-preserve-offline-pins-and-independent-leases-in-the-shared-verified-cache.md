@@ -89,3 +89,32 @@ ownership slice; downstream app adoption remains separate.
 These are implementation gates, not an independent PASS verdict. Root must
 checkpoint/push the final tranche and obtain the requested separate Astra medium
 review before closing this issue or claiming app adoption complete.
+
+## Dedicated attempt-1 review and bounded attempt-2 correction
+
+The independent Astra medium review returned **FAIL with one P2 blocker** at
+`ad57ef8`: lifetime pin-lock acquisition occurred outside the existing
+cancellation-classification boundary. Aborting before the asynchronous lock
+grant returned the raw caller reason instead of `stem.cancelled`. The reviewer
+found no ownership leak in that window and no other concrete blocker in the
+frozen slice; independently rerun focused 41/41 and packed public types passed.
+Report: `/private/tmp/dx-25-astra-medium-review.md`; reproducer:
+`/private/tmp/dx25-review-cancellation.mjs`.
+
+Attempt 2 makes only the requested correction: acquisition is now inside that
+existing error boundary, and cleanup releases the lifetime lock only if it was
+acquired. One regression pauses before granting the actual injected lock, aborts
+with an arbitrary caller Error, and verifies typed `stem.cancelled` retains that
+exact cause, the index stays byte-identical, and no lifetime lock was granted or
+remains held. Source/test checkpoint `0ddcae6` is upstream.
+
+- Strict typecheck: PASS.
+- Focused existing store/OPFS/public-types suite: **42/42 PASS**;
+  `/private/tmp/dx25-attempt2-focused.log`.
+- Full existing `npm run check`: **131/131 PASS**, including strict types,
+  decoder and package policy; `/private/tmp/dx25-attempt2-check.log`.
+
+No public declaration, lock order, schema, persistence behavior, or additional
+scope changed in this revision. The prior packed public-type evidence remains
+applicable. This records implementation evidence only; the same independent
+reviewer must recheck the exact correction before a PASS/closure claim.
