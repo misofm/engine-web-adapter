@@ -118,9 +118,10 @@ export function readExactFlacRange(options: FlacHttpOptions & {
   const expectedBytes = options.end - options.start + 1;
   const range = `bytes=${options.start}-${options.end}`;
 
+  let unhandedRelease: (() => void) | undefined;
   const physicalAttempt = (attempt: number) => {
     let release = () => {};
-    let transferred = false;
+    let produced = false;
     return Effect.gen(function* () {
     const location = yield* Effect.tryPromise({
       try: () => Promise.resolve(options.locate(options.identity, {
@@ -228,9 +229,12 @@ export function readExactFlacRange(options: FlacHttpOptions & {
       byteKind: "flac",
       attempt,
     });
-    transferred = true;
+    // The Effect has produced a result, but its outer scope can still fail or
+    // be interrupted before the resolver receives that result.
+    unhandedRelease = release;
+    produced = true;
     return { bytes, totalBytes, release };
-    }).pipe(Effect.ensuring(Effect.sync(() => { if (!transferred) release(); })));
+    }).pipe(Effect.ensuring(Effect.sync(() => { if (!produced) release(); })));
   };
 
   const attempt = (number: number): Effect.Effect<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>, unknown, HttpClient.HttpClient | import("effect").Scope.Scope> =>
@@ -254,7 +258,13 @@ export function readExactFlacRange(options: FlacHttpOptions & {
     ? operation
     : operation.pipe(Effect.provideService(FetchHttpClient.Fetch, options.fetch));
   const provided = transported.pipe(Effect.provide(FetchHttpClient.layer));
-  return Effect.runPromise(provided, { signal: options.signal }).catch((error: unknown) => {
+  return Effect.runPromise(provided, { signal: options.signal }).then((result) => {
+    // Only this successful Promise handoff transfers ownership to the resolver.
+    unhandedRelease = undefined;
+    return result;
+  }, (error: unknown) => {
+    unhandedRelease?.();
+    unhandedRelease = undefined;
     if (options.signal.aborted) {
       throw new EngineWebAdapterError("stem.cancelled", "FLAC delivery was cancelled", {
         identity: options.identity,

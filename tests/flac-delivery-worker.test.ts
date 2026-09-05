@@ -743,3 +743,39 @@ test("FLAC Worker package asset has a literal URL and honors override factories"
   assert.match(ADAPTER_ASSETS.flacWorker.href, /engine-web-flac-worker\.js$/u);
   assert.match(ADAPTER_ASSETS.flacDecoderWasm.href, /engine-web-flac-decoder\.wasm$/u);
 });
+
+
+test("synchronous probe-completion cancellation releases the range before any resolver handoff", async () => {
+  const source = singleFrameFlac();
+  const worker = new FakeWorker();
+  const diagnostics = createIngestDiagnostics();
+  const abort = new AbortController();
+  const resolver = createFlacStemResolver({
+    createWorker: () => worker, locate: () => "https://caller.invalid/stem",
+    fetch: responseFetch(request => {
+      const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+      return exactResponse(source, Number(match[1]), Number(match[2]));
+    }),
+  });
+  const backend = new MemoryStemStorageBackend();
+  let ready = false;
+  await assert.rejects(new VerifiedStemStore({ backend }).openSession({
+    leaseId: "cancel-probe-completion", stems: [{ sourceId: "source", identity: IDENTITY, bytes: 4 }],
+    resolver, ingestDiagnostics: diagnostics, signal: abort.signal,
+    onProgress: event => {
+      if (event.stage === "ready") ready = true;
+      if (event.stage === "probing") {
+        assert.equal(diagnostics.snapshot().residency!.deliveredBytes, 42);
+        abort.abort("cancel in range completion callback");
+      }
+    },
+  }), { code: "stem.cancelled" });
+  assert.deepEqual(diagnostics.snapshot().residency, {
+    limit: 1, deliveredBytes: 0, deliveredPeakBytes: 42, decodedBytes: 0, decodedPeakBytes: 0,
+    containers: 0, containersPeak: 1, active: 0, activePeak: 1,
+  });
+  assert.equal(ready, false);
+  assert.equal(worker.terminated, true);
+  assert.equal(worker.posted.some(message => message.type === "initialize"), false);
+  assert.equal([...backend.files.keys()].some(name => name.startsWith("staging-") || name.startsWith("sha256-")), false);
+});
