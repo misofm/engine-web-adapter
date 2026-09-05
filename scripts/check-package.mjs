@@ -18,15 +18,14 @@ if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout);
 const report = JSON.parse(packed.stdout)[0];
 const names = new Set(report.files.map((file) => file.path));
 for (const required of [
-  "dist/index.js", "dist/index.d.ts", "dist/internal/engine-web-scratch-worker.js",
+  "dist/index.js", "dist/index.d.ts",
   "dist/internal/engine-web-pcm-pump-worker.js", "dist/internal/engine-web-flac-worker.js",
   "dist/internal/engine-web-flac-decoder.wasm",
   "dist/internal/engine-web-opfs-worker.js",
-  "dist/internal/engine-web-feed-worklet.js",
   "README.md", "NOTICE", "LICENSE", "vendor/libflac-1.5.0/COPYING.Xiph",
 ]) assert.ok(names.has(required), `packed artifact missing ${required}`);
 assert.ok([...names].every((name) => !name.startsWith("tests/") && !name.startsWith("src/")), "source/tests leaked into tarball");
-for (const removed of ["dist/stems/flac-packetizer.js", "dist/stems/flac-ingest.js", "dist/stems/flac-pcm.js", "dist/stems/flac-metadata.js"]) {
+for (const removed of ["dist/internal/engine-web-scratch-worker.js", "dist/internal/engine-web-feed-worklet.js", "dist/stems/flac-packetizer.js", "dist/stems/flac-ingest.js", "dist/stems/flac-pcm.js", "dist/stems/flac-metadata.js"]) {
   assert.ok(!names.has(removed), `packed artifact retained obsolete decoder path ${removed}`);
 }
 
@@ -42,3 +41,13 @@ for (const file of sourceFiles) {
   assert.doesNotMatch(text, /https?:\/\//u, `${file} embeds a transport URL`);
 }
 console.log(`package-policy: ${report.files.length} files, ${report.size} bytes`);
+
+const sdkPcm = await import("@misofm/engine/browser");
+const adapterRing = await import("../dist/stems/ring.js");
+const adapterAssets = await import("../dist/assets.js");
+const sdkAssets = (await import("@misofm/engine/assets")).BUNDLED_ENGINE_ASSETS;
+assert.equal(adapterRing.Msb1RingWriter, sdkPcm.Msb1RingWriter);
+assert.equal(adapterRing.createMsb1Ring, sdkPcm.createMsb1Ring);
+assert.equal(adapterRing.MSB1_CONTROL, sdkPcm.MSB1_CONTROL);
+assert.equal(adapterAssets.ADAPTER_ASSETS.scratchWorker, sdkAssets.scratchWorkerModule);
+assert.equal(adapterAssets.ADAPTER_ASSETS.feedWorkletModule, sdkAssets.pcmFeedWorklet);

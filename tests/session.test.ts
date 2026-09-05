@@ -1,3 +1,5 @@
+import { BrowserBootError } from "@misofm/engine/browser";
+import { scratchBootWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -613,3 +615,70 @@ class ScratchWorker extends EventTarget {
     if (!this.#terminated) { this.#terminated = true; this.events.push("scratch.terminate"); }
   }
 }
+
+test("delegated scratch deadlines use typed adapter translation and terminate", async () => {
+  for (const ready of [false, true]) {
+    const worker = new FailingWorker();
+    const pending = scratchBootWithWorker({ document: new Uint8Array(), options: {}, moduleUrl: "chosen-wasm",
+      requestDeadlineMs: 5, assets: { createWorker: () => worker as unknown as Worker } });
+    if (ready) worker.dispatchEvent(new MessageEvent("message", { data: { type: "worker-ready" } }));
+    await assert.rejects(pending, (error: unknown) => error instanceof EngineWebAdapterError
+      && error.code === "session.open" && error.cause instanceof BrowserBootError
+      && error.cause.operation === "scratch-deadline");
+    assert.equal(worker.terminated, true);
+  }
+});
+
+test("delegated scratch retains caller Worker URL, Wasm URL and abort reason", async () => {
+  const worker = new FailingWorker(); const controller = new AbortController();
+  const workerUrl = new URL("https://caller.invalid/scratch.js");
+  let received: unknown;
+  worker.postMessage = (request?: unknown) => { received = request; };
+  const opening = scratchBootWithWorker({ document: new Uint8Array([7]), options: {}, moduleUrl: "chosen-wasm",
+    signal: controller.signal, assets: { scratchWorkerUrl: workerUrl, createWorker(url, options) {
+      assert.equal(url, workerUrl); assert.deepEqual(options, { type: "module" }); return worker as unknown as Worker;
+    } } });
+  worker.dispatchEvent(new MessageEvent("message", { data: { type: "worker-ready" } }));
+  assert.equal((received as { moduleUrl: string }).moduleUrl, "chosen-wasm");
+  const reason = new Error("caller stopped"); controller.abort(reason);
+  await assert.rejects(opening, (error: unknown) => error === reason);
+  assert.equal(worker.terminated, true);
+});
+
+test("SDK host defaults wait for verified lease, forward URLs and install the SDK feed first", async () => {
+  const events: string[] = []; const context = fakeContext(events); const verified = deferred<StemSessionLease>();
+  let contexts = 0; let scratches = 0;
+  const hostModuleUrl = `data:text/javascript,${encodeURIComponent(`
+    export async function createMisoAudioWorkletHost(request) {
+      if (request.context.modules.at(-1) !== "chosen-feed" || request.context.state !== "suspended"
+        || request.simd128ModuleUrl !== "chosen-wasm" || request.workletModuleUrl !== "chosen-worklet"
+        || request.options.consoleCommandQueueRecords !== 0n) throw new Error("wrong forwarded host request");
+      return { node: { connect() {}, disconnect() {} }, async dispose() { request.context.modules.push("disposed"); } };
+    }
+  `)}`;
+  const opening = openEngineWebSession({
+    ...baseOptions(), capabilityScope: capabilities(), console: false,
+    store: { async open() { return this; }, async openSession() { events.push("store"); return verified.promise; } },
+    scratchBoot: async () => { scratches++; return { sampleRateHz: 48000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", sources: [{ id: "source", channels: 1, frames: 4n }], tracks: [] }; },
+    createContext: () => { contexts++; events.push("context"); return context; },
+    createAttachNode: () => ({ port: { postMessage(message) {
+      const request = message as { op: string; rings?: SharedArrayBuffer[] };
+      for (const ring of request.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+    } }, disconnect() {} }),
+    createPump: async ({ sources }) => {
+      for (const source of sources) Atomics.store(new Int32Array(source.ring), MSB1_CONTROL.WROTE, 1);
+      return { async seekFrames() { return 2n; }, close() {} };
+    },
+    assets: { engineHostModuleUrl: hostModuleUrl, engineWasmUrl: "chosen-wasm", engineWorkletModuleUrl: "chosen-worklet", feedWorkletModuleUrl: "chosen-feed" },
+  });
+  await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(events, ["store"]); assert.equal(contexts, 0);
+  verified.resolve({ leaseId: "verified", stems: [{ sourceId: "source", identity: IDENTITY, bytes: 8 }],
+    async read() { return new Blob(); }, async close() { events.push("lease.close"); } });
+  const session = await opening;
+  assert.equal(scratches, 1); assert.equal(contexts, 1); assert.equal(session.state, "ready");
+  await session.close(); await session.close();
+  assert.deepEqual(context.modules, ["chosen-feed", "disposed"]);
+  assert.ok(events.indexOf("context.close") < events.indexOf("lease.close"));
+});

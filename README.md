@@ -13,6 +13,10 @@ npm install @misofm/engine-web-adapter@0.2.0 @misofm/engine@0.1.0
 ```
 
 The package is ESM-only and remains pinned to exactly Engine `0.1.0`.
+The current integration was qualified with the reviewed archive from Engine
+`79900f3f1d296b2b9af215e2a87acf1628fadb06`, SHA256
+`28492361d76a6a0815302d756c98003b202155691ab9011c7884fac377deb587`.
+This is archive provenance; registry publication is a separate delivery step.
 
 ## Open a native-FLAC session
 
@@ -148,7 +152,15 @@ that provide it; it is never an untyped `TypeError` from inside the store.
 
 Package-relative asset URLs and overrides are exported from
 `@misofm/engine-web-adapter/assets`. They cover the scratch Worker, FLAC Worker,
-libFLAC Wasm, PCM pump Worker, feed worklet, and Engine assets.
+libFLAC Wasm, PCM pump Worker, feed worklet, and Engine assets. The scratch and
+feed compatibility URLs alias the SDK's packaged assets. The adapter compiles
+shape once through the SDK before delivery, then injects that shape when it opens
+the SDK engine after every stem is verified and stored. Context/host boot and PCM
+ring/feed implementation belong to the SDK; delivery, leases and pump scheduling
+remain here. Explicit factory and asset overrides retain precedence.
+SDK scratch start/load errors map to `capability.module_worker`; its shared
+`scratch-deadline` operation maps to `session.open` for either handshake or request
+expiry, retaining the typed SDK cause. Feed errors map by their SDK operation.
 Common `assets.flacWorkerUrl` and `assets.createWorker` overrides apply to the
 high-level FLAC path. A nested `flac.assets` field overrides matching common
 asset fields without discarding the other common fields; the low-level
@@ -172,8 +184,9 @@ asset fields without discarding the other common fields; the low-level
 `close()` is idempotent. The `./stems` entry exports what a caller can supply
 or replace: the canonical-PCM resolver seam, the verified store and its storage
 backends, the FLAC resolver, the pump, and the ring control words a `createPump`
-override reads. Ring arithmetic, digests, admission width, the decoder pool and
-the Worker wire protocols are package-owned and are not exported.
+override reads. The existing ring control exports are SDK re-exports. Digests,
+admission width, the decoder pool and adapter Worker protocols remain internal;
+PCM ring arithmetic is owned by the SDK.
 
 ## Verification
 

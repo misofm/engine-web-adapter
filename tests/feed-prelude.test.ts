@@ -1,3 +1,6 @@
+import { attachEngineFeed, prepareEngineFeed } from "../src/feed.js";
+import { EngineWebAdapterError } from "../src/errors.js";
+import { PcmFeedError } from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -73,4 +76,25 @@ test("worklet drain contains no first-use typed-array or tail subview allocation
   const drain = source.slice(source.indexOf("drainSharedRing(ring)"), source.indexOf("/** The rings' way in"));
   assert.equal(/new Uint8Array\s*\(/u.test(drain), false);
   assert.equal(/\.subarray\s*\(/u.test(drain), false);
+});
+
+test("SDK feed errors translate by operation and retain their typed cause", async () => {
+  await assert.rejects(prepareEngineFeed({ audioWorklet: { async addModule() { throw new Error("load"); } } }),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "capability.audio_worklet"
+      && error.cause instanceof PcmFeedError && error.cause.operation === "moduleLoad");
+  const options = { context: {} as BaseAudioContext, sources: [{ sourceId: "a", channels: 1 as const }], quantumFrames: 4 };
+  assert.throws(() => attachEngineFeed({ ...options, createNode: () => { throw new Error("node"); } }),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.open"
+      && error.cause instanceof PcmFeedError && error.cause.operation === "nodeCreate");
+  let disconnected = 0;
+  assert.throws(() => attachEngineFeed({ ...options, createNode: () => ({ port: { postMessage() { throw new Error("post"); } }, disconnect() { disconnected++; } }) }),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.open"
+      && error.cause instanceof PcmFeedError && error.cause.operation === "attachPost");
+  assert.equal(disconnected, 1);
+  const feed = attachEngineFeed({ ...options, createNode: () => ({ port: { postMessage() {} }, disconnect() { disconnected++; } }) });
+  await assert.rejects(feed.ready({ timeoutMs: 0, now: () => 0 }), (error: unknown) => error instanceof EngineWebAdapterError
+    && error.code === "session.open" && error.cause instanceof PcmFeedError && error.cause.operation === "readyTimeout");
+  await assert.rejects(feed.ready(), (error: unknown) => error instanceof EngineWebAdapterError
+    && error.code === "session.closed" && error.cause instanceof PcmFeedError && error.cause.operation === "closed");
+  feed.close(); assert.equal(disconnected, 2);
 });
