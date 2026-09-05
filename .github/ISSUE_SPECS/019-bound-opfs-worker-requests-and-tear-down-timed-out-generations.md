@@ -176,3 +176,45 @@ direct OPFS worker timeout and physical sync-handle paths remain covered by the
 neighboring worker-backed tests. No public interface or worker protocol changed;
 the storage constructor comment was corrected to describe client-owned deadline
 teardown.
+# Adapter #19 — attempt 3 Sol-approved test-only brief
+
+## Decision
+
+Attempt 2 at `8c0b54d` is **FAIL on evidence only**. The production generation fixes are accepted provisionally; the dedicated Astra review asserts no new production defect. Attempt 3 is one final, test-only evidence tranche. It must wait until SDK #405 reaches its root checkpoint.
+
+## Frozen scope and allowlist
+
+Allowed changes:
+
+- `.github/ISSUE_SPECS/019-bound-opfs-worker-requests-and-tear-down-timed-out-generations.md` — record attempt-3 evidence and verdict only.
+- `tests/opfs-storage.test.ts` — repair strict test typing and add the complete focused regression tranche.
+
+Do not edit `src/`, worker protocol, backends, public types, product APIs, or add a test framework. A newly observed production failure stops this tranche for Sol rebriefing; it does not authorize an implementation change.
+
+## Required test tranche
+
+Build one typed, reusable worker/OPFS harness in the existing test file and use it for all cases below.
+
+1. **Strict callback model.** Give `message`, `error`, and `messageerror` listeners their real callback signatures so `npm run typecheck` has no TS2345 suppression or broad `any`. Track active and historical listeners separately. Historical delivery must invoke the callbacks captured for the retired worker even after `removeEventListener`/`terminate`; it must not iterate an already-empty active set.
+
+2. **Real timed-out writer ownership.** Exercise `VerifiedStemStore` through the real `OpfsStorageBackend` and `OpfsWorkerClient`. On `write-open`, the fake worker must create the actual staging file and acquire its sync-access handle before withholding the reply. Deadline termination closes exactly the handles owned by that worker generation. Keep an unrelated handle open as a sentinel and prove termination does not close it.
+
+3. **Surgical store cleanup.** Seed a valid existing cache entry and index, then time out a different stem after its staging handle exists. Assert bounded rejection, timed generation termination, release of that staging lock, removal of only that staging object, absence of the failed final/index row, and byte-for-byte preservation of the valid entry/index. As a discriminator, temporarily removing the existing `VerifiedStemStore` catch cleanup must make this test fail because the staging object remains; restore the source before committing.
+
+4. **Replacement-alive interleavings.** Start and ready a replacement generation before old promise continuations settle. Deliver the retired worker's historical `ready`, `error`, `messageerror`, and held success reply while the replacement is awaiting ready and again after it is usable. Assert the replacement stays alive and its listener, pending-request, and termination counts do not change.
+
+5. **Pending operations and stale releases.** Cover no-reply handshake plus no-reply open/write, two concurrent writers, and explicit client close. Each pending operation settles exactly once with the existing error/code. After replacement readiness, invoke old writer `write`, `close`, and `abort`; each must fail locally without posting to, releasing, or terminating the replacement generation.
+
+6. **Resource accounting.** For every case assert exact timer creation/clear or firing, active listener counts, pending-request count, promise settlement count, per-generation termination count, posted-message count, and owned-handle count. Cleanup assertions must run while the replacement remains alive, not only after global teardown.
+
+The prior tests that merely call healthy `writer.abort()`, fabricate an immediate `MemoryBackend` `TimeoutError`, suppress late replies after termination, or emit through active listener sets do not satisfy these gates and should be replaced or tightened rather than counted as evidence.
+
+## Validation order
+
+1. Run `npm run typecheck` first; stop immediately on any test typing error.
+2. Run the focused OPFS storage tests, including the temporary catch-cleanup removal red check and the restored-source green run.
+3. Run the adapter's existing full `npm test` and `npm run check` gates.
+4. Run the existing packed OPFS browser gate once against the exact packed adapter tree and record browser/runtime versions.
+5. Record commands, exit status, and concise discriminator results in issue #19's local evidence section.
+
+No broader browser matrix is required. Attempt 3 receives one implementation pass and one independent Astra review. If any frozen gate fails, stop: there is no fourth attempt; preserve the evidence and rescope under a successor issue.
