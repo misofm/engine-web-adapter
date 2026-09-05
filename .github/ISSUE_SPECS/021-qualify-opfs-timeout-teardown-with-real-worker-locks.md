@@ -72,3 +72,7 @@ authorized by this record; no product or protocol change was attempted.
 ## Dedicated Astra verdict — FAIL to qualify (2026-09-05)
 
 The single allowed attempt is consumed. Astra confirmed the experiment failed on worker-module import 404s before any physical-lock probe. The shipped runner, package, tests, and product source are unchanged; this establishes no browser OPFS limitation or package regression. The original remaining teardown claims stay unqualified. The dedicated review is attached to PR #20. No further qualification iteration or production change is authorized under this issue.
+
+## Renewed execution for the confirmed app goal
+
+After the historical stop, the user explicitly confirmed the layer plan, requested execution of the rest with Astra medium, and required real end-to-end operation in misofm/app without shortcuts. Resume the existing OPFS reliability and cleanup proof under that instruction, retaining prior evidence and the original functional/resource requirements. Use the existing packed runner with the package-selected real Worker URL and host-side event interception; do not relocate worker module source or replace real locks with a modeled handle. Complete the remaining real-lock, stale-generation and owned-cleanup checks with a compact existing fixture. No alternate backend, codec, protocol or general test framework is added. Source stays unchanged unless a concrete product defect is reported and the same bounded correction scope is amended before implementation. A separate Astra medium reviewer verifies the completed result.
