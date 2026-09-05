@@ -6,7 +6,7 @@ The existing app's memory gate observes live and peak delivered/decoded buffer o
 
 Begin on isolated codex/dx-app-ready, combining independently reviewed adapter#24/#25/#27/#29 and exact reviewed SDK#434 source8a19a848. The SDK archive is /private/tmp/dx-reviewed-sdk434/misofm-engine-0.1.0.tgz with SHA2565694c21f1e4eb99f6366d7bcc0330f0af06744768810edc3cc6e0e186df09488. Preserve the actual compiled SDK bytes and dependency metadata; no registry publication claim.
 
-All named behavior below is the frozen implementation scope. The quota amendment changed #ensure into a recheck loop: active ownership belongs to one logical #ensure operation across that loop, begins once after its first actual admission grant, and ends once after final ingest/cleanup. Do not count iterations separately or overwrite the reviewed quota/lock algorithm. Astra medium implements; a dedicated independent Astra medium reviewer checks. Root checkpoints a focused-green tranche before full validation.
+All named behavior below is the frozen implementation scope. The reviewed quota implementation uses two passes: warm verification, reclamation outside the target stem lock, then reacquired verification/ingest. Active ownership belongs to that entire logical #ensure operation, begins once after its first actual admission grant, and ends once after final ingest/cleanup. Do not count the two verification passes separately, invent a loop, or overwrite the reviewed quota/lock algorithm. Astra medium implements; a dedicated independent Astra medium reviewer checks. Root checkpoints a focused-green tranche before full validation.
 
 ## Public contract
 
