@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { EngineWebAdapterError } from "../src/errors.js";
-import { OpfsStorageBackend } from "../src/stems/storage.js";
+import { MemoryStemStorageBackend, OpfsStorageBackend } from "../src/stems/storage.js";
 import { OpfsWriteWorkerClient } from "../src/stems/opfs-worker-client.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { IncrementalSha256 } from "../src/stems/sha256.js";
@@ -254,6 +254,197 @@ function historicalWorkerHarness(options: { readonly ready?: boolean } = {}) {
   if (options.ready === true) queueMicrotask(() => emit({ type: "worker-ready", writeSupport: true }));
   return { worker, messages, emit, emitError, emitMessageError, listeners, history, errors, messageErrors, get terminations() { return terminations; } };
 }
+
+/** A deterministic worker seam for lifecycle tests. It retains historical listeners
+ * after terminate so late events exercise the client's generation guards. */
+function controlledWorkerHarness() {
+  const listeners = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
+  const history = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
+  const errorListeners = new Set<(event: ErrorEvent) => void>();
+  const messageErrorListeners = new Set<() => void>();
+  const messages: OpfsWorkerRequest[] = [];
+  let terminations = 0;
+  const worker = {
+    postMessage(message: OpfsWorkerRequest) { messages.push(message); },
+    terminate() { terminations += 1; },
+    addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
+      if (type === "message") { listeners.add(listener); history.add(listener); }
+      if (type === "error") errorListeners.add(listener);
+      if (type === "messageerror") messageErrorListeners.add(listener);
+    },
+    removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
+      if (type === "message") listeners.delete(listener);
+      if (type === "error") errorListeners.delete(listener);
+      if (type === "messageerror") messageErrorListeners.delete(listener);
+    },
+  } satisfies OpfsWorkerLike;
+  const emit = (message: OpfsWorkerResponse) => {
+    for (const listener of [...history]) listener({ data: message } as never);
+  };
+  const emitError = () => { for (const listener of [...errorListeners]) listener({ error: new Error("late") } as never); };
+  const emitMessageError = () => { for (const listener of [...messageErrorListeners]) listener(); };
+  return { worker, messages, emit, emitError, emitMessageError, listeners, history, errorListeners, messageErrorListeners, get terminations() { return terminations; } };
+}
+
+test("a never-ready generation times out once and a late ready cannot poison its replacement", async () => {
+  const generations = [controlledWorkerHarness(), controlledWorkerHarness()];
+  let next = 0;
+  const client = new OpfsWriteWorkerClient({ deadlineMs: 15, createWorker: () => generations[next++]!.worker });
+  await assert.rejects(client.createWriter("folder", "never-ready"), (error: unknown) =>
+    error instanceof DOMException && error.name === "TimeoutError");
+  assert.equal(generations[0]!.terminations, 1);
+  assert.equal(generations[0]!.listeners.size, 0);
+  assert.equal(generations[0]!.errorListeners.size, 0);
+  assert.equal(generations[0]!.messageErrorListeners.size, 0);
+  generations[0]!.emit({ type: "worker-ready", writeSupport: true });
+  generations[0]!.emitError();
+  generations[0]!.emitMessageError();
+  const opening = client.createWriter("folder", "fresh");
+  generations[1]!.emit({ type: "worker-ready", writeSupport: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  const open = generations[1]!.messages.find((message) => message.type === "write-open")!;
+  generations[1]!.emit({ type: "opfs-ok", requestId: open.requestId });
+  const writer = await opening;
+  const closing = writer.close();
+  await new Promise((resolve) => setImmediate(resolve));
+  const close = generations[1]!.messages.find((message) => message.type === "write-close")!;
+  generations[1]!.emit({ type: "opfs-ok", requestId: close.requestId });
+  await closing;
+  assert.equal(generations[1]!.terminations, 1);
+});
+
+test("close during handshake, open, and write settles once and permits a fresh generation", async () => {
+  const phases = ["handshake", "open", "write"] as const;
+  for (const phase of phases) {
+    const first = controlledWorkerHarness();
+    const second = controlledWorkerHarness();
+    let generation = 0;
+    const client = new OpfsWriteWorkerClient({ deadlineMs: 100, createWorker: () => (generation++ === 0 ? first.worker : second.worker) });
+    const opening = client.createWriter("folder", phase);
+    if (phase !== "handshake") {
+      first.emit({ type: "worker-ready", writeSupport: true });
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    if (phase === "write") {
+      const open = first.messages.find((message) => message.type === "write-open")!;
+      first.emit({ type: "opfs-ok", requestId: open.requestId });
+      const writer = await opening;
+      const pending = writer.write(new Uint8Array([1]));
+      client.close();
+      await assert.rejects(pending, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+    } else {
+      client.close();
+      await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+    }
+    client.close();
+    assert.equal(first.terminations, 1);
+    const replacement = client.createWriter("folder", "replacement");
+    second.emit({ type: "worker-ready", writeSupport: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    const open = second.messages.find((message) => message.type === "write-open")!;
+    second.emit({ type: "opfs-ok", requestId: open.requestId });
+    const writer = await replacement;
+    const closing = writer.close();
+    await new Promise((resolve) => setImmediate(resolve));
+    const close = second.messages.find((message) => message.type === "write-close")!;
+    second.emit({ type: "opfs-ok", requestId: close.requestId });
+    await closing;
+    assert.equal(second.terminations, 1);
+  }
+});
+
+test("a shared writer timeout rejects both writers and leaves stale events inert", async () => {
+  const first = controlledWorkerHarness();
+  const second = controlledWorkerHarness();
+  let generation = 0;
+  const client = new OpfsWriteWorkerClient({ deadlineMs: 15, createWorker: () => (generation++ === 0 ? first.worker : second.worker) });
+  const firstOpening = client.createWriter("folder", "one");
+  const secondOpening = client.createWriter("folder", "two");
+  first.emit({ type: "worker-ready", writeSupport: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  const opens = first.messages.filter((message) => message.type === "write-open");
+  for (const open of opens) first.emit({ type: "opfs-ok", requestId: open.requestId });
+  const [one, two] = await Promise.all([firstOpening, secondOpening]);
+  const oneWrite = one.write(new Uint8Array([1]));
+  const twoWrite = two.write(new Uint8Array([2]));
+  await assert.rejects(oneWrite, (error: unknown) => error instanceof DOMException && error.name === "TimeoutError");
+  await assert.rejects(twoWrite, (error: unknown) => error instanceof DOMException && error.name === "TimeoutError");
+  assert.equal(first.terminations, 1);
+  for (const message of first.messages.filter((value) => value.type === "write")) {
+    first.emit({ type: "opfs-ok", requestId: message.requestId });
+  }
+  await assert.rejects(one.write(new Uint8Array([3])), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+  const replacement = client.createWriter("folder", "new");
+  second.emit({ type: "worker-ready", writeSupport: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  const open = second.messages.find((message) => message.type === "write-open")!;
+  second.emit({ type: "opfs-ok", requestId: open.requestId });
+  const writer = await replacement;
+  const closing = writer.close();
+  await new Promise((resolve) => setImmediate(resolve));
+  const close = second.messages.find((message) => message.type === "write-close")!;
+  second.emit({ type: "opfs-ok", requestId: close.requestId });
+  await closing;
+});
+
+test("termination closes the only owned physical lock and preserves unrelated files", async () => {
+  const root = new FakeDirectory();
+  const backend = backendFor(root, "opfs-owned-lock-v1");
+  await backend.open();
+  const writer = await backend.createWriter("owned");
+  await writer.write(new Uint8Array([1]));
+  const folder = root.directories.get("opfs-owned-lock-v1")!;
+  folder.files.set("unrelated", { bytes: new Uint8Array([9]) });
+  await writer.abort(new Error("terminate"));
+  assert.equal(folder.locked.size, 0);
+  assert.deepEqual([...folder.files.get("unrelated")!.bytes], [9]);
+});
+
+test("timed staging open maps stem.read_deadline and preserves verified bytes and index", async () => {
+  const cachedBytes = new Uint8Array([4, 5, 6]);
+  const cachedHash = new IncrementalSha256();
+  cachedHash.update(cachedBytes);
+  const cachedIdentity = `sha256:${cachedHash.digestHex()}` as StemIdentity;
+  const bytes = new Uint8Array([7, 8, 9]);
+  const contentHash = new IncrementalSha256();
+  contentHash.update(bytes);
+  const identity = `sha256:${contentHash.digestHex()}` as StemIdentity;
+  const finalName = `sha256-${cachedIdentity.slice("sha256:".length)}`;
+  const index = JSON.stringify({ version: 1, stems: { [cachedIdentity]: { bytes: cachedBytes.byteLength, pins: [], lastUsedAt: 1 } } }) + "\n";
+  const ownedStaging = `staging-owned-${identity.slice("sha256:".length)}`;
+  const base = new MemoryStemStorageBackend({ files: {
+    [finalName]: cachedBytes,
+    "index.json": index,
+    [ownedStaging]: new Uint8Array([7]),
+    "staging-foreign": new Uint8Array([8]),
+  } });
+  const timedBackend = {
+    open: () => base.open(),
+    list: () => base.list(),
+    exists: (name: string) => base.exists(name),
+    read: (name: string) => base.read(name),
+    readText: (name: string) => base.readText(name),
+    createWriter: async (name: string) => {
+      if (name.startsWith("staging-")) throw new DOMException("Stem read deadline exceeded", "TimeoutError");
+      return base.createWriter(name);
+    },
+    move: (from: string, to: string) => base.move(from, to),
+    remove: (name: string) => base.remove(name),
+    estimate: () => base.estimate(),
+  };
+  const store = new VerifiedStemStore({ backend: timedBackend, instanceId: "owned", readDeadlineMs: 15 });
+  const beforeIndex = await base.readText("index.json");
+  const session = store.openSession({
+    leaseId: "lease-timeout",
+    stems: [{ sourceId: "source", identity, bytes: bytes.byteLength }],
+    resolver: { async resolve() { return { stream: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } }) }; } },
+  });
+  await assert.rejects(session, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.read_deadline");
+  assert.deepEqual([...new Uint8Array(await (await base.read(finalName)).arrayBuffer())], [...cachedBytes]);
+  assert.equal(await base.readText("index.json"), beforeIndex);
+  assert.equal(await base.exists(ownedStaging), false);
+  assert.deepEqual([...new Uint8Array(await (await base.read("staging-foreign")).arrayBuffer())], [8]);
+});
 
 test("a timed-out write invalidates the writer and makes its historical reply inert", async () => {
   const generation = historicalWorkerHarness();

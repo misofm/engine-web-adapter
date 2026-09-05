@@ -159,3 +159,20 @@ generation, so historical replies cannot mutate a later generation.
 
 The full handshake/open/write/close and VerifiedStemStore gate matrix still
 requires executable coverage before PASS; no claim is made for those rows yet.
+
+## Attempt 2 supplemental evidence (Luna, 2026-09-05)
+
+Added the remaining lifecycle regressions to `tests/opfs-storage.test.ts`:
+
+- a never-ready handshake times out once, removes listeners, ignores late ready/error/messageerror, and a replacement generation succeeds;
+- close during handshake, open, and write is idempotent and a replacement generation succeeds;
+- two shared writers reject on one operation timeout, with stale replies inert and a fresh generation usable;
+- the real OPFS fake's owned sync handle is released without removing an unrelated file;
+- a timed staging admission through `VerifiedStemStore` maps to `stem.read_deadline`, removes only the owned staging name, and preserves a pre-existing verified final/index byte-for-byte while a distinct requested identity misses the warm cache.
+
+Focused validation: `npm test` passed 107/107. The timed store case uses the
+existing deterministic storage seam for the injected no-progress timeout; the
+direct OPFS worker timeout and physical sync-handle paths remain covered by the
+neighboring worker-backed tests. No public interface or worker protocol changed;
+the storage constructor comment was corrected to describe client-owned deadline
+teardown.

@@ -76,9 +76,9 @@ export class OpfsStorageBackend implements StemStorageBackend {
     this.#writes = new OpfsWriteWorkerClient({
       ...(options.assets === undefined ? {} : { assets: options.assets }),
       ...(options.createWorker === undefined ? {} : { createWorker: options.createWorker }),
-      // Let the worker generation fail-close just before the public backend
-      // deadline abandons its promise. This makes termination deterministic
-      // when both timers are scheduled in the same turn.
+      // The worker generation owns the same bounded deadline as backend
+      // operations, so a stalled handshake/request is torn down with its
+      // physical handles before a replacement generation can be observed.
       deadlineMs: this.#readDeadlineMs,
     });
   }
