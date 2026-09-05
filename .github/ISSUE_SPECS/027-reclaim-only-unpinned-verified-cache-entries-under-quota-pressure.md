@@ -85,3 +85,7 @@ index file, and released opening/mutation locks.
 This final spec evidence awaits root checkpoint and the same independent
 reviewer's exact-fix recheck. Attempt 1's FAIL is retained; attempt 2 does not
 yet claim independent approval.
+
+## Dedicated Astra medium attempt2 PASS
+
+Independent review at4882858 verifies reclamation metadata quota failures return stem.quota with original cause and source details. The independent reproducer and focused28 tests pass; accepted first-review ownership/order findings remain valid. Full137-test/package evidence is upstream. Report attached to PR30. This completes quota reclamation preserving pins and in-progress opens; app integration remains separate.
