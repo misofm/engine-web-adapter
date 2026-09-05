@@ -244,3 +244,14 @@ The three-attempt stop applies. No further implementation/revision is authorized
 ## Renewed execution for the confirmed app goal
 
 After the historical stop, the user explicitly confirmed the layer plan, requested execution of the rest with Astra medium, and required real end-to-end operation in misofm/app without shortcuts. Resume the existing OPFS reliability and cleanup proof under that instruction, retaining prior evidence and the original functional/resource requirements. Use the existing packed runner with the package-selected real Worker URL and host-side event interception; do not relocate worker module source or replace real locks with a modeled handle. Complete the remaining real-lock, stale-generation and owned-cleanup checks with a compact existing fixture. No alternate backend, codec, protocol or general test framework is added. Source stays unchanged unless a concrete product defect is reported and the same bounded correction scope is amended before implementation. A separate Astra medium reviewer verifies the completed result.
+
+## Concrete production correction amendment
+
+The renewed real-worker probe disproved the earlier experimental-only diagnosis: ordinary forwarding createWorker fails after packaging because its worker URL loses relative imports. A truthful locked-file deletion oracle also proves outer ingest timeout can race the worker deadline and attempt cleanup while the lock remains held. Root authorizes the following minimum corrections under #19, with #21 retaining the real-lock/generation proof:
+
+- scripts/copy-assets.mjs: use the already declared Vite build API to emit the existing OPFS worker entry at the same dist/internal URL with a complete bundled module graph; retain declarations and add no dependency/query hack.
+- src/stems/storage.ts: optional AbortSignal on the existing StemStorageBackend.createWriter(name, signal?) seam and its implementations; memory backend checks before mutation.
+- src/stems/opfs-worker-client.ts: honor signal while writer open/lifetime is owned, synchronously tear down only the captured worker generation on abort; clear signal listeners on individual settlement and generation teardown.
+- src/stems/store.ts: own an ingest controller, pass its signal into createWriter, and abort before cleanup on failure even if no writer handle returned. Do not wait indefinitely for a pending open or special-case OPFS in the generic store.
+
+Keep existing protocol, cache identity, verification, error semantics and request/store bounds. Other valid cached entries remain untouched. Verify actual browser lock release and cleanup before public rejection; if browser termination needs additional bounded handling, report the evidence before extending the correction. Existing test/runner/spec paths remain allowed. These are demonstrated packaging and cancellation-ownership defects, not new storage or playback features.

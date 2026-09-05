@@ -99,3 +99,14 @@ staging-absence assertion; `/private/tmp/dx-21-renewed-focused.log`.
 
 Both findings were reported to root before production edits. The working
 qualification changes are not a PASS claim. Prior failed evidence is retained.
+
+## Concrete production correction amendment
+
+The renewed real-worker probe disproved the earlier experimental-only diagnosis: ordinary forwarding createWorker fails after packaging because its worker URL loses relative imports. A truthful locked-file deletion oracle also proves outer ingest timeout can race the worker deadline and attempt cleanup while the lock remains held. Root authorizes the following minimum corrections under #19, with #21 retaining the real-lock/generation proof:
+
+- scripts/copy-assets.mjs: use the already declared Vite build API to emit the existing OPFS worker entry at the same dist/internal URL with a complete bundled module graph; retain declarations and add no dependency/query hack.
+- src/stems/storage.ts: optional AbortSignal on the existing StemStorageBackend.createWriter(name, signal?) seam and its implementations; memory backend checks before mutation.
+- src/stems/opfs-worker-client.ts: honor signal while writer open/lifetime is owned, synchronously tear down only the captured worker generation on abort; clear signal listeners on individual settlement and generation teardown.
+- src/stems/store.ts: own an ingest controller, pass its signal into createWriter, and abort before cleanup on failure even if no writer handle returned. Do not wait indefinitely for a pending open or special-case OPFS in the generic store.
+
+Keep existing protocol, cache identity, verification, error semantics and request/store bounds. Other valid cached entries remain untouched. Verify actual browser lock release and cleanup before public rejection; if browser termination needs additional bounded handling, report the evidence before extending the correction. Existing test/runner/spec paths remain allowed. These are demonstrated packaging and cancellation-ownership defects, not new storage or playback features.
