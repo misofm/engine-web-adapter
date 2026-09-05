@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { createIngestDiagnostics } from "../src/index.js";
+import { VerifiedStemStore } from "../src/stems/store.js";
+import { MemoryStemStorageBackend } from "../src/stems/storage.js";
+import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -381,9 +386,19 @@ test("mid-body retry resumes at Worker credit without duplicated accepted bytes"
       return exactResponse(source, start, end);
     }),
   });
-  const reader = (await resolver.resolve(IDENTITY)).stream.getReader();
-  assert.deepEqual([...(await reader.read()).value!], [9, 8, 7, 6]);
-  assert.equal((await reader.read()).done, true);
+  const pcm = new Uint8Array([9, 8, 7, 6]);
+  const identity = `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const;
+  const diagnostics = createIngestDiagnostics();
+  const lease = await new VerifiedStemStore({ backend: new MemoryStemStorageBackend() }).openSession({
+    leaseId: "retry", stems: [{ sourceId: "source", identity, bytes: pcm.length }],
+    resolver, admission: new BoundedStemAdmission(1), ingestDiagnostics: diagnostics,
+  });
+  assert.deepEqual(new Uint8Array(await (await lease.read(identity)).arrayBuffer()), pcm);
+  assert.deepEqual(diagnostics.snapshot().residency, {
+    limit: 1, deliveredBytes: 0, deliveredPeakBytes: 42, decodedBytes: 0, decodedPeakBytes: 4,
+    containers: 0, containersPeak: 1, active: 0, activePeak: 1,
+  });
+  await lease.close();
   assert.deepEqual(ranges, ["bytes=0-41", "bytes=0-41", "bytes=42-45", "bytes=64-67"]);
   assert.deepEqual(worker.acceptedInputBytes, [4]);
 });
@@ -501,6 +516,70 @@ test("zero-high-water stream returns credit only after consuming one of exactly 
   assert.deepEqual([...(await reader.read()).value!], [2]);
   assert.deepEqual([...(await reader.read()).value!], [3]);
   assert.equal((await reader.read()).done, true);
+
+  for (const outcome of ["success", "cancel", "write-failure"] as const) {
+    const physical = new TwoCreditWorker();
+    const diagnostics = createIngestDiagnostics();
+    const admission = new BoundedStemAdmission(1);
+    const pcm = new Uint8Array([1, 2, 3]);
+    const identity = `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const;
+    const packageResolver = createFlacStemResolver({
+      admission, createWorker: () => physical, locate: () => "https://caller.invalid/stem",
+      fetch: responseFetch(request => {
+        const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+        return exactResponse(source, Number(match[1]), Number(match[2]));
+      }),
+    });
+    const backend = new MemoryStemStorageBackend();
+    const createWriter = backend.createWriter.bind(backend);
+    const writing = deferred<void>();
+    const settleWrite = deferred<void>();
+    const failure = new Error("store write rejected");
+    let writes = 0;
+    backend.createWriter = async name => {
+      const writer = await createWriter(name);
+      if (!name.startsWith("staging-")) return writer;
+      return { ...writer, async write(bytes) {
+        if (writes++ === 0) {
+          writing.resolve();
+          await settleWrite.promise;
+          if (outcome === "write-failure") throw failure;
+        }
+        await writer.write(bytes);
+      } };
+    };
+    const abort = new AbortController();
+    let ready = false;
+    const opening = new VerifiedStemStore({ backend }).openSession({
+      leaseId: outcome, stems: [{ sourceId: "source", identity, bytes: 3 }],
+      resolver: packageResolver, admission, ingestDiagnostics: diagnostics, signal: abort.signal,
+      onProgress: event => { if (event.stage === "ready") ready = true; },
+    });
+    const refused = outcome === "success" ? undefined : assert.rejects(opening, error =>
+      outcome === "cancel" ? error instanceof EngineWebAdapterError && error.code === "stem.cancelled" : error === failure);
+    await writing.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(physical.terminated, true, "physical decode ends before the trailing store write");
+    assert.equal(admission.stats.active, 0);
+    assert.deepEqual(diagnostics.snapshot().residency, {
+      limit: 1, deliveredBytes: 0, deliveredPeakBytes: 42, decodedBytes: 3, decodedPeakBytes: 3,
+      containers: 0, containersPeak: 1, active: 1, activePeak: 1,
+    }, "two queued backing buffers plus the handed-off buffer remain owned during the write");
+    const retained = diagnostics.snapshot();
+    if (outcome === "cancel") abort.abort("cancel queued and handed-off PCM");
+    settleWrite.resolve();
+    if (outcome === "success") {
+      const lease = await opening;
+      assert.deepEqual(new Uint8Array(await (await lease.read(identity)).arrayBuffer()), pcm);
+      await lease.close();
+    } else await refused;
+    assert.equal(ready, outcome === "success");
+    assert.equal(diagnostics.snapshot().residency!.decodedBytes, 0);
+    assert.equal(diagnostics.snapshot().residency!.active, 0);
+    assert.equal(diagnostics.snapshot().residency!.decodedPeakBytes, 3);
+    assert.equal(retained.residency!.decodedBytes, 3, "snapshots are independent values");
+  }
+
 });
 
 test("metadata locator cancellation aborts before Worker termination and rejection", async () => {

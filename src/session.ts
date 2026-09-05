@@ -1,3 +1,4 @@
+import { bindIngestDiagnostics, inheritFlacRegistration } from "./stems/ingest-diagnostics.js";
 import { ABI_LAYOUT } from "@misofm/engine";
 import type { BrowserBootPolicy } from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
@@ -42,6 +43,7 @@ import type {
 const PREFILL_TIMEOUT_MS = 2_000;
 
 export async function openEngineWebSession(options: EngineWebSessionOptions): Promise<EngineWebSession> {
+  bindIngestDiagnostics(options.ingestDiagnostics);
   const hasFlac = options.flac !== undefined;
   const hasResolver = options.resolver !== undefined;
   if (hasFlac === hasResolver) {
@@ -104,7 +106,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
         assets: { ...options.assets, ...options.flac.assets },
         admission,
       });
-      resolver = {
+      const withExpectations = (producer: StemResolver): StemResolver => ({
         resolve(identity, resolveOptions = {}) {
           const expected = expectations.get(identity);
           if (expected === undefined) {
@@ -114,9 +116,11 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
               { identity },
             ));
           }
-          return flacResolver.resolve(identity, { ...resolveOptions, expected });
+          return producer.resolve(identity, { ...resolveOptions, expected });
         },
-      };
+      });
+      resolver = withExpectations(flacResolver);
+      inheritFlacRegistration(resolver, flacResolver, withExpectations);
     } else {
       resolver = options.resolver;
     }
@@ -127,6 +131,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       leaseId,
       stems: requirements,
       resolver,
+      ...(options.ingestDiagnostics === undefined ? {} : { ingestDiagnostics: options.ingestDiagnostics }),
       ...(admission === undefined ? {} : { admission }),
       signal: abort.signal,
       ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),

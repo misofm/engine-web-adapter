@@ -1,3 +1,4 @@
+import { diagnosticResolver, initializeIngestDiagnostics, releaseDecoded, retainActive, type IngestDiagnostics } from "./ingest-diagnostics.js";
 import { EngineWebAdapterError } from "../errors.js";
 import { assertStemIdentity } from "./identity.js";
 import { deadline, IncrementalSha256, sha256Stream } from "./sha256.js";
@@ -93,6 +94,7 @@ export class VerifiedStemStore implements StemStore {
     readonly stems: readonly StemRequirement[];
     readonly resolver: StemResolver;
     readonly admission?: BoundedStemAdmission;
+    readonly ingestDiagnostics?: IngestDiagnostics;
     readonly signal?: AbortSignal;
     readonly onProgress?: (progress: StemProgress) => void;
   }): Promise<StemSessionLease> {
@@ -105,6 +107,8 @@ export class VerifiedStemStore implements StemStore {
       throw new EngineWebAdapterError("stem.cancelled", "Stem session open was cancelled", {}, options.signal.reason);
     }
 
+    const diagnostics = initializeIngestDiagnostics(options.ingestDiagnostics, options.resolver, options.admission?.limit ?? 1);
+    const resolver = diagnosticResolver(options.resolver, diagnostics);
     const controller = new AbortController();
     const detach = forwardAbort(options.signal, controller);
     // The opening owns each verified source before releasing its stem lock.
@@ -128,7 +132,7 @@ export class VerifiedStemStore implements StemStore {
       await runBounded(
         unique,
         options.admission?.limit ?? 1,
-        (stem) => this.#ensure(stem, options.resolver, controller.signal, own, options.onProgress, options.admission),
+        (stem) => this.#ensure(stem, resolver, controller.signal, own, options.onProgress, options.admission, diagnostics),
         (error) => controller.abort(error),
       );
       options.signal?.throwIfAborted();
@@ -228,33 +232,41 @@ export class VerifiedStemStore implements StemStore {
     own: (stem: StemRequirement) => Promise<void>,
     onProgress?: (progress: StemProgress) => void,
     admission?: BoundedStemAdmission,
+    diagnostics?: IngestDiagnostics,
   ): Promise<void> {
+    let releaseActive: (() => void) | undefined;
+    const admittedVerification = () => {
+      releaseActive ??= retainActive(diagnostics);
+      return this.#verifyIndexed(stem, signal, onProgress);
+    };
     const verify = () => admission === undefined
-      ? this.#verifyIndexed(stem, signal, onProgress)
-      : admission.run(() => this.#verifyIndexed(stem, signal, onProgress), signal);
-    const warm = await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
-      if (!(await verify())) return false;
-      await own(stem);
-      return true;
-    });
-    if (warm) return;
-    // Eviction may wait for another stem. Never retain this stem's lock here.
+      ? admittedVerification()
+      : admission.run(admittedVerification, signal);
     try {
-      await this.#preflight(stem.bytes, signal, true);
-    } catch (error) {
-      // Reclamation persists metadata outside the ingest error boundary.
-      if (isQuota(error)) {
-        throw new EngineWebAdapterError("stem.quota", "Origin-private storage quota is insufficient", {
-          identity: stem.identity, requiredBytes: stem.bytes,
-        }, error);
+      const warm = await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
+        if (!(await verify())) return false;
+        await own(stem);
+        return true;
+      });
+      if (warm) return;
+      // Eviction may wait for another stem. Never retain this stem's lock here.
+      try {
+        await this.#preflight(stem.bytes, signal, true);
+      } catch (error) {
+        // Reclamation persists metadata outside the ingest error boundary.
+        if (isQuota(error)) {
+          throw new EngineWebAdapterError("stem.quota", "Origin-private storage quota is insufficient", {
+            identity: stem.identity, requiredBytes: stem.bytes,
+          }, error);
+        }
+        throw error;
       }
-      throw error;
-    }
-    await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
-      // A concurrent opener may have installed the final while we reclaimed.
-      if (!(await verify())) await this.#ingest(stem, resolver, signal, onProgress);
-      await own(stem);
-    });
+      await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
+        // A concurrent opener may have installed the final while we reclaimed.
+        if (!(await verify())) await this.#ingest(stem, resolver, signal, onProgress);
+        await own(stem);
+      });
+    } finally { releaseActive?.(); }
   }
 
   async #verifyIndexed(
@@ -318,6 +330,7 @@ export class VerifiedStemStore implements StemStore {
     let writer: StemStorageWriter | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let promoted = false;
+    let consumed = false;
     try {
       const resolved = await deadline(
         Promise.resolve(optionsResolve(resolver, stem.identity, signal, onProgress)),
@@ -325,22 +338,26 @@ export class VerifiedStemStore implements StemStore {
         signal,
       );
       if (!(resolved.stream instanceof ReadableStream)) throw new TypeError("Resolver must return a ReadableStream");
-      writer = await deadline(this.#backend.createWriter(staging, writerLifetime.signal), this.#readDeadlineMs, signal);
       reader = resolved.stream.getReader();
+      writer = await deadline(this.#backend.createWriter(staging, writerLifetime.signal), this.#readDeadlineMs, signal);
       const hash = new IncrementalSha256();
       let bytes = 0;
       while (true) {
         const result = await deadline(reader.read(), this.#readDeadlineMs, signal);
-        if (result.done) break;
-        if (!(result.value instanceof Uint8Array)) throw new TypeError("Resolver chunks must be Uint8Array");
-        bytes += result.value.byteLength;
-        if (bytes > stem.bytes) throw integrity(stem, bytes, "byte count exceeds declaration");
-        hash.update(result.value);
-        await deadline(writer.write(result.value), this.#readDeadlineMs, signal);
-        onProgress?.({
-          stage: "ingesting", sourceId: stem.sourceId, identity: stem.identity,
-          bytes, totalBytes: stem.bytes, byteKind: "pcm",
-        });
+        if (result.done) { consumed = true; break; }
+        try {
+          if (!(result.value instanceof Uint8Array)) throw new TypeError("Resolver chunks must be Uint8Array");
+          bytes += result.value.byteLength;
+          if (bytes > stem.bytes) throw integrity(stem, bytes, "byte count exceeds declaration");
+          hash.update(result.value);
+          await deadline(writer.write(result.value), this.#readDeadlineMs, signal);
+          onProgress?.({
+            stage: "ingesting", sourceId: stem.sourceId, identity: stem.identity,
+            bytes, totalBytes: stem.bytes, byteKind: "pcm",
+          });
+        } finally {
+          if (result.value instanceof Uint8Array) releaseDecoded(result.value.buffer);
+        }
       }
       const observed = hash.digestHex();
       if (bytes !== stem.bytes || observed !== digest(stem.identity)) {
@@ -373,7 +390,7 @@ export class VerifiedStemStore implements StemStore {
       }
       throw error;
     } finally {
-      if (signal.aborted) await reader?.cancel(signal.reason).catch(() => undefined);
+      if (!consumed) await reader?.cancel(signal.reason).catch(() => undefined);
       try { reader?.releaseLock(); } catch { /* deadline may leave a read pending */ }
     }
   }

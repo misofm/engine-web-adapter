@@ -1,3 +1,5 @@
+import { deliveredRangeOwner, registerFlacResolver, releaseDecoded, retainDecoded, type IngestDiagnostics } from "./ingest-diagnostics.js";
+import { MAXIMUM_CANONICAL_OUTPUT_BYTES } from "./native-flac-decoder.js";
 import { EngineWebAdapterError } from "../errors.js";
 import { ADAPTER_ASSETS, type AdapterAssetOverrides } from "../assets.js";
 import type { BoundedStemAdmission } from "./flac-admission.js";
@@ -49,6 +51,10 @@ function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): E
 
 /** Create the advanced low-level native-FLAC resolver used by session integration. */
 export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolver {
+  return makeFlacStemResolver(options);
+}
+
+function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: IngestDiagnostics, sharedPool?: FlacWorkerPool): StemResolver {
   if (typeof options.locate !== "function") throw new TypeError("createFlacStemResolver requires locate");
   const decodeNoProgressMs = options.decodeNoProgressMs ?? 30_000;
   if (!Number.isSafeInteger(decodeNoProgressMs) || decodeNoProgressMs < 1) {
@@ -63,8 +69,8 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
     ...(options.memoryBudgetBytes === undefined ? {} : { memoryBudgetBytes: options.memoryBudgetBytes }),
     ...(options.maximumWorkers === undefined ? {} : { maximumWorkers: options.maximumWorkers }),
   };
-  const pool = new FlacWorkerPool(poolOptions);
-  return {
+  const pool = sharedPool ?? new FlacWorkerPool(poolOptions);
+  const resolver: StemResolver = {
     resolve(identity, resolveOptions = {}): Promise<ResolvedStem> {
       assertStemIdentity(identity);
       const controller = new AbortController();
@@ -74,6 +80,11 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
       let ended = false;
       let failure: unknown;
       const blocks: ArrayBuffer[] = [];
+      const retainRange = deliveredRangeOwner(diagnostics);
+      const discardBlocks = () => {
+        let block: ArrayBuffer | undefined;
+        while ((block = blocks.shift()) !== undefined) releaseDecoded(block);
+      };
       let wake: (() => void) | undefined;
       const notify = () => { const current = wake; wake = undefined; current?.(); };
       let stopActive: ((error: unknown, sendCancel: boolean) => void) | undefined;
@@ -85,6 +96,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
       );
       const cancel = (reason: unknown) => {
         const error = cancelled(reason);
+        discardBlocks();
         decoderInput?.abort();
         if (stopActive === undefined) controller.abort(error);
         else stopActive(error, true);
@@ -125,7 +137,10 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
             stopping = true;
             stopActive = undefined;
             cleanup();
-            if (!successful) decoderInput?.abort();
+            if (!successful) {
+              discardBlocks();
+              decoderInput?.abort();
+            }
             if (sendCancel) {
               try { physical.postMessage({ type: "cancel", requestId }); } catch { /* termination is authoritative */ }
             }
@@ -149,20 +164,26 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
             ...(options.readDeadlineMs === undefined ? {} : { readDeadlineMs: options.readDeadlineMs }),
             ...(options.maximumAttempts === undefined ? {} : { maximumAttempts: options.maximumAttempts }),
             identity, phase, start, end, signal: controller.signal, state: deliveryState,
+            retainRange,
             ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
             onActivity: () => resetWatchdog(phase === "audio" ? "frame" : phase === "metadata" ? "metadata" : "decoder-load"),
           });
           const prepare = async () => {
-            const probe = await range("probe", 0, NATIVE_FLAC_STREAMINFO_PROBE_BYTES - 1);
-            totalBytes = probe.totalBytes;
-            const parsed = parseNativeFlacStreamInfo(probe.bytes, resolveOptions.expected);
+            const parsed = await (async () => {
+              const probe = await range("probe", 0, NATIVE_FLAC_STREAMINFO_PROBE_BYTES - 1);
+              try {
+                totalBytes = probe.totalBytes;
+                return parseNativeFlacStreamInfo(probe.bytes, resolveOptions.expected);
+              } finally { probe.release(); }
+            })();
             const scanner = new NativeFlacMetadataScanner(parsed.streamInfoIsFinal);
             offset = NATIVE_FLAC_STREAMINFO_PROBE_BYTES;
             while (!scanner.complete) {
               const header = await range("metadata", scanner.nextHeaderOffset, scanner.nextHeaderOffset + 3);
-              offset = scanner.acceptHeader(header.bytes, header.totalBytes).nextOffset;
+              try { offset = scanner.acceptHeader(header.bytes, header.totalBytes).nextOffset; }
+              finally { header.release(); }
             }
-            if (offset >= totalBytes) throw new EngineWebAdapterError("stem.flac.invalid", "FLAC has no compressed audio suffix");
+            if (totalBytes === undefined || offset >= totalBytes) throw new EngineWebAdapterError("stem.flac.invalid", "FLAC has no compressed audio suffix");
             const expectedFrames = resolveOptions.expected?.frames ?? parsed.streamInfo.totalSamples;
             if (expectedFrames === 0) {
               throw new EngineWebAdapterError("stem.flac.shape", "Unknown FLAC total samples require a compiled source declaration");
@@ -182,11 +203,12 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
             }
             const length = Math.min(message.maximumBytes, totalBytes - offset);
             const result = await range("audio", offset, offset + length - 1);
-            if (stopping || controller.signal.aborted) return;
-            offset += result.bytes.byteLength;
-            if (stopping || controller.signal.aborted) return;
-            decoderInput!.publish(result.bytes, offset === totalBytes);
-            resetWatchdog("frame");
+            try {
+              if (stopping || controller.signal.aborted) return;
+              offset += result.bytes.byteLength;
+              decoderInput!.publish(result.bytes, offset === totalBytes);
+              resetWatchdog("frame");
+            } finally { result.release(); }
           };
           const onMessage = (event: MessageEvent<FlacWorkerResponse>) => {
             const message = event.data;
@@ -201,12 +223,13 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
               inputTail = input.catch(() => undefined);
               void input.catch((error) => stop(error, true));
             } else if (message.type === "pcm") {
-              if (blocks.length >= 2) {
+              if (!(message.bytes instanceof ArrayBuffer) || message.bytes.byteLength > MAXIMUM_CANONICAL_OUTPUT_BYTES || blocks.length >= 2) {
                 stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker exceeded two unconsumed PCM outputs", {
                   identity, limit: 2,
                 }), true);
                 return;
               }
+              retainDecoded(diagnostics, message.bytes);
               blocks.push(message.bytes);
               decodedBytes += message.bytes.byteLength;
               resolveOptions.onProgress?.({
@@ -241,6 +264,7 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
       }, (error) => {
         worker = undefined;
         failure = error;
+        discardBlocks();
         notify();
       }).finally(() => {
         resolveOptions.signal?.removeEventListener("abort", abort);
@@ -252,7 +276,9 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
           for (;;) {
             const block = blocks.shift();
             if (block !== undefined) {
-              streamController.enqueue(new Uint8Array(block));
+              try {
+                streamController.enqueue(new Uint8Array(block));
+              } catch (error) { releaseDecoded(block); throw error; }
               worker?.postMessage({ type: "output-credit", requestId });
               return;
             }
@@ -268,4 +294,6 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
       });
     },
   };
+  registerFlacResolver(resolver, collector => makeFlacStemResolver(options, collector, pool));
+  return resolver;
 }

@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { createIngestDiagnostics } from "../src/index.js";
+import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
+import { VerifiedStemStore } from "../src/stems/store.js";
+import { MemoryStemStorageBackend } from "../src/stems/storage.js";
 import { BrowserBootError } from "@misofm/engine/browser";
 import { scratchBootWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
@@ -756,4 +761,99 @@ test("source observation maps compiled sources and reports owned buffers without
       assert.throws(call, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
     }
   }
+});
+
+
+test("per-open ingest diagnostics preserve warm admission lifetime, independent snapshots and unknown custom paths", { timeout: 5000 }, async () => {
+  const early = createIngestDiagnostics();
+  assert.deepEqual(early.snapshot(), { residency: null, reservation: null });
+  await assert.rejects(openEngineWebSession({ ...baseOptions(), ingestDiagnostics: early,
+    capabilityScope: { crossOriginIsolated: false } }));
+  assert.deepEqual(early.snapshot(), { residency: null, reservation: null });
+  await assert.rejects(openEngineWebSession({ ...baseOptions(), ingestDiagnostics: early }), /only one open/);
+
+  const pcm = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+  const identity = `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const;
+  const sources: DeclaredStemSource[] = [{ id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: identity } }];
+  const afterStore = new Error("stop after verified store");
+  const makeWarm = () => {
+    const backend = new MemoryStemStorageBackend();
+    Object.assign(backend, { folderName: "miso-stems-v1" });
+    backend.files.set(`sha256-${identity.slice(7)}`, pcm);
+    backend.files.set("index.json", new TextEncoder().encode(JSON.stringify({ version: 1,
+      stems: { [identity]: { bytes: pcm.length, pins: ["offline:existing"], lastUsedAt: 0 } } })));
+    const reading = deferred<void>();
+    const proceed = deferred<void>();
+    const read = backend.read.bind(backend);
+    backend.read = async name => { reading.resolve(); await proceed.promise; return read(name); };
+    return { backend, reading, proceed, store: new VerifiedStemStore({ backend,
+      // Separate in-memory origins: their identical content does not share browser locks.
+      locks: { request: async (_name, _options, work) => work() },
+    }) };
+  };
+  const common = {
+    document: documentFor(sources), sources, capabilityScope: capabilities(),
+    scratchBoot: async () => ({ sampleRateHz: 48000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128" as const, tracks: [], sources: [{ id: "source", channels: 1 as const, frames: 4n }] }),
+    createContext: () => { throw afterStore; },
+  };
+  const one = makeWarm(); const two = makeWarm();
+  const first = createIngestDiagnostics(); const second = createIngestDiagnostics();
+  const open = (store: StemStore, diagnostics: ReturnType<typeof createIngestDiagnostics>, admission: BoundedStemAdmission, signal?: AbortSignal) =>
+    openEngineWebSession({ ...common, store, ingestDiagnostics: diagnostics,
+      ...(signal === undefined ? {} : { signal }),
+      flac: { admission, locate: () => assert.fail("warm source must not deliver") },
+    });
+  const firstDone = assert.rejects(open(one.store, first, new BoundedStemAdmission(3)));
+  const secondDone = assert.rejects(open(two.store, second, new BoundedStemAdmission(2)));
+  await Promise.all([one.reading.promise, two.reading.promise]);
+  assert.equal(first.snapshot().residency!.active, 1);
+  assert.equal(second.snapshot().residency!.active, 1);
+  assert.equal(first.snapshot().residency!.limit, 3);
+  assert.equal(second.snapshot().residency!.limit, 2);
+  assert.equal(first.snapshot().reservation!.fixedBufferBytes, 4_198_416);
+  assert.equal(first.snapshot().reservation!.slotBytes, 8_388_608);
+  assert.equal(first.snapshot().reservation!.headroomBytes, 4_190_192);
+  const during = first.snapshot();
+  one.proceed.resolve(); await firstDone;
+  assert.equal(first.snapshot().residency!.active, 0);
+  assert.equal(first.snapshot().residency!.activePeak, 1);
+  assert.equal(second.snapshot().residency!.active, 1);
+  assert.equal(during.residency!.active, 1);
+  two.proceed.resolve(); await secondDone;
+  assert.equal(second.snapshot().residency!.deliveredPeakBytes, 0);
+  assert.equal(second.snapshot().residency!.decodedPeakBytes, 0);
+
+  const queued = makeWarm();
+  const admission = new BoundedStemAdmission(1);
+  const held = await admission.acquire();
+  const cancelled = createIngestDiagnostics();
+  const abort = new AbortController();
+  const queuedDone = assert.rejects(open(queued.store, cancelled, admission, abort.signal));
+  while (admission.stats.queued === 0) await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(cancelled.snapshot().residency!.activePeak, 0);
+  abort.abort("cancel before admission");
+  await queuedDone; held.release();
+  assert.equal(cancelled.snapshot().residency!.activePeak, 0);
+
+  const empty = createIngestDiagnostics();
+  await assert.rejects(openEngineWebSession({ ...common, document: documentFor([]), sources: [],
+    scratchBoot: async () => ({ sampleRateHz: 48000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: [] }),
+    store: new VerifiedStemStore({ backend: new MemoryStemStorageBackend() }),
+    ingestDiagnostics: empty, flac: { hardwareConcurrency: 4, memoryBudgetBytes: 24 * 1024 * 1024,
+      locate: () => assert.fail("empty source must not deliver") },
+  }));
+  assert.deepEqual(empty.snapshot().residency, { limit: 3, deliveredBytes: 0, deliveredPeakBytes: 0,
+    decodedBytes: 0, decodedPeakBytes: 0, containers: 0, containersPeak: 0, active: 0, activePeak: 0 });
+
+  const customStore = createIngestDiagnostics();
+  await assert.rejects(open({ async open() { return this; }, async openSession() { throw afterStore; } }, customStore, new BoundedStemAdmission(1)));
+  assert.deepEqual(customStore.snapshot(), { residency: null, reservation: null });
+  const customProducer = createIngestDiagnostics();
+  await assert.rejects(openEngineWebSession({ ...common, ingestDiagnostics: customProducer,
+    store: new VerifiedStemStore({ backend: new MemoryStemStorageBackend() }),
+    resolver: { async resolve() { throw afterStore; } },
+  }));
+  assert.deepEqual(customProducer.snapshot(), { residency: null, reservation: null });
 });

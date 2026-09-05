@@ -441,10 +441,13 @@ test("native FLAC package buffers are fixed and leave reservation headroom", () 
     compressedInputSlot: 256 * 1024,
     decoderLinearMemory: 2 * 1024 * 1024,
     decodedOutputCredits: 2 * 384 * 1024,
+    decodedInFlightWrite: 384 * 1024,
+    opfsWriteClone: 384 * 1024,
     metadataAndControl: 4 * 1024 + 16,
   });
   assert.equal(FLAC_ACCOUNTED_FIXED_BUFFER_BYTES + FLAC_ACCOUNTING_HEADROOM_BYTES, FLAC_WORKER_RESERVATION_BYTES);
-  assert.ok(FLAC_ACCOUNTING_HEADROOM_BYTES > 4 * 1024 * 1024);
+  assert.equal(FLAC_ACCOUNTED_FIXED_BUFFER_BYTES, 4_198_416);
+  assert.equal(FLAC_ACCOUNTING_HEADROOM_BYTES, 4_190_192);
 });
 
 test("native FLAC admission is FIFO and removes queued cancellation", async () => {

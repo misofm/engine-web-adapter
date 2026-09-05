@@ -1,3 +1,4 @@
+import type { IngestDiagnostics } from "./stems/ingest-diagnostics.js";
 import type { CommandReport, ConsoleEdits, LaneEdit, SessionShape, SourceSpec } from "@misofm/engine";
 import type {
   AudioContextLike,
@@ -113,6 +114,7 @@ export interface EngineWebConsole {
 }
 
 export interface EngineWebSessionCommonOptions {
+  readonly ingestDiagnostics?: IngestDiagnostics;
   /** The Session V1 document, or the SDK builder session that produced it. */
   readonly document: EngineSessionDocument;
   /**

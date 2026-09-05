@@ -1,3 +1,4 @@
+import { createIngestDiagnostics } from "../src/index.js";
 import test from "node:test";
 
 import type { EngineWebSessionOptions, EngineWebSession, SourceObservation, FeedDiagnostics, PumpAllocation } from "../src/index.js";
@@ -55,3 +56,26 @@ function sourceProjection(session: EngineWebSession): [SourceObservation, FeedDi
   return [observation, diagnostics, diagnostics.allocation.pump];
 }
 void sourceProjection;
+
+
+function ingestSnapshotTypes() {
+  const diagnostics = createIngestDiagnostics();
+  const options: EngineWebSessionOptions = { ...common, resolver, ingestDiagnostics: diagnostics };
+  const snapshot = diagnostics.snapshot();
+  // @ts-expect-error the collector exposes no writable methods
+  diagnostics.snapshot = () => ({ residency: null, reservation: null });
+  // @ts-expect-error snapshot values are readonly
+  snapshot.residency = null;
+  if (snapshot.residency !== null) {
+    // @ts-expect-error live fields cannot be modified
+    snapshot.residency.decodedBytes = 0;
+  }
+  if (snapshot.reservation !== null) {
+    // @ts-expect-error component facts cannot be modified
+    snapshot.reservation.components.opfsWriteClone = 0;
+  }
+  // @ts-expect-error no reset or mutation API
+  diagnostics.reset();
+  return options;
+}
+void ingestSnapshotTypes;

@@ -100,7 +100,8 @@ export function readExactFlacRange(options: FlacHttpOptions & {
   readonly state: DeliveryState;
   readonly onProgress?: (progress: StemProgress) => void;
   readonly onActivity?: () => void;
-}): Promise<Readonly<{ bytes: Uint8Array; totalBytes: number }>> {
+  readonly retainRange?: (bytes: number) => () => void;
+}): Promise<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>> {
   const maximumAttempts = options.maximumAttempts ?? 4;
   const deadlineMs = options.readDeadlineMs ?? 30_000;
   if (!Number.isSafeInteger(maximumAttempts) || maximumAttempts < 1) throw new RangeError("maximumAttempts must be positive");
@@ -117,7 +118,10 @@ export function readExactFlacRange(options: FlacHttpOptions & {
   const expectedBytes = options.end - options.start + 1;
   const range = `bytes=${options.start}-${options.end}`;
 
-  const physicalAttempt = (attempt: number) => Effect.gen(function* () {
+  const physicalAttempt = (attempt: number) => {
+    let release = () => {};
+    let transferred = false;
+    return Effect.gen(function* () {
     const location = yield* Effect.tryPromise({
       try: () => Promise.resolve(options.locate(options.identity, {
         identity: options.identity,
@@ -191,6 +195,7 @@ export function readExactFlacRange(options: FlacHttpOptions & {
     options.state.totalBytes = totalBytes;
 
     const bytes = new Uint8Array(expectedBytes);
+    release = options.retainRange?.(bytes.byteLength) ?? (() => {});
     let received = 0;
     yield* response.stream.pipe(
       Stream.timeoutOrElse({ duration: deadlineMs, orElse: () => Stream.fail(stalled()) }),
@@ -223,10 +228,12 @@ export function readExactFlacRange(options: FlacHttpOptions & {
       byteKind: "flac",
       attempt,
     });
-    return { bytes, totalBytes };
-  });
+    transferred = true;
+    return { bytes, totalBytes, release };
+    }).pipe(Effect.ensuring(Effect.sync(() => { if (!transferred) release(); })));
+  };
 
-  const attempt = (number: number): Effect.Effect<Readonly<{ bytes: Uint8Array; totalBytes: number }>, unknown, HttpClient.HttpClient | import("effect").Scope.Scope> =>
+  const attempt = (number: number): Effect.Effect<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>, unknown, HttpClient.HttpClient | import("effect").Scope.Scope> =>
     physicalAttempt(number).pipe(Effect.catch((error) => {
       if (retryable(error) && number < maximumAttempts) {
         return Effect.sleep(Math.min(100, 5 * 2 ** (number - 1))).pipe(Effect.andThen(attempt(number + 1)));
