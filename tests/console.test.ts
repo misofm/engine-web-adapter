@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { ABI_LAYOUT, encodeLaneEdits } from "@misofm/engine";
@@ -6,6 +7,7 @@ import type { BootOptions, LaneEdit } from "@misofm/engine";
 import type { BrowserEngine } from "@misofm/engine/browser";
 
 import { EngineWebAdapterError, openEngineWebSession } from "../src/index.js";
+import { attachSessionControl } from "../src/console.js";
 import type {
   EngineAudioContext,
   EngineWebSession,
@@ -185,6 +187,27 @@ test("a semantic refusal stays visible in the strict CommandReport", async () =>
   assert.equal(report.admitted, 0);
   assert.equal(report.rejectedIndex, 0);
   assert.equal(report.reason, UNSUPPORTED_KIND);
+  assert.deepEqual(report, {
+    ok: false, result: 5, code: "refusedBudget", reason: UNSUPPORTED_KIND,
+    reasonName: "unsupportedKind", rejectedIndex: 0, admitted: 0, appliedAtSample: 0n,
+  });
+  host.refuse = undefined;
+  const recovered = await session.console.submit(session.console.edit.track("kick").mute(false));
+  assert.deepEqual(recovered, {
+    ok: true, result: 0, code: "ok", reason: 0, reasonName: "none",
+    rejectedIndex: 0, admitted: 1, appliedAtSample: 0n,
+  });
+  await session.close();
+});
+
+test("a multi-edit submit returns the complete strict receipt", async () => {
+  const { session } = await open({});
+  const edits = [session.console.edit.track("kick").faderDb(-3), session.console.edit.track("snare").mute(true)];
+  const report = await session.console.submit(...edits);
+  assert.deepEqual(report, {
+    ok: true, result: 0, code: "ok", reason: 0, reasonName: "none",
+    rejectedIndex: 0, admitted: edits.length, appliedAtSample: 0n,
+  });
   await session.close();
 });
 
@@ -192,6 +215,18 @@ test("the SDK rejects a torn success report instead of exposing it as admission"
   const { session, host } = await open({});
   host.malformed = true;
   await assert.rejects(session.console.submit(session.console.edit.track("kick").mute(true)));
+  await session.close();
+});
+
+test("backpressure is an exact strict refusal with no hidden retry", async () => {
+  const { session, host } = await open({});
+  host.refuse = { result: 5, reason: BACKPRESSURE, times: 1 };
+  const report = await session.console.submit(session.console.edit.track("kick").mute(true));
+  assert.deepEqual(report, {
+    ok: false, result: 5, code: "refusedBudget", reason: BACKPRESSURE,
+    reasonName: "backpressure", rejectedIndex: 0, admitted: 0, appliedAtSample: 0n,
+  });
+  assert.equal(host.batches.length, 0);
   await session.close();
 });
 
@@ -222,6 +257,63 @@ test("SDK console, leases, session map, and raw host interleave without caller I
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(host.leases, [["meters", true], ["telemetry", true], ["meters", false], ["telemetry", false]]);
   await session.close();
+});
+
+test("the reviewed packed host serializes release and resubscribe for both feeds", async () => {
+  for (const feed of ["meters", "telemetry"] as const) {
+    const pending: Array<{ readonly requestId: number; readonly enabled: boolean | undefined }> = [];
+    const sent: Array<{ readonly requestId: number; readonly enabled: boolean | undefined }> = [];
+    let onmessage: ((event: { readonly data: unknown }) => void) | null = null;
+    const port = {
+      get onmessage() { return onmessage; },
+      set onmessage(value: ((event: { readonly data: unknown }) => void) | null) { onmessage = value; },
+      postMessage(message: unknown) {
+        const request = message as { readonly tag: string; readonly requestId: number; readonly enabled?: boolean };
+        sent.push({ requestId: request.requestId, enabled: request.enabled });
+        if (request.tag === "miso.sessionmap.v1") {
+          queueMicrotask(() => onmessage?.({ data: { tag: request.tag, requestId: request.requestId, result: 0, tracks: ["kick"], sources: [], metersAttached: true } }));
+        } else {
+          pending.push({ requestId: request.requestId, enabled: request.enabled });
+        }
+      },
+    };
+    const asset = await readFile("node_modules/@misofm/engine/dist/assets/miso-engine-v1-audio-worklet-host.js", "utf8");
+    const sdk = await import(`data:text/javascript;base64,${Buffer.from(`${asset}\nexport { MisoAudioWorkletHost };`).toString("base64")}`) as {
+      readonly MisoAudioWorkletHost: new (...args: readonly unknown[]) => BrowserEngine["host"];
+    };
+    const host = new sdk.MisoAudioWorkletHost({ port, disconnect() {} }, "simd128", 48_000, 128, {}, 65_536, 8, 32, 1);
+    const control = await attachSessionControl(host);
+    const acknowledge = (enabled: boolean) => {
+      const request = pending.shift();
+      assert.ok(request);
+      assert.equal(request.enabled, enabled);
+      onmessage?.({ data: { tag: "miso.ack.v1", requestId: request.requestId, result: 0 } });
+    };
+
+    const firstPromise = control[feed](() => undefined);
+    acknowledge(true);
+    const stop = await firstPromise;
+    stop();
+    await Promise.resolve();
+    assert.equal(pending[0]?.enabled, false);
+
+    let secondSettled = false;
+    const secondPromise = control[feed](() => undefined).then(() => { secondSettled = true; });
+    await Promise.resolve();
+    assert.equal(secondSettled, false, "resubscription waits for the outstanding release");
+    acknowledge(false);
+    await Promise.resolve();
+    assert.equal(pending[0]?.enabled, true);
+    acknowledge(true);
+    const second = await secondPromise;
+    assert.equal(typeof second, "undefined");
+    control.close();
+    await Promise.resolve();
+    assert.equal(pending[0]?.enabled, false, "close releases the live lease without rearming");
+    acknowledge(false);
+    assert.deepEqual(sent.map((request) => request.requestId), [1, 2, 3, 4, 5, 6], JSON.stringify(sent));
+    assert.deepEqual(sent.map((request) => request.enabled), [undefined, undefined, true, false, true, false], JSON.stringify(sent));
+  }
 });
 
 test("the session derives declarations and a lease id from the document alone", async () => {

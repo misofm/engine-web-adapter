@@ -11,7 +11,7 @@ type TelemetryFrame = Parameters<NonNullable<Parameters<EngineHost["telemetry"]>
 class HostFeed<Frame, Update> {
   readonly #host: EngineHost; readonly #lease: (host: EngineHost, onFrame: ((frame: Frame) => void) | null) => Promise<{ readonly result: number }>;
   readonly #project: (frame: Frame) => Update; readonly #name: "meters" | "telemetry"; readonly #listeners = new Set<(update: Update) => void>();
-  #arming: Promise<void> | undefined; #closed = false;
+  #reconciling: Promise<void> | undefined; #armed = false; #closed = false;
   constructor(options: { readonly host: EngineHost; readonly name: "meters" | "telemetry"; readonly lease: (host: EngineHost, onFrame: ((frame: Frame) => void) | null) => Promise<{ readonly result: number }>; readonly project: (frame: Frame) => Update }) {
     this.#host = options.host; this.#name = options.name; this.#lease = options.lease; this.#project = options.project;
   }
@@ -19,16 +19,35 @@ class HostFeed<Frame, Update> {
     if (typeof listener !== "function") throw new TypeError(`${this.#name} requires a listener function`);
     if (this.#closed) throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
     this.#listeners.add(listener);
-    try { this.#arming ??= this.#arm(); await this.#arming; } catch (error) { this.#listeners.delete(listener); throw error; }
+    try { await this.#reconcile(); } catch (error) { this.#listeners.delete(listener); throw error; }
     let live = true;
-    return () => { if (!live) return; live = false; this.#listeners.delete(listener); if (this.#listeners.size === 0) this.#release(); };
+    return () => { if (!live) return; live = false; this.#listeners.delete(listener); void this.#reconcile(); };
   }
-  close(): void { this.#closed = true; this.#listeners.clear(); this.#arming = undefined; }
-  async #arm(): Promise<void> {
-    const ack = await this.#lease(this.#host, (frame) => { const update = this.#project(frame); for (const listener of [...this.#listeners]) listener(update); });
-    if (ack.result !== 0) { this.#arming = undefined; throw new EngineWebAdapterError("console.lease_refused", `The Engine refused the ${this.#name} lease`, { feed: this.#name, result: ack.result, code: resultName(ack.result, "call") }); }
+  close(): void { this.#closed = true; this.#listeners.clear(); void this.#reconcile(); }
+  #reconcile(): Promise<void> {
+    if (this.#reconciling !== undefined) return this.#reconciling;
+    const run = (async () => {
+      for (;;) {
+        const wanted = !this.#closed && this.#listeners.size > 0;
+        if (wanted === this.#armed) return;
+        if (wanted) {
+          const ack = await this.#lease(this.#host, (frame) => {
+            const update = this.#project(frame);
+            for (const listener of [...this.#listeners]) listener(update);
+          });
+          if (ack.result !== 0) {
+            throw new EngineWebAdapterError("console.lease_refused", `The Engine refused the ${this.#name} lease`, { feed: this.#name, result: ack.result, code: resultName(ack.result, "call") });
+          }
+          this.#armed = true;
+        } else {
+          try { await this.#lease(this.#host, null); } catch { /* release failures leave the feed conservatively unarmed */ } finally { this.#armed = false; }
+        }
+      }
+    })();
+    this.#reconciling = run;
+    void run.then(() => { if (this.#reconciling === run) this.#reconciling = undefined; }, () => { if (this.#reconciling === run) this.#reconciling = undefined; });
+    return run;
   }
-  #release(): void { const arming = this.#arming; if (arming === undefined || this.#closed) return; this.#arming = undefined; void arming.then(() => this.#lease(this.#host, null)).catch(() => undefined); }
 }
 function trackMeter(left: number, right: number, gainReductionDb: number): TrackMeter { return Object.freeze({ peakLeft: left, peakRight: right, peak: Math.max(left, right), gainReductionDb }); }
 export interface SessionControl { readonly console: EngineWebConsole; readonly map: SessionMap; meters(listener: (update: MeterUpdate) => void): Promise<() => void>; telemetry(listener: (update: TelemetryUpdate) => void): Promise<() => void>; close(): void; }

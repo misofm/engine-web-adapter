@@ -118,3 +118,7 @@ Do not change public types, projections, refusal vocabulary, session orchestrati
 Allowed: `src/console.ts`, `tests/console.test.ts`, and `.github/ISSUE_SPECS/022-use-the-sdk-strict-console-and-host-owned-request-ids.md` for candid attempt-2 evidence. Use another already-approved #22 test path only if a compile-time assertion cannot live in `console.test.ts`; no production path beyond `src/console.ts` may change.
 
 Run the focused console test first, then `npm test`, `npm run check`, `npm run check:package`, and the existing packed-browser check. Reuse and re-verify SDK tarball SHA-256 `ef9186209056170db272eec6e2bee03a8347449eaf5cf5012498c252c72f25e7`; do not rebuild or replace it merely for another run. Record exact pass counts/browser version and correct the attempt-1 evidence claim. Registry engine `0.1.0` remains the merge/release blocker; local tarball success is compatibility evidence only. A fresh dedicated Astra review is required before PASS.
+
+### Attempt 2 source checkpoint
+
+Luna completed the bounded per-feed transition and focused regressions in src/console.ts and tests/console.test.ts. The pending release now precedes a new arm, rejected arm state clears, and close reconciles a late successful arm to disabled. The regression uses the installed reviewed SDK host for both feeds and checks generated IDs. Luna reports 103 tests passing; root diff/allowed-path checks pass. Full integration validation and dedicated Astra review remain pending; this is not a new review attempt or PASS claim.
