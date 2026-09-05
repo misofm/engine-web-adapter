@@ -25,3 +25,7 @@ Begin from combined reviewed control/OPFS31a5039 in isolated codex/dx-cache-pins
 Existing focused tests prove shared offline pins survive reopen, removing one preserves another, two same-leaseId sessions remain independent, cancellation/index-write failure never acknowledges ownership loss, historical seeded index/final bytes remain identical, and old/new lock clients serialize mutations under documented lock order. Preserve previous OPFS focused gates. Run npm run check and a fresh packed public type consumer for pin/read. Use existing package/browser fixture only if coordination requires actual Web Locks proof; no broad fault matrix. Astra medium implements, separate Astra medium reviews; root checkpoints coherent green tranches promptly. Report exact unresolved behavior instead of broadening scope silently.
 
 Matching issue misofm/engine-web-adapter#25.
+
+### Unsupported-version preservation correction
+
+Inspection confirms #readIndex currently rebuilds a parseable future-version index and writes version1, losing its pins. Before app adoption, distinguish an explicitly unsupported parsed index version and refuse with existing stem.corrupt before any recovery mutation. Read/check the index before deleting index.pending or staging during recovery. Existing supported malformed/missing-index behavior stays bounded; no new schema support or migration is added. Existing store tests must prove unsupported index and all files remain byte-identical on refusal. This exact store.ts correction is authorized within the cache-preservation slice.
