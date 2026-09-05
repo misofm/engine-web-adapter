@@ -119,5 +119,46 @@ live allocations. Actual app fixture peaks, memory cell 10, and the separate
 origin-owned heap discriminator remain app #101 integration evidence; this
 adapter gate does not certify their PASS or alter their ceilings.
 
-Final README/spec evidence awaits root checkpoint and one dedicated independent
-Astra medium review. No independent approval is claimed yet.
+Root committed the attempt 1 README/spec evidence at `c3b99a4`. Its dedicated
+independent review returned the bounded failure recorded below.
+
+
+## Attempt 2: range ownership across the outer Promise handoff
+
+Dedicated independent Astra medium review of `c3b99a4` returned **FAIL**, one
+P2: synchronous cancellation from the existing range-completion progress
+callback could interrupt the outer Effect operation after its physical attempt
+had marked ownership transferred. The resolver received no result to release,
+leaving deliveredBytes=42 and containers=1 after the package store rejected.
+The first report remains `/private/tmp/dx-32-astra-medium-review.md`; its
+reproducers are `/private/tmp/dx32-review-range-cancel.mjs` and
+`/private/tmp/dx32-review-store-cancel.mjs`. No other blocker was identified.
+
+Root checkpoint `973b38d` contains the bounded correction in
+`src/stems/flac-delivery.ts` and the existing delivery test file. A produced
+physical result remains owned by delivery until successful outer Promise
+handoff. Outer failure/interruption releases the unhanded result. Failed
+physical attempts retain their own finalizers; successful resolver ownership,
+retry behavior and peaks remain intact. No central counter reset or other
+source scope was added.
+
+The focused regression cancels synchronously from `probing` progress through
+the public package store and collector. It observes 42 live delivered bytes in
+the callback, then zero delivered bytes, containers and active operations after
+`stem.cancelled`, retaining peaks of 42 bytes, one container and one active
+operation. It also verifies no initialize/ready acknowledgment or final/staging
+file, and termination of the physical Worker.
+
+Validation at `973b38d`:
+
+- `npm run typecheck` and `./node_modules/.bin/tsc -p tsconfig.test.json`: PASS.
+- Existing five focused files: **83/83 PASS**;
+  `/private/tmp/dx32-attempt2-focused.log`.
+- `npm run check`: PASS, including format/type/source policy, decoder audit,
+  all **146 tests**, and fresh-consumer package validation (154 files,
+  136245 bytes). Log: `/private/tmp/dx32-attempt2-check.log`.
+
+Attempt 1's FAIL is retained. This final spec evidence awaits root checkpoint
+and the same reviewer's bounded correction recheck; attempt 2 does not yet
+claim independent approval. App cell 10 and its existing ceilings remain
+unchanged and require downstream integration evidence.
