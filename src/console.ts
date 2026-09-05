@@ -26,6 +26,8 @@ class HostFeed<Frame, Update> {
   close(): void { this.#closed = true; this.#listeners.clear(); void this.#reconcile(); }
   #reconcile(): Promise<void> {
     if (this.#reconciling !== undefined) return this.#reconciling;
+    // A no-op must not occupy the transition slot: another listener can leave in this turn.
+    if ((!this.#closed && this.#listeners.size > 0) === this.#armed) return Promise.resolve();
     const run = (async () => {
       for (;;) {
         const wanted = !this.#closed && this.#listeners.size > 0;

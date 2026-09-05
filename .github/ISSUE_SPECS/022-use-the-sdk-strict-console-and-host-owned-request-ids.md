@@ -122,3 +122,7 @@ Run the focused console test first, then `npm test`, `npm run check`, `npm run c
 ### Attempt 2 source checkpoint
 
 Luna completed the bounded per-feed transition and focused regressions in src/console.ts and tests/console.test.ts. The pending release now precedes a new arm, rejected arm state clears, and close reconciles a late successful arm to disabled. The regression uses the installed reviewed SDK host for both feeds and checks generated IDs. Luna reports 103 tests passing; root diff/allowed-path checks pass. Full integration validation and dedicated Astra review remain pending; this is not a new review attempt or PASS claim.
+
+### Astra medium completion checkpoint
+
+User confirmed the full boundary plan and requested Astra medium for remaining implementation and dedicated review, with end-to-end delivery into misofm/app. Astra completed the missing real-host control regressions and fixed a demonstrated same-turn unsubscribe defect: a resolved no-op transition could suppress the final lease release. Focused console tests pass21/21 and full check passes109/109 including package checks. No SDK/dependency/PCM/storage/boot changes. Browser validation and independent review remain pending; no review PASS is claimed.

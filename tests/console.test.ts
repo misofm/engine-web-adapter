@@ -34,6 +34,8 @@ interface Refusal {
   readonly reason: number;
   readonly result: number;
   readonly times: number;
+  readonly rejectedIndex?: number;
+  readonly appliedAtSample?: bigint;
 }
 
 class FakeHost {
@@ -61,7 +63,7 @@ class FakeHost {
       this.refuse = refusal.times > 1 ? { ...refusal, times: refusal.times - 1 } : undefined;
       return {
         tag: "miso.ack.v1" as const, result: refusal.result,
-        reason: refusal.reason, rejectedIndex: 0, admitted: 0, appliedAtSample: 0n,
+        reason: refusal.reason, rejectedIndex: refusal.rejectedIndex ?? 0, admitted: 0, appliedAtSample: refusal.appliedAtSample ?? 0n,
         records: new Uint8Array(),
       };
     }
@@ -181,15 +183,15 @@ test("meters arrive keyed by track id with the master fold separated", async () 
 
 test("a semantic refusal stays visible in the strict CommandReport", async () => {
   const { session, host } = await open({});
-  host.refuse = { result: 5, reason: UNSUPPORTED_KIND, times: 1 };
-  const report = await session.console.submit(session.console.edit.track("kick").mute(true));
+  host.refuse = { result: 5, reason: UNSUPPORTED_KIND, times: 1, rejectedIndex: 1, appliedAtSample: 384n };
+  const report = await session.console.submit(session.console.edit.track("kick").mute(true), session.console.edit.track("snare").mute(true));
   assert.equal(report.ok, false);
   assert.equal(report.admitted, 0);
-  assert.equal(report.rejectedIndex, 0);
+  assert.equal(report.rejectedIndex, 1);
   assert.equal(report.reason, UNSUPPORTED_KIND);
   assert.deepEqual(report, {
     ok: false, result: 5, code: "refusedBudget", reason: UNSUPPORTED_KIND,
-    reasonName: "unsupportedKind", rejectedIndex: 0, admitted: 0, appliedAtSample: 0n,
+    reasonName: "unsupportedKind", rejectedIndex: 1, admitted: 0, appliedAtSample: 384n,
   });
   host.refuse = undefined;
   const recovered = await session.console.submit(session.console.edit.track("kick").mute(false));
@@ -259,61 +261,154 @@ test("SDK console, leases, session map, and raw host interleave without caller I
   await session.close();
 });
 
-test("the reviewed packed host serializes release and resubscribe for both feeds", async () => {
-  for (const feed of ["meters", "telemetry"] as const) {
-    const pending: Array<{ readonly requestId: number; readonly enabled: boolean | undefined }> = [];
-    const sent: Array<{ readonly requestId: number; readonly enabled: boolean | undefined }> = [];
-    let onmessage: ((event: { readonly data: unknown }) => void) | null = null;
-    const port = {
-      get onmessage() { return onmessage; },
-      set onmessage(value: ((event: { readonly data: unknown }) => void) | null) { onmessage = value; },
-      postMessage(message: unknown) {
-        const request = message as { readonly tag: string; readonly requestId: number; readonly enabled?: boolean };
-        sent.push({ requestId: request.requestId, enabled: request.enabled });
-        if (request.tag === "miso.sessionmap.v1") {
-          queueMicrotask(() => onmessage?.({ data: { tag: request.tag, requestId: request.requestId, result: 0, tracks: ["kick"], sources: [], metersAttached: true } }));
-        } else {
-          pending.push({ requestId: request.requestId, enabled: request.enabled });
-        }
-      },
-    };
-    const asset = await readFile("node_modules/@misofm/engine/dist/assets/miso-engine-v1-audio-worklet-host.js", "utf8");
-    const sdk = await import(`data:text/javascript;base64,${Buffer.from(`${asset}\nexport { MisoAudioWorkletHost };`).toString("base64")}`) as {
-      readonly MisoAudioWorkletHost: new (...args: readonly unknown[]) => BrowserEngine["host"];
-    };
-    const host = new sdk.MisoAudioWorkletHost({ port, disconnect() {} }, "simd128", 48_000, 128, {}, 65_536, 8, 32, 1);
-    const control = await attachSessionControl(host);
-    const acknowledge = (enabled: boolean) => {
-      const request = pending.shift();
-      assert.ok(request);
-      assert.equal(request.enabled, enabled);
-      onmessage?.({ data: { tag: "miso.ack.v1", requestId: request.requestId, result: 0 } });
-    };
-
-    const firstPromise = control[feed](() => undefined);
-    acknowledge(true);
-    const stop = await firstPromise;
-    stop();
-    await Promise.resolve();
-    assert.equal(pending[0]?.enabled, false);
-
-    let secondSettled = false;
-    const secondPromise = control[feed](() => undefined).then(() => { secondSettled = true; });
-    await Promise.resolve();
-    assert.equal(secondSettled, false, "resubscription waits for the outstanding release");
-    acknowledge(false);
-    await Promise.resolve();
-    assert.equal(pending[0]?.enabled, true);
-    acknowledge(true);
-    const second = await secondPromise;
-    assert.equal(typeof second, "undefined");
-    control.close();
-    await Promise.resolve();
-    assert.equal(pending[0]?.enabled, false, "close releases the live lease without rearming");
-    acknowledge(false);
-    assert.deepEqual(sent.map((request) => request.requestId), [1, 2, 3, 4, 5, 6], JSON.stringify(sent));
-    assert.deepEqual(sent.map((request) => request.enabled), [undefined, undefined, true, false, true, false], JSON.stringify(sent));
+// Expose only the packed module's class for a controlled port; its host logic is unchanged.
+async function packedControl() {
+  type Request = { tag: string; requestId: number; enabled?: boolean; count?: number; records?: Uint8Array };
+  const sent: Request[] = [];
+  const pending: Request[] = [];
+  const port: { onmessage: ((event: { data: unknown }) => void) | null; postMessage(message: Request): void } = {
+    onmessage: null,
+    postMessage(message) {
+      sent.push(message);
+      if (message.tag === "miso.sessionmap.v1") queueMicrotask(() => frame({ tag: message.tag, requestId: message.requestId, result: 0, tracks: [...TRACKS], sources: [], metersAttached: true }));
+      else pending.push(message);
+    },
+  };
+  function frame(data: unknown) { port.onmessage?.({ data }); }
+  const asset = await readFile("node_modules/@misofm/engine/dist/assets/miso-engine-v1-audio-worklet-host.js", "utf8");
+  const sdk = await import(`data:text/javascript;base64,${Buffer.from(`${asset}\nexport { MisoAudioWorkletHost };`).toString("base64")}`) as {
+    readonly MisoAudioWorkletHost: new (...args: readonly unknown[]) => BrowserEngine["host"];
+  };
+  const host = new sdk.MisoAudioWorkletHost({ port, disconnect() {} }, "simd128", 48_000, 128, {}, 65_536, 8, 32, 1);
+  const control = await attachSessionControl(host);
+  function ack(tag: string, fields: Record<string, unknown> = {}) {
+    const index = pending.findIndex((request) => request.tag === tag);
+    assert.notEqual(index, -1, `missing ${tag}`);
+    const request = pending.splice(index, 1)[0]!;
+    const extra = tag === "miso.command.v1" ? { reason: 0, rejectedIndex: 0, admitted: request.count, appliedAtSample: 256n, records: request.records }
+      : tag === "miso.status.v1" ? { state: 1, lastResult: 0, backend: 1, sampleRateHz: 48_000, quantumFrames: 128, nextAbsoluteSample: 256n, renderedQuanta: 2n, memoryBytes: 65_536 } : {};
+    frame({ tag: tag === "miso.status.v1" ? tag : "miso.ack.v1", requestId: request.requestId, result: 0, ...extra, ...fields });
+    return request;
   }
+  return { host, control, sent, pending, frame, ack };
+}
+const tick = async () => { for (let index = 0; index < 8; index += 1) await Promise.resolve(); };
+const meterFrame = { tag: "miso.meter.v1", sequence: 7, windows: 3, trackCount: 2, peaks: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.9, 0.8]), trackGrDb: new Float32Array([1.5, 2]), masterGrDb: 2.5, firstSample: 128n, endSample: 512n };
+const telemetryFrame = { tag: "miso.telemetry.v1", sequence: 8, blocks: 3, cpuPercent: 20, peakBlockMs: 0.7, meanBlockMs: 0.5, budgetMs: 2.6, deadlineMisses: 1, resolutionMs: 0.1, belowResolution: false };
+
+for (const feed of ["meters", "telemetry"] as const) {
+  const tag = feed === "meters" ? "miso.meters.v1" : "miso.telemetry.v1";
+  test(`packed ${feed}: shared lease, projections, release/resubscribe and close race`, async () => {
+    for (const closeDuringRelease of [false, true]) {
+      const f = await packedControl();
+      const updates: unknown[][] = [[], []];
+      const first = f.control[feed]((value) => updates[0]!.push(value));
+      const second = f.control[feed]((value) => updates[1]!.push(value));
+      assert.equal(f.pending.length, 1);
+      assert.equal(f.ack(tag).enabled, true);
+      const [stopFirst, stopSecond] = await Promise.all([first, second]);
+      f.frame(feed === "meters" ? meterFrame : telemetryFrame);
+      assert.deepEqual(updates[0], updates[1]);
+      assert.equal(updates[0]!.length, 1);
+      if (feed === "meters") {
+        const value = updates[0]![0] as MeterUpdate;
+        assert.deepEqual({ sequence: value.sequence, windows: value.windows, firstSample: value.firstSample, endSample: value.endSample }, { sequence: 7n, windows: 3, firstSample: 128n, endSample: 512n });
+        assert.deepEqual([...value.tracks].map(([id, meter]) => [id, rounded(meter)]), [
+          ["kick", { peakLeft: 0.1, peakRight: 0.2, peak: 0.2, gainReductionDb: 1.5 }],
+          ["snare", { peakLeft: 0.3, peakRight: 0.4, peak: 0.4, gainReductionDb: 2 }],
+        ]);
+        assert.deepEqual(rounded(value.master), { peakLeft: 0.9, peakRight: 0.8, peak: 0.9, gainReductionDb: 2.5 });
+      } else {
+        const { tag: _tag, ...expected } = telemetryFrame;
+        assert.deepEqual(updates[0]![0], { ...expected, sequence: 8n });
+      }
+      stopFirst(); stopFirst();
+      assert.equal(f.pending.length, 0);
+      stopSecond(); stopSecond();
+      assert.equal(f.pending[0]?.enabled, false);
+      const laterUpdates: unknown[] = [];
+      let settlements = 0;
+      const later = f.control[feed]((value) => laterUpdates.push(value)).then((stop) => { settlements += 1; return stop; });
+      await tick();
+      assert.equal(settlements, 0);
+      assert.equal(f.pending.length, 1, "resubscribe cannot overlap release");
+      if (closeDuringRelease) { f.control.close(); f.control.close(); }
+      assert.equal(f.ack(tag).enabled, false);
+      await tick();
+      if (!closeDuringRelease) {
+        assert.equal(f.ack(tag).enabled, true);
+        const stopLater = await later;
+        f.frame(feed === "meters" ? meterFrame : telemetryFrame);
+        assert.equal(laterUpdates.length, 1, "new callback survives release and rearm");
+        stopLater();
+        assert.equal(f.ack(tag).enabled, false);
+      } else {
+        await later;
+        f.frame(feed === "meters" ? meterFrame : telemetryFrame);
+        assert.equal(laterUpdates.length, 0);
+      }
+      f.control.close(); await tick();
+      assert.equal(settlements, 1);
+      assert.equal(f.pending.length, 0, "close never rearms");
+      assert.deepEqual(f.sent.map((request) => request.requestId), f.sent.map((_, index) => index + 1));
+    }
+  });
+
+  test(`packed ${feed}: refused shared arm clears and a later subscriber recovers`, async () => {
+    const f = await packedControl();
+    const refused = (error: unknown) => error instanceof EngineWebAdapterError && error.code === "console.lease_refused" && error.details.feed === feed && error.details.result === 7 && error.details.code === "unsupported";
+    const a = assert.rejects(f.control[feed](() => undefined), refused);
+    const b = assert.rejects(f.control[feed](() => undefined), refused);
+    assert.equal(f.pending.length, 1);
+    f.ack(tag, { result: 7 }); await Promise.all([a, b]); await tick();
+    assert.equal(f.pending.length, 0, "refusal is not retried");
+    const recovered = f.control[feed](() => undefined);
+    assert.equal(f.ack(tag).enabled, true);
+    const stop = await recovered; stop();
+    assert.equal(f.ack(tag).enabled, false);
+    f.control.close(); await tick();
+  });
+
+  test(`packed ${feed}: pending arm and command settle once after close`, async () => {
+    const f = await packedControl();
+    let updates = 0; let armSettlements = 0; let commandSettlements = 0;
+    const arm = f.control[feed](() => { updates += 1; }).then((stop) => { armSettlements += 1; return stop; });
+    const cached = f.control.console;
+    const command = cached.submit(cached.edit.track("kick").mute(true)).then((report) => { commandSettlements += 1; return report; });
+    f.control.close(); f.control.close();
+    const closed = (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed";
+    await assert.rejects(cached.submit(cached.edit.track("kick").mute(false)), closed);
+    await assert.rejects(f.control[feed](() => undefined), closed);
+    assert.equal(armSettlements, 0); assert.equal(commandSettlements, 0);
+    f.ack(tag); await tick();
+    assert.equal(f.ack(tag).enabled, false, "late successful arm receives ordinary release");
+    f.ack("miso.command.v1");
+    const [stop, report] = await Promise.all([arm, command]); stop(); stop();
+    f.frame(feed === "meters" ? meterFrame : telemetryFrame);
+    await tick();
+    assert.equal(report.ok, true); assert.equal(report.appliedAtSample, 256n);
+    assert.equal(updates, 0); assert.equal(armSettlements, 1); assert.equal(commandSettlements, 1);
+    assert.equal(f.pending.length, 0);
+  });
+}
+
+test("packed host interleaves payload-only control, status, map, raw command and both leases", async () => {
+  const f = await packedControl();
+  const edits = [f.control.console.edit.track("kick").mute(true), f.control.console.edit.track("snare").faderDb(-3)];
+  const command = f.control.console.submit(...edits);
+  const meters = f.control.meters(() => undefined);
+  const telemetry = f.control.telemetry(() => undefined);
+  const status = f.host.status(); const map = f.host.sessionMap();
+  const raw = f.host.command({ commands: [{ kind: ABI_LAYOUT.constants.wireCommandKinds.find((row) => row.name === "mute")!.value, trackIndex: 0, rack: 0, channel: 0, effectIndex: 0, parameterId: 0, smoothingSamples: 0, values: [1, 0, 0, 0] }] });
+  f.ack("miso.telemetry.v1"); f.ack("miso.status.v1"); f.ack("miso.command.v1"); f.ack("miso.meters.v1"); f.ack("miso.command.v1");
+  const [report, stopMeters, stopTelemetry, state, mapping, rawReport] = await Promise.all([command, meters, telemetry, status, map, raw]);
+  assert.deepEqual(report, { ok: true, result: 0, code: "ok", reason: 0, reasonName: "none", rejectedIndex: 0, admitted: 2, appliedAtSample: 256n });
+  assert.equal(state.nextAbsoluteSample, 256n); assert.deepEqual(mapping.tracks, TRACKS); assert.equal(rawReport.admitted, 1);
+  stopMeters(); stopTelemetry();
+  f.ack("miso.telemetry.v1"); f.ack("miso.meters.v1"); await tick();
+  assert.deepEqual(f.sent.map((request) => request.requestId), f.sent.map((_, index) => index + 1));
+  assert.equal(f.pending.length, 0);
+  f.control.close();
 });
 
 test("the session derives declarations and a lease id from the document alone", async () => {
@@ -361,7 +456,7 @@ test("every staged record survives the wire round trip for every live command ki
     assert.equal(command.smoothingSamples, edit.smoothingSamples ?? 0, edit.kind);
     assert.deepEqual(command.values.map(round), [...edit.values].map(round), edit.kind);
   });
-  // The block the writer actually hands the adapter is what was decoded.
+  // The SDK mapping preserves the published wire record width.
   assert.equal(encodeLaneEdits(edits).byteLength, edits.length * ABI_LAYOUT.commandRecord.bytes);
   await session.close();
 });
