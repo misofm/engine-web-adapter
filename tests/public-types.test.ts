@@ -1,6 +1,7 @@
 import test from "node:test";
 
 import type { EngineWebSessionOptions } from "../src/index.js";
+import type { VerifiedStemStore, OpfsStemStore, StemIdentity } from "../src/stems/index.js";
 import type { StemResolver } from "../src/stems/index.js";
 import type { CommandReport } from "@misofm/engine";
 import type { EngineWebConsole } from "../src/session-types.js";
@@ -32,3 +33,8 @@ function voidReceiptProbe(strictConsole: EngineWebConsole): Promise<void> {
 void [strictReceiptProbe, voidReceiptProbe];
 
 test("public session input union compiles", () => undefined);
+
+function cachePins(store: VerifiedStemStore | OpfsStemStore, identity: StemIdentity): [Promise<Blob>, Promise<void>] {
+  return [store.read(identity), store.setOfflinePin(identity, "library", true)];
+}
+void cachePins;

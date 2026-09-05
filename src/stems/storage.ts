@@ -13,6 +13,8 @@ export interface StemStorageWriter {
 
 /** Minimal persistence seam; final PCM reads remain streaming. */
 export interface StemStorageBackend {
+  /** OPFS folder identity used to coordinate historical cache clients. */
+  readonly folderName?: string;
   open(): Promise<void>;
   list(): Promise<readonly string[]>;
   exists(name: string): Promise<boolean>;
@@ -83,6 +85,8 @@ export class OpfsStorageBackend implements StemStorageBackend {
       deadlineMs: this.#readDeadlineMs,
     });
   }
+
+  get folderName(): string { return this.#folderName; }
 
   async open(): Promise<void> {
     if (this.#directory !== undefined) return;

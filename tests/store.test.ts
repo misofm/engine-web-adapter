@@ -41,7 +41,8 @@ test("ingest hashes and byte-counts before ready and lease pin", async () => {
   assert.equal(resolver.requests.length, 1);
   assert.equal(await (await lease.read(item.identity)).text(), String.fromCharCode(...item.bytes));
   const index = JSON.parse(new TextDecoder().decode(backend.files.get("index.json")!));
-  assert.deepEqual(index.stems[item.identity].pins, ["session:test:lease-a"]);
+  assert.equal(index.stems[item.identity].pins.length, 1);
+  assert.match(index.stems[item.identity].pins[0], /^session:test:lease-a:/);
   await lease.close();
   const closedIndex = JSON.parse(new TextDecoder().decode(backend.files.get("index.json")!));
   assert.deepEqual(closedIndex.stems[item.identity].pins, []);
@@ -84,7 +85,8 @@ test("conflicting byte count cannot demote valid cached content or live pins", a
   assert.deepEqual(new Uint8Array(await (await leaseA.read(item.identity)).arrayBuffer()), item.bytes);
   const index = JSON.parse(new TextDecoder().decode(backend.files.get("index.json")!));
   assert.equal(index.stems[item.identity].bytes, item.bytes.length);
-  assert.deepEqual(index.stems[item.identity].pins, ["session:conflict:a"]);
+  assert.equal(index.stems[item.identity].pins.length, 1);
+  assert.match(index.stems[item.identity].pins[0], /^session:conflict:a:/);
   assert.equal(backend.files.has(`sha256-${item.identity.slice(7)}`), true);
   await leaseA.close();
 });
@@ -422,6 +424,146 @@ test("session gate serializes replacement and close is idempotent", async () => 
   await assert.rejects(lease.read(item.identity));
 });
 
+function seededCache(pins: string[] = []) {
+  const item = fixture([101, 102, 103, 104]);
+  const backend = new MemoryStemStorageBackend();
+  backend.files.set(`sha256-${item.identity.slice(7)}`, item.bytes.slice());
+  backend.files.set("index.json", new TextEncoder().encode(JSON.stringify({ version: 1, stems: {
+    [item.identity]: { bytes: item.bytes.length, pins, lastUsedAt: 11 },
+  } }) + "\n"));
+  const row = () => JSON.parse(new TextDecoder().decode(backend.files.get("index.json")!)).stems[item.identity] as { pins: string[]; lastUsedAt: number };
+  return { item, backend, row };
+}
+
+test("durable offline pins share the historical cache and preserve metadata across reopen and repair", async () => {
+  const { item, backend, row } = seededCache(["offline:existing", "session:unknown-owner:old"]);
+  const before = backend.files.get("index.json")!.slice();
+  const store = new VerifiedStemStore({ backend });
+  await store.open();
+  assert.deepEqual(backend.files.get("index.json"), before);
+  assert.deepEqual(new Uint8Array(await (await store.read(item.identity)).arrayBuffer()), item.bytes);
+  await store.setOfflinePin(item.identity, "one", true);
+  await store.setOfflinePin(item.identity, "one", true);
+  const reopened = new VerifiedStemStore({ backend });
+  await reopened.setOfflinePin(item.identity, "two", true);
+  await reopened.setOfflinePin(item.identity, "one", false);
+  await reopened.setOfflinePin(item.identity, "one", false);
+  assert.deepEqual(row().pins, ["offline:existing", "session:unknown-owner:old", "offline:two"]);
+  assert.equal(row().lastUsedAt, 11);
+  await assert.rejects(store.setOfflinePin(item.identity, " ", true), TypeError);
+  const missing = fixture([201]).identity;
+  await assert.rejects(store.setOfflinePin(missing, "missing", true), { code: "stem.not_found" });
+  await store.setOfflinePin(missing, "missing", false);
+  backend.files.set(`sha256-${item.identity.slice(7)}`, new Uint8Array([0]));
+  const resolver = new MemoryStemResolver({ [item.identity]: item.bytes });
+  const lease = await store.openSession({ leaseId: "repair", stems: [requirement("source", item.identity, item.bytes.length)], resolver });
+  assert.equal(resolver.requests.length, 1, "pins never bypass corrupt-content verification");
+  await lease.close();
+  assert.deepEqual(row().pins, ["offline:existing", "session:unknown-owner:old", "offline:two"]);
+  assert.deepEqual(backend.files.get(`sha256-${item.identity.slice(7)}`), item.bytes);
+});
+
+test("same caller lease IDs own distinct historical lifetime locks and close independently", async () => {
+  const { item, backend, row } = seededCache(["offline:keep"]);
+  const locks = new TestLocks();
+  const view = { ...backendView(backend), folderName: "miso-stems-v1" };
+  const store = new VerifiedStemStore({ backend: view, locks, instanceId: "tab" });
+  const options = { leaseId: "same", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}) };
+  const [one, two] = await Promise.all([store.openSession(options), store.openSession(options)]);
+  const pins = row().pins.filter(pin => pin.startsWith("session:"));
+  assert.equal(new Set(pins).size, 2);
+  const lifetime = (pin: string) => `miso:stem-store:v1:miso-stems-v1:pin:${pin}`;
+  assert.deepEqual((await locks.query()).held.map(lock => lock.name).sort(), pins.map(lifetime).sort());
+  await one.close();
+  assert.equal(row().pins.length, 2);
+  assert.deepEqual((await locks.query()).held.map(lock => lock.name), row().pins.filter(pin => pin.startsWith("session:")).map(lifetime));
+  assert.deepEqual(new Uint8Array(await (await two.read(item.identity)).arrayBuffer()), item.bytes);
+  await two.close();
+  assert.deepEqual(row().pins, ["offline:keep"]);
+  assert.deepEqual((await locks.query()).held, []);
+});
+
+test("pin persistence failure never acknowledges and a failed lease close retains ownership for retry", async () => {
+  const { item, backend, row } = seededCache(["offline:keep"]);
+  const locks = new TestLocks();
+  let fail = false;
+  const view = { ...backendView(backend), async move(from: string, to: string) {
+    if (fail && to === "index.json") throw new Error("index persistence failed");
+    await backend.move(from, to);
+  } };
+  const store = new VerifiedStemStore({ backend: view, locks });
+  await store.open();
+  fail = true;
+  await assert.rejects(store.setOfflinePin(item.identity, "lost", true), /index persistence failed/);
+  assert.deepEqual(row().pins, ["offline:keep"]);
+  fail = false;
+  const lease = await store.openSession({ leaseId: "retry", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}) });
+  const owned = row().pins.slice();
+  fail = true;
+  await assert.rejects(lease.close(), /index persistence failed/);
+  assert.deepEqual(row().pins, owned);
+  assert.equal((await locks.query()).held.length, 1, "failed close retains live ownership");
+  fail = false;
+  await lease.close();
+  assert.deepEqual(row().pins, ["offline:keep"]);
+  assert.deepEqual((await locks.query()).held, []);
+  fail = true;
+  await assert.rejects(store.openSession({ leaseId: "failed", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}) }), /index persistence failed/);
+  assert.deepEqual(row().pins, ["offline:keep"]);
+  assert.deepEqual((await locks.query()).held, []);
+});
+
+test("cancellation racing pin persistence rolls back only its own pin and releases its lock", async () => {
+  const { item, backend, row } = seededCache(["offline:keep"]);
+  const locks = new TestLocks();
+  const controller = new AbortController();
+  const view = { ...backendView(backend), async move(from: string, to: string) {
+    await backend.move(from, to);
+    if (to === "index.json" && row().pins.some(pin => pin.startsWith("session:"))) controller.abort();
+  } };
+  const store = new VerifiedStemStore({ backend: view, locks });
+  await assert.rejects(store.openSession({ leaseId: "cancel", stems: [requirement("source", item.identity, item.bytes.length)], resolver: new MemoryStemResolver({}), signal: controller.signal }), { code: "stem.cancelled" });
+  assert.deepEqual(row().pins, ["offline:keep"]);
+  assert.deepEqual((await locks.query()).held, []);
+});
+
+test("prior adapter and historical app index clients serialize pin mutations in fixed order", async () => {
+  for (const legacy of ["miso:engine-web:v1:index", "miso:stem-store:v1:miso-stems-v1:index"]) {
+    const { item, backend, row } = seededCache();
+    const locks = new TestLocks();
+    const store = new VerifiedStemStore({ backend: { ...backendView(backend), folderName: "miso-stems-v1" }, locks });
+    await store.open();
+    const acquired = deferred<void>();
+    const release = deferred<void>();
+    const oldMutation = locks.request(legacy, { mode: "exclusive" }, async () => {
+      acquired.resolve(); await release.promise;
+      const index = JSON.parse(await backend.readText("index.json"));
+      index.stems[item.identity].pins.push("offline:old-client");
+      backend.files.set("index.json", new TextEncoder().encode(JSON.stringify(index) + "\n"));
+    });
+    await acquired.promise;
+    let settled = false;
+    const mutation = store.setOfflinePin(item.identity, "new-client", true).then(() => { settled = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(settled, false);
+    release.resolve(); await oldMutation; await mutation;
+    assert.deepEqual(row().pins, ["offline:old-client", "offline:new-client"]);
+    const recent = locks.requests.slice(-2);
+    assert.deepEqual(recent, ["miso:engine-web:v1:index", "miso:stem-store:v1:miso-stems-v1:index"]);
+  }
+});
+
+test("unsupported index version refuses before touching historical files", async () => {
+  const { backend } = seededCache();
+  backend.files.set("index.json", new TextEncoder().encode('{"version":2,"stems":{}}'));
+  backend.files.set("index.pending", new Uint8Array([4]));
+  backend.files.set("staging-old", new Uint8Array([5]));
+  backend.files.set("staging/old", new Uint8Array([6]));
+  const before = [...backend.files].map(([name, bytes]) => [name, [...bytes]]);
+  await assert.rejects(new VerifiedStemStore({ backend, locks: new TestLocks() }).open(), { code: "stem.corrupt" });
+  assert.deepEqual([...backend.files].map(([name, bytes]) => [name, [...bytes]]), before);
+});
+
 function backendView(storage: MemoryStemStorageBackend): StemStorageBackend {
   return {
     open: () => storage.open(),
@@ -437,6 +579,7 @@ function backendView(storage: MemoryStemStorageBackend): StemStorageBackend {
 }
 
 class TestLocks implements WebLockProvider {
+  readonly requests: string[] = [];
   readonly #tails = new Map<string, Promise<void>>();
   readonly #held = new Set<string>();
   readonly #pending = new Set<string>();
@@ -452,6 +595,7 @@ class TestLocks implements WebLockProvider {
     callback: () => Promise<T>,
   ): Promise<T> {
     options.signal?.throwIfAborted();
+    this.requests.push(name);
     const prior = this.#tails.get(name) ?? Promise.resolve();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
