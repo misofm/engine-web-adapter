@@ -98,3 +98,7 @@ Dedicated independent review and final remote synchronization remain pending.
 This evidence proves the adapter delegation against the reviewed SDK archive;
 it does not claim registry publication or completion of app/offline/spectrum/
 diagnostics preservation, which remains downstream work.
+
+## Dedicated Astra medium PASS
+
+Independent review atf457202 passes focused35 tests, package policy and actual packed Chromium playback/control/seek/close. All77 installed SDK files match the reviewed archive. The adapter has one SDK startup/PCM authority, no duplicate scratch/prelude implementation, and preserved readiness/override/error boundaries including the explicitly approved deadline mapping. Report attached to the consumer PR. This completes delegation; cache/spectrum/diagnostics/app adoption remain their bounded consumers.
