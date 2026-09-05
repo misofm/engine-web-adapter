@@ -48,6 +48,21 @@ for (const dependency of ["fast-check", "pure-rand", "msgpackr", "msgpackr-extra
 }
 await mkdir(join(consumer, "public"));
 await cp(join(process.cwd(), "tests", "fixtures", "native-silence.flac"), join(consumer, "public", "native-silence.flac"));
+// Existing SDK457 first-output recorder, scoped to this packed consumer fixture.
+await writeFile(join(consumer, "public", "capture.js"), `
+class Capture extends AudioWorkletProcessor {
+  constructor() { super(); this.sent = false; }
+  process(inputs, outputs) {
+    const input = inputs[0];
+    if (!this.sent && input?.length === 2 && input[0].length === 128) {
+      this.sent = true; this.port.postMessage([Array.from(input[0]), Array.from(input[1])]);
+    }
+    for (let channel = 0; channel < outputs[0].length; channel++) if (input?.[channel]) outputs[0][channel].set(input[channel]);
+    return true;
+  }
+}
+registerProcessor('capture-first-quantum', Capture);
+`);
 await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
 await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><script type="module" src="/src/main.ts"></script>\n');
 await mkdir(join(consumer, "src"));
@@ -149,7 +164,10 @@ try {
     () => globalThis.__result !== undefined || globalThis.__error !== undefined,
     undefined,
     { timeout: live ? 180_000 : 30_000 },
-  );
+  ).catch(async (error) => {
+    throw new Error(JSON.stringify({ message: error.message, seekStage: await page.evaluate(() => globalThis.__seekStage),
+      consoleErrors, requests: [...requests.entries()] }));
+  });
   const result = await page.evaluate(() => ({ result: globalThis.__result, error: globalThis.__error }));
   assert.equal(result.error, undefined, JSON.stringify({ error: result.error, consoleErrors, requests: [...requests.entries()] }));
   assert.ok(result.result?.coldLocatorCalls > 0, "cold FLAC open must locate exact ranges");
@@ -176,6 +194,32 @@ try {
   }
   assert.equal(result.result?.notAttached, "console.not_attached");
   assert.equal(result.result?.meterNotAttached, "console.not_attached");
+  const { createOfflineEngine } = await import("@misofm/engine/headless");
+  for (const proof of result.result.seekProofs) {
+    assert.equal(proof.busy, "session.busy");
+    assert.equal(proof.resumeCallsDuringSeek, 0);
+    assert.equal(proof.staleOccupancy, 64);
+    assert.equal(proof.internalBackpressure, 6);
+    assert.equal(proof.prepared.state, "suspended");
+    assert.equal(proof.prepared.timeUnchanged, true);
+    assert.equal(proof.prepared.sampleUnchanged, true);
+    assert.equal(proof.staleReleased, 64);
+    assert.equal(proof.underruns, 0);
+    assert.equal(proof.refused, 0);
+    assert.equal(proof.torn, 0);
+    assert.equal(proof.errors, 0);
+    const oracle = await createOfflineEngine(proof.document);
+    try {
+      assert.equal(oracle.seekSource({ sourceId: "seek-source", generation: 2n, sourceFrame: 10_000n }).ok, true);
+      const planes = [0, 1].map((channel) => Float32Array.from({ length: 128 }, (_, index) =>
+        (((10_000 + index) % 1024) - 512) * (channel === 0 ? 32 : -16) / 32768));
+      assert.equal(oracle.submitSource({ sourceId: "seek-source", generation: 2n, startFrame: 10_000n, planes, endOfRegion: false }).ok, true);
+      const rendered = oracle.render();
+      assert.equal(rendered.left.some((value) => value !== 0), true);
+      assert.deepEqual(proof.pcm, [[...rendered.left], [...rendered.right]], `${proof.mode}: exact first target output`);
+    } finally { oracle.dispose(); }
+  }
+  assert.deepEqual(result.result.seekProofs.map((proof) => proof.mode), ["initial", "resumed"]);
   assert.deepEqual(consoleErrors, []);
   const requested = [...requests.entries()];
   assert.ok(requested.some(([path, mime]) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm") && mime === "application/wasm"), "decoder Wasm asset/MIME not observed");
@@ -221,7 +265,7 @@ import { openEngineWebSession } from "@misofm/engine-web-adapter";
 import { MSB1_CONTROL, PcmPumpWorkerClient } from "@misofm/engine-web-adapter/stems";
 import { ADAPTER_ASSETS } from "@misofm/engine-web-adapter/assets";
 
-declare global { var __result: unknown; var __error: unknown }
+declare global { var __result: unknown; var __error: unknown; var __seekStage: unknown }
 const profile = ${JSON.stringify(profile)} as const;
 void ADAPTER_ASSETS;
 const identity = profile.identity;
@@ -300,6 +344,87 @@ async function exerciseControl(engine: any, consoleFirst: boolean) {
     meterHasMaster: last === undefined ? false : typeof last.master.peak === "number",
   };
 }
+async function exercisePausedSeek(mode: "initial" | "resumed") {
+  globalThis.__seekStage = { mode, stage: "open" };
+  const frames = 48_000;
+  const pcm = new Uint8Array(frames * 4);
+  const view = new DataView(pcm.buffer);
+  for (let frame = 0; frame < frames; frame++) {
+    view.setInt16(frame * 4, ((frame % 1024) - 512) * 32, true);
+    view.setInt16(frame * 4 + 2, ((frame % 1024) - 512) * -16, true);
+  }
+  const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", pcm))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const model = session({ id: "seek-proof", sampleRateHz: 48_000, quantumFrames: 128 })
+    .source("seek-source", { channels: 2, bitDepth: 16, frames, content: ("sha256:" + digest) as any })
+    .track("seek-track", { source: { id: "seek-source", left: 0, right: 1 } })
+    .output("seek-output")
+    .route({ id: "seek-route", source: { kind: "track", trackId: "seek-track", tap: "post_matrix" },
+      destination: { kind: "output_input", outputId: "seek-output" } });
+  const engine = await openEngineWebSession({ document: model, leaseId: "seek-" + mode, console: false,
+    policy: { sourceRingFrames: 512 },
+    resolver: { async resolve() { return { stream: new Blob([pcm]).stream(), canonicalBytes: pcm.length }; } },
+  });
+  const context = engine.context as AudioContext;
+  globalThis.__seekStage = { mode, stage: "opened" };
+  const sleep = () => new Promise((resolve) => setTimeout(resolve, 1));
+  try {
+    await context.audioWorklet.addModule("/capture.js");
+    const captureNext = () => {
+      const capture = new AudioWorkletNode(context, "capture-first-quantum", {
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+      });
+      const first = new Promise<number[][]>((resolve) => { capture.port.onmessage = ({ data }) => resolve(data); });
+      engine.host.node.connect(capture); capture.connect(context.destination);
+      return { first, close() { engine.host.node.disconnect(capture); capture.disconnect(); } };
+    };
+    if (mode === "resumed") {
+      globalThis.__seekStage = { mode, stage: "initial-play" };
+      const initial = captureNext();
+      await engine.play(); await initial.first; await engine.pause(); initial.close();
+    }
+    const deadline = performance.now() + 2000;
+    globalThis.__seekStage = { mode, stage: "fill" };
+    while (engine.feedDiagnostics().sources[0]!.occupancy !== 64) {
+      if (performance.now() >= deadline) throw new Error("old shared queue did not fill");
+      await sleep();
+    }
+    const old = engine.feedDiagnostics().sources[0]!;
+    let nextFrame = old.submitted * 128;
+    let internalBackpressure = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const result = await engine.host.submitSource({ sourceId: "seek-source", generation: 1n,
+        startFrame: BigInt(nextFrame), sampleRateHz: 48_000, frames: 128,
+        planes: [new Float32Array(128).fill(.25), new Float32Array(128).fill(-.25)], endOfRegion: false,
+      }).catch((error) => error);
+      if (result.result === 6) { internalBackpressure = 6; break; }
+      if (result.result !== 0) throw new Error("old internal PCM admission failed: " + result.result);
+      nextFrame += 128;
+    }
+    if (internalBackpressure !== 6) throw new Error("old internal queue was not full");
+    const before = await engine.host.status(); const beforeTime = context.currentTime;
+    globalThis.__seekStage = { mode, stage: "seek" };
+    let resumeCalls = 0;
+    const nativeResume = context.resume.bind(context);
+    context.resume = () => { resumeCalls++; return nativeResume(); };
+    const seeking = engine.seekFrames(10_000);
+    let busy = "";
+    try { await engine.play(); } catch (error) { busy = (error as { code?: string }).code ?? ""; }
+    await seeking;
+    const after = await engine.host.status();
+    const resumeCallsDuringSeek = resumeCalls;
+    context.resume = nativeResume;
+    const prepared = { state: context.state, timeUnchanged: context.currentTime === beforeTime,
+      sampleUnchanged: after.nextAbsoluteSample === before.nextAbsoluteSample };
+    const capture = captureNext();
+    globalThis.__seekStage = { mode, stage: "target-play", prepared };
+    await engine.play(); const first = await capture.first; await engine.pause(); capture.close();
+    const counters = engine.feedDiagnostics().sources[0]!;
+    return { mode, document: model.toJson(), busy, resumeCallsDuringSeek, staleOccupancy: old.occupancy,
+      internalBackpressure, prepared, pcm: first, staleReleased: counters.stale - old.stale,
+      underruns: counters.underruns - old.underruns, refused: counters.refused - old.refused,
+      torn: counters.torn - old.torn, errors: counters.errors - old.errors };
+  } finally { await engine.close(); }
+}
 try {
   const cold = await open({ leaseId: "cold" });
   const initialDiagnostics = cold.feedDiagnostics();
@@ -348,13 +473,14 @@ try {
   try { await playbackOnly.meters(() => undefined); }
   catch (error) { meterNotAttached = (error as { code?: string }).code ?? ""; }
   await playbackOnly.close();
+  const seekProofs = [await exercisePausedSeek("initial"), await exercisePausedSeek("resumed")];
   globalThis.__result = {
     coldLocatorCalls, warmLocatorCalls: locatorCalls,
     coldFlacWorkers, warmFlacWorkers: flacWorkers,
     coldNetworkRequests, warmNetworkRequests: networkRequests,
     observedRemoteBytes, observedEtag,
     observedChunks, observationBytes: allocation.observationBytes, coldClosed, warmClosed, consoleFirst, meterFirst, notAttached, meterNotAttached,
-    ...counters,
+    ...counters, seekProofs,
   };
 } catch (error) {
   globalThis.__error = describe(error);

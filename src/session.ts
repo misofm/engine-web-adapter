@@ -206,6 +206,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     let closing = false;
     let tail: Promise<void> = Promise.resolve();
     let closePromise: Promise<void> | undefined;
+    let pendingSeeks = 0;
     const enqueue = (operation: () => Promise<void>): Promise<void> => {
       const next = tail.then(operation, operation);
       tail = next.then(() => undefined, () => undefined);
@@ -277,6 +278,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       },
       play() {
         if (closing || state === "closed") return Promise.reject(new EngineWebAdapterError("session.closed", "Engine Web session is closed"));
+        if (pendingSeeks !== 0) return Promise.reject(new EngineWebAdapterError("session.busy", "Await pending seeks before playing"));
         // This call intentionally precedes the first await and preserves the user gesture.
         const resumed = context.resume();
         return enqueue(async () => {
@@ -296,10 +298,30 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
         });
       },
       seekFrames(frame) {
+        if (closing || state === "closed") return Promise.reject(new EngineWebAdapterError("session.closed", "Engine Web session is closed"));
+        if ((typeof frame === "number" && !Number.isSafeInteger(frame)) || frame < 0 || frame > Number.MAX_SAFE_INTEGER) {
+          return Promise.reject(new RangeError("seek frame is out of range"));
+        }
+        const target = BigInt(frame);
+        pendingSeeks++;
         return enqueue(async () => {
-          if (closing || state === "closed") throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
-          await abortable(pump!.seekFrames(frame), abort.signal);
-        });
+          assertOpen();
+          if (context.state === "running") {
+            await abortable(pump!.seekFrames(target), abort.signal);
+            return;
+          }
+          try {
+            await abortable(feed!.ready(), abort.signal);
+            const generation = await abortable(pump!.seekFrames(target), abort.signal);
+            await abortable(feed!.prepareSeek(), abort.signal);
+            await waitForSeekPrefill(orderedSources, counters, target, generation, abort.signal);
+            assertOpen();
+          } catch (error) {
+            if (closing) throw new EngineWebAdapterError("session.closed", "Engine Web session is closed", {}, error);
+            try { await session.close(); } catch { /* retain the original preparation failure */ }
+            throw new EngineWebAdapterError("session.seek", "Paused PCM seek preparation failed", {}, error);
+          }
+        }).finally(() => { pendingSeeks--; });
       },
       close() {
         if (closePromise === undefined) {
@@ -605,6 +627,32 @@ async function waitForPrefill(rings: readonly SharedArrayBuffer[], signal: Abort
   while (rings.some((ring) => Atomics.load(new Int32Array(ring), MSB1_CONTROL.WROTE) === 0)) {
     signal.throwIfAborted();
     if (performance.now() >= deadline) throw new EngineWebAdapterError("session.open", "PCM pump prefill timed out");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+async function waitForSeekPrefill(
+  sources: readonly DeclaredStemSource[],
+  observers: ReadonlyMap<string, Msb1RingObserver>,
+  target: bigint,
+  generation: bigint,
+  signal: AbortSignal,
+): Promise<void> {
+  const pending = new Map(sources.flatMap((source) => target < BigInt(source.spec.frames)
+    ? [[source.id, target] as const] : []));
+  const deadline = performance.now() + PREFILL_TIMEOUT_MS;
+  while (pending.size !== 0) {
+    signal.throwIfAborted();
+    for (const [id, frame] of pending) {
+      observers.get(id)!.pull((chunk) => {
+        if (chunk.generation !== generation || chunk.startFrame !== frame) {
+          throw new EngineWebAdapterError("session.seek", "PCM prefill does not begin at the acknowledged seek", { sourceId: id });
+        }
+        pending.delete(id);
+      }, 1);
+    }
+    if (pending.size === 0) return;
+    if (performance.now() >= deadline) throw new EngineWebAdapterError("session.seek", "Current-generation PCM prefill timed out");
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 }

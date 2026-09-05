@@ -98,3 +98,22 @@ test("SDK feed errors translate by operation and retain their typed cause", asyn
     && error.code === "session.closed" && error.cause instanceof PcmFeedError && error.cause.operation === "closed");
   feed.close(); assert.equal(disconnected, 2);
 });
+
+test("feed forwards paused preparation and preserves SDK timeout refusal", async () => {
+  let ring!: SharedArrayBuffer;
+  const feed = attachEngineFeed({ context: { state: "suspended" } as BaseAudioContext,
+    sources: [{ sourceId: "source", channels: 1 }], quantumFrames: 4,
+    createNode: () => ({ port: { postMessage(message) {
+      const data = message as { op: string; rings: SharedArrayBuffer[] };
+      if (data.op === "attach") {
+        ring = data.rings[0]!;
+        Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+      }
+    } }, disconnect() {} }),
+  });
+  new Msb1RingWriter(ring).seek(2n, 100n);
+  await feed.ready();
+  await assert.rejects(feed.prepareSeek({ timeoutMs: 1 }), (error: unknown) => error instanceof EngineWebAdapterError
+    && error.code === "session.seek" && error.cause instanceof PcmFeedError && error.cause.operation === "prepareTimeout");
+  assert.equal(feed.state, "closed");
+});

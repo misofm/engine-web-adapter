@@ -197,8 +197,11 @@ export interface EngineWebSession {
   telemetry(listener: (update: TelemetryUpdate) => void): Promise<() => void>;
   observeSource(sourceId: string): SourceObservation;
   feedDiagnostics(): FeedDiagnostics;
+  /** Call from a user gesture. Rejects session.busy without resuming while any seek is pending. */
   play(): Promise<void>;
   pause(): Promise<void>;
+  /** While suspended, resolves after consumer preparation and target-generation prefill.
+   * Await this before play(); preparation failure closes the session. Running seeks remain live. */
   seekFrames(frame: number | bigint): Promise<void>;
   close(): Promise<void>;
 }

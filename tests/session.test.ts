@@ -3,7 +3,7 @@ import { createIngestDiagnostics } from "../src/index.js";
 import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { MemoryStemStorageBackend } from "../src/stems/storage.js";
-import { BrowserBootError } from "@misofm/engine/browser";
+import { BrowserBootError, Msb1RingWriter, PcmFeedError } from "@misofm/engine/browser";
 import { scratchBootWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -474,6 +474,157 @@ function deferred<T>() {
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+async function pausedSeekFixture(attached = true) {
+  const events: string[] = [];
+  const context = fakeContext(events);
+  const sources: DeclaredStemSource[] = [{ id: "source", spec: { channels: 1, bitDepth: 16, frames: 512, content: IDENTITY } }];
+  let ring!: SharedArrayBuffer;
+  let writer!: Msb1RingWriter;
+  let generation = 1n;
+  let request: any;
+  let seekGate: Promise<void> = Promise.resolve();
+  const port = {
+    onmessage: null as ((event: MessageEvent) => void) | null,
+    postMessage(message: unknown) {
+      const data = message as any;
+      if (data.op === "attach") {
+        ring = data.rings[0];
+        if (attached) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+      } else if (data.op === "prepare-seek") { events.push("prepare"); request = data; }
+      else events.push("detach");
+    },
+  };
+  const host = {
+    node: { connect() {}, disconnect() {} },
+    async dispose() { events.push("dispose"); },
+  } as unknown as BrowserEngine["host"];
+  const session = await openEngineWebSession({
+    ...baseOptions(), sources, document: documentFor(sources), console: false,
+    capabilityScope: capabilities(), createContext: () => context, createHost: async () => host,
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", sources: [{ id: "source", channels: 1, frames: 512n }], tracks: [] }),
+    store: { async open() { return this; }, async openSession() { return {
+      leaseId: "seek", stems: [{ sourceId: "source", identity: IDENTITY, bytes: 1024 }],
+      async read() { return new Blob([new Uint8Array(1024)]); }, async close() { events.push("lease.close"); },
+    }; } },
+    createAttachNode: () => ({ port, disconnect() {} }),
+    createPump: async () => {
+      writer = new Msb1RingWriter(ring); writer.engage(generation);
+      for (let index = 0; index < writer.capacity; index++) {
+        writer.reserve(4)![0]!.fill(0.25);
+        writer.commit({ generation, startFrame: BigInt(index * 4), frames: 4, endOfRegion: false });
+      }
+      return { async seekFrames(frame) {
+        events.push("seek.start"); await seekGate;
+        generation++; writer.seek(generation, BigInt(frame) > 512n ? 512n : BigInt(frame));
+        events.push("seek.ack"); return generation;
+      }, close() { writer.release(); events.push("pump.close"); } };
+    },
+  });
+  return {
+    session, events, context,
+    attach() { Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1); },
+    blockSeek(promise: Promise<void>) { seekGate = promise; },
+    confirm(result = 0) {
+      assert.ok(request);
+      // Test consumer retires old slots; production owns this exclusively in the SDK.
+      const control = new Int32Array(ring);
+      Atomics.store(control, MSB1_CONTROL.READ_INDEX, Atomics.load(control, MSB1_CONTROL.WRITE_INDEX));
+      const data = { op: "seek-prepared", requestId: request.requestId, seeks: request.seeks,
+        kind: result === 0 ? "confirmed" : "refused", result };
+      request = undefined; port.onmessage?.({ data } as MessageEvent);
+    },
+    write(frame: bigint, chunkGeneration = generation) {
+      writer.reserve(4)![0]!.fill(0.5);
+      writer.commit({ generation: chunkGeneration, startFrame: frame, frames: 4, endOfRegion: false });
+    },
+  };
+}
+
+async function tick() { await new Promise<void>((resolve) => setTimeout(resolve, 5)); }
+
+test("initial paused seeks require attachment, producer ACK, preparation and full-generation target PCM before play", async () => {
+  const f = await pausedSeekFixture(false);
+  const release = deferred<void>(); f.blockSeek(release.promise);
+  let settled = false;
+  const seek = f.session.seekFrames(100).then(() => { settled = true; });
+  await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.busy");
+  assert.equal(f.events.includes("context.resume"), false);
+  await tick(); assert.equal(f.events.includes("seek.start"), false);
+  f.attach(); await tick(); assert.equal(f.events.at(-1), "seek.start");
+  release.resolve(); await tick();
+  assert.deepEqual(f.events.slice(-2), ["seek.ack", "prepare"]);
+  assert.equal(settled, false, "full old occupancy is not seek readiness");
+  f.confirm(); await tick(); assert.equal(settled, false, "prepare alone is not producer prefill");
+  f.write(100n, 2n + (1n << 32n)); await tick(); assert.equal(settled, false, "low-word generation collision is insufficient");
+  f.write(100n); await seek;
+  assert.equal(f.context.state, "suspended");
+  const play = f.session.play(); assert.equal(f.events.at(-1), "context.resume"); await play;
+  await f.session.close();
+});
+
+test("queued seeks keep play busy through the last completion; active seek and EOF remain supported", async () => {
+  const f = await pausedSeekFixture();
+  const first = f.session.seekFrames(100);
+  const second = f.session.seekFrames(512);
+  await tick(); f.confirm(); f.write(100n); await first;
+  await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.busy");
+  await tick(); f.confirm(); await second;
+  assert.equal(f.events.includes("context.resume"), false);
+  await assert.rejects(f.session.seekFrames(0.5), RangeError);
+  assert.equal(f.session.state, "ready", "invalid input leaves the session usable");
+  await f.session.play();
+  const count = f.events.filter((event) => event === "prepare").length;
+  await f.session.seekFrames(20);
+  assert.equal(f.context.state, "running");
+  assert.equal(f.events.filter((event) => event === "prepare").length, count);
+  await f.session.close();
+});
+
+test("paused prepare refusal retains result and closes; close interrupts preparation or refill promptly", async () => {
+  const f = await pausedSeekFixture();
+  const seeking = f.session.seekFrames(100);
+  const rejected = assert.rejects(seeking, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek"
+    && e.cause instanceof EngineWebAdapterError && e.cause.cause instanceof PcmFeedError && e.cause.cause.result === 6);
+  await tick(); f.confirm(6); await rejected;
+  assert.equal(f.session.state, "closed");
+  await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
+  assert.equal(f.events.includes("context.resume"), false);
+  for (const prepared of [false, true]) {
+    const g = await pausedSeekFixture();
+    const pending = g.session.seekFrames(100);
+    const closingSeek = assert.rejects(pending, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
+    await tick(); if (prepared) g.confirm(); await tick();
+    const close = g.session.close(); assert.equal(g.session.close(), close);
+    await Promise.race([close, new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("close blocked on seek")), 100))]);
+    await closingSeek;
+    await assert.rejects(g.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
+  }
+});
+
+test("wrong first target cannot be hidden by a later matching chunk", async () => {
+  const f = await pausedSeekFixture();
+  const seeking = f.session.seekFrames(100);
+  const rejected = assert.rejects(seeking, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek");
+  await tick(); f.confirm(); f.write(101n); f.write(100n);
+  await rejected;
+  assert.equal(f.session.state, "closed");
+  assert.equal(f.events.includes("context.resume"), false);
+});
+
+test("paused preparation and fresh prefill deadlines close rather than allow play", { timeout: 6000 }, async () => {
+  for (const prepared of [false, true]) {
+    const f = await pausedSeekFixture();
+    const seeking = f.session.seekFrames(100);
+    const rejected = assert.rejects(seeking, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek");
+    await tick(); if (prepared) f.confirm();
+    await rejected;
+    assert.equal(f.session.state, "closed");
+    await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
+    assert.equal(f.events.includes("context.resume"), false);
+  }
+});
 
 function putU64(bytes: Uint8Array, offset: number, input: bigint): void {
   let value = input;
