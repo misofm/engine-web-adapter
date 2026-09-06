@@ -23,12 +23,12 @@ concurrency:
 
 env:
   PACKAGE_NAME: "@misofm/engine-web-adapter"
-  PACKAGE_VERSION: "0.3.1"
+  PACKAGE_VERSION: "0.3.2"
   NPM_CONFIG_REGISTRY: "https://registry.npmjs.org"
 
 jobs:
   publish:
-    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.3.1
+    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.3.2
     runs-on: ubuntu-24.04
     steps:
       - name: Refuse a non-main or mismatched dispatch
