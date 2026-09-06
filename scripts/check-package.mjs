@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 assert.deepEqual(packageJson.dependencies, {
-  "@misofm/engine": "0.2.0",
+  "@misofm/engine": "0.2.1",
   effect: "4.0.0-rc.112",
 });
 assert.equal(packageJson.type, "module");
