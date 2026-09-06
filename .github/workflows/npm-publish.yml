@@ -23,12 +23,12 @@ concurrency:
 
 env:
   PACKAGE_NAME: "@misofm/engine-web-adapter"
-  PACKAGE_VERSION: "0.3.0"
+  PACKAGE_VERSION: "0.3.1"
   NPM_CONFIG_REGISTRY: "https://registry.npmjs.org"
 
 jobs:
   publish:
-    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.3.0
+    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.3.1
     runs-on: ubuntu-24.04
     steps:
       - name: Refuse a non-main or mismatched dispatch
@@ -63,7 +63,7 @@ jobs:
           [[ "$(node -p "require('./package.json').version")" == "$PACKAGE_VERSION" ]]
           [[ "$(node -p "require('./package-lock.json').name")" == "$PACKAGE_NAME" ]]
           [[ "$(node -p "require('./package-lock.json').version")" == "$PACKAGE_VERSION" ]]
-          [[ "$(node -p "require('./package.json').dependencies['@misofm/engine']")" == "0.2.0" ]]
+          [[ "$(node -p "require('./package.json').dependencies['@misofm/engine']")" == "0.2.1" ]]
           [[ "$(node -p "require('./package.json').repository.url")" == "git+https://github.com/misofm/engine-web-adapter.git" ]]
 
       - name: Install and qualify
@@ -115,7 +115,7 @@ jobs:
             [[ "$attempt" == 60 ]] && { echo "registry did not converge" >&2; exit 1; }
             sleep 5
           done
-          [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dependencies.@misofm/engine)" == "0.2.0" ]]
+          [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dependencies.@misofm/engine)" == "0.2.1" ]]
           consumer=$(mktemp -d)
           trap 'rm -rf -- "$consumer"' EXIT
           cd "$consumer"

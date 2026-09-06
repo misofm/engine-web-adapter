@@ -164,7 +164,7 @@ test("meters arrive keyed by track id with the master fold separated", async () 
   const updates: MeterUpdate[] = [];
   const stop = await session.meters((update) => updates.push(update));
   host.meterFrame!({
-    tag: "miso.meter.v1", sequence: 7, windows: 1, trackCount: 2,
+    tag: "miso.meter.v1", generation: 1n, validity: 11, lossCount: 0, sequence: 7, windows: 1, trackCount: 2,
     peaks: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.9, 0.8]),
     trackGrDb: new Float32Array([1.5, 0]), masterGrDb: 2.5,
     firstSample: 0n, endSample: 128n,
@@ -312,7 +312,7 @@ async function packedControl() {
   return { host, control, sent, pending, frame, ack };
 }
 const tick = async () => { for (let index = 0; index < 8; index += 1) await Promise.resolve(); };
-const meterFrame = { tag: "miso.meter.v1", sequence: 7, windows: 3, trackCount: 2, peaks: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.9, 0.8]), trackGrDb: new Float32Array([1.5, 2]), masterGrDb: 2.5, firstSample: 128n, endSample: 512n };
+const meterFrame = { tag: "miso.meter.v1", generation: 1n, validity: 11, lossCount: 0, sequence: 7, windows: 3, trackCount: 2, peaks: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.9, 0.8]), trackGrDb: new Float32Array([1.5, 2]), masterGrDb: 2.5, firstSample: 128n, endSample: 512n };
 const telemetryFrame = { tag: "miso.telemetry.v1", sequence: 8, blocks: 3, cpuPercent: 20, peakBlockMs: 0.7, meanBlockMs: 0.5, budgetMs: 2.6, deadlineMisses: 1, resolutionMs: 0.1, belowResolution: false };
 
 for (const feed of ["meters", "telemetry"] as const) {
