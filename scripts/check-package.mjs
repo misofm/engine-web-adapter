@@ -10,6 +10,8 @@ assert.deepEqual(packageJson.dependencies, {
   effect: "4.0.0-rc.112",
 });
 assert.equal(packageJson.type, "module");
+const { ADAPTER_PROVENANCE } = await import("../dist/provenance.js");
+assert.equal(ADAPTER_PROVENANCE.engine.package, `@misofm/engine@${packageJson.dependencies["@misofm/engine"]}`, "built provenance must identify the installed Engine dependency");
 const cache = await mkdtemp(join(tmpdir(), "engine-web-adapter-npm-cache-"));
 const packed = spawnSync("npm", ["pack", "--dry-run", "--json"], {
   encoding: "utf8", env: { ...process.env, npm_config_cache: cache },

@@ -13,11 +13,12 @@ import { MemoryStemResolver } from "../src/stems/memory-resolver.js";
 
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
 
-test("foundation is pinned to the exact public Engine release", () => {
-  assert.equal(ADAPTER_PROVENANCE.engine.package, "@misofm/engine@0.2.0");
+test("foundation is pinned to the exact public Engine release", async () => {
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+  assert.equal(ADAPTER_PROVENANCE.engine.package, `@misofm/engine@${packageJson.dependencies["@misofm/engine"]}`);
   assert.equal(
     ADAPTER_PROVENANCE.engine.commit,
-    "bb5ed498a2c0934498d964befb2cd5b7c2a45264",
+    "be781895decc72328f727dcd816b8b40a2ab6051",
   );
   assert.equal(ADAPTER_PROVENANCE.safeBaselines.stemStore, "bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c");
 });
