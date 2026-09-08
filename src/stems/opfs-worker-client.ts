@@ -15,17 +15,24 @@ interface Pending {
 /**
  * Owns the single OPFS write Worker.
  *
- * The Worker is created on the first open writer and terminated when the last
- * one settles, so an idle store holds no OPFS thread. Reads never come here.
+ * The Worker is created on the first open writer and terminated once the last
+ * one settles and a short idle grace elapses, so an idle store holds no OPFS
+ * thread beyond that grace. The grace exists because callers open exactly one
+ * writer at a time on several paths — the staging body, the post-ingest index
+ * write, the pin/ownership write — and without it each of those pays a fresh
+ * thread spawn, module evaluation and `worker-ready` handshake. Teardown driven
+ * by close, abort or a deadline stays immediate. Reads never come here.
  */
 export class OpfsWriteWorkerClient {
   readonly #createWorker: () => OpfsWorkerLike;
   readonly #deadlineMs: number;
+  readonly #idleGraceMs: number;
   readonly #pending = new Map<number, Pending>();
   readonly #cancellations = new Set<() => void>();
   #worker: OpfsWorkerLike | undefined;
   #ready: Promise<void> | undefined;
   #detach: (() => void) | undefined;
+  #idle: { readonly timer: ReturnType<typeof setTimeout>; readonly generation: number } | undefined;
   #openWriters = 0;
   #writeSupport: boolean | undefined;
   #requestId = 1;
@@ -37,12 +44,17 @@ export class OpfsWriteWorkerClient {
     readonly assets?: AdapterAssetOverrides;
     readonly createWorker?: () => OpfsWorkerLike;
     readonly deadlineMs?: number;
+    readonly idleGraceMs?: number;
   } = {}) {
     this.#createWorker = options.createWorker
       ?? (() => createOpfsWorker(options.assets) as unknown as OpfsWorkerLike);
     this.#deadlineMs = options.deadlineMs ?? 15_000;
     if (!Number.isFinite(this.#deadlineMs) || this.#deadlineMs <= 0) {
       throw new RangeError("deadlineMs must be a positive finite number");
+    }
+    this.#idleGraceMs = options.idleGraceMs ?? 1_000;
+    if (!Number.isFinite(this.#idleGraceMs) || this.#idleGraceMs < 0) {
+      throw new RangeError("idleGraceMs must be a non-negative finite number");
     }
   }
 
@@ -117,6 +129,9 @@ export class OpfsWriteWorkerClient {
   }
 
   async #acquire(): Promise<number> {
+    // A Worker still inside its idle grace is reused as-is: the generation is
+    // unchanged and `#ready` is already resolved, so there is no second handshake.
+    this.#cancelIdle();
     if (this.#worker === undefined) {
       let worker: OpfsWorkerLike;
       try { worker = this.#createWorker(); }
@@ -205,11 +220,38 @@ export class OpfsWriteWorkerClient {
     this.#openWriters -= 1;
     if (this.#openWriters > 0) return;
     this.#openWriters = 0;
-    this.#teardown();
+    if (this.#idleGraceMs === 0 || this.#worker === undefined) { this.#teardown(); return; }
+    this.#armIdle(generation);
+  }
+
+  /**
+   * Hold the current generation for the grace window. The timer carries the
+   * generation it was armed for, so one retired by close, abort or a deadline
+   * cannot be torn down twice by a stale timer.
+   */
+  #armIdle(generation: number): void {
+    this.#cancelIdle();
+    const timer = setTimeout(() => {
+      this.#idle = undefined;
+      if (generation !== this.#generation) return;
+      if (this.#openWriters > 0 || this.#worker === undefined) return;
+      this.#teardown();
+    }, this.#idleGraceMs);
+    // Tests run under `node --test` and never close the backend, so an idle
+    // timer must not keep the process alive. Browsers have no `unref`.
+    (timer as { unref?: () => void }).unref?.();
+    this.#idle = { timer, generation };
+  }
+
+  #cancelIdle(): void {
+    if (this.#idle === undefined) return;
+    clearTimeout(this.#idle.timer);
+    this.#idle = undefined;
   }
 
   #teardown(): void {
     const worker = this.#worker;
+    this.#cancelIdle();
     for (const detach of this.#cancellations) detach();
     this.#detach?.();
     this.#detach = undefined;

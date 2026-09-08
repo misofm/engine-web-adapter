@@ -329,7 +329,8 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
     const oldLifetime = new AbortController();
     const freshLifetime = new AbortController();
     let generations = 0;
-    const client = new OpfsWriteWorkerClient({ createWorker: () => (generations++ === 0 ? first : second).worker });
+    // Immediate teardown: this table measures generation/timer accounting, not idle policy.
+    const client = new OpfsWriteWorkerClient({ idleGraceMs: 0, createWorker: () => (generations++ === 0 ? first : second).worker });
     let unsettled = 0;
     let settlements = 0;
     const tracked = <T>(promise: Promise<T>) => {
@@ -437,7 +438,7 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
 test("a never-ready generation times out once and a late ready cannot poison its replacement", async () => {
   const generations = [controlledWorkerHarness(), controlledWorkerHarness()];
   let next = 0;
-  const client = new OpfsWriteWorkerClient({ deadlineMs: 15, createWorker: () => generations[next++]!.worker });
+  const client = new OpfsWriteWorkerClient({ idleGraceMs: 0, deadlineMs: 15, createWorker: () => generations[next++]!.worker });
   await assert.rejects(client.createWriter("folder", "never-ready"), (error: unknown) =>
     error instanceof DOMException && error.name === "TimeoutError");
   assert.equal(generations[0]!.terminations, 1);
@@ -497,6 +498,10 @@ test("close during handshake, open, and write settles once and permits a fresh g
     const close = second.messages.find((message) => message.type === "write-close")!;
     second.emit({ type: "opfs-ok", requestId: close.requestId });
     await closing;
+    // The replacement stays warm inside its idle grace; an explicit close still
+    // terminates it immediately.
+    assert.equal(second.terminations, 0);
+    client.close();
     assert.equal(second.terminations, 1);
   }
 });
@@ -793,3 +798,121 @@ function named(message: string, name: string): Error {
   error.name = name;
   return error;
 }
+
+function countingBackend(root: FakeDirectory, folderName: string, idleGraceMs?: number): {
+  readonly backend: OpfsStorageBackend;
+  readonly created: () => number;
+} {
+  let created = 0;
+  const backend = new OpfsStorageBackend({
+    folderName,
+    storage: { getDirectory: async () => root } as never,
+    createWorker: () => { created += 1; return fakeOpfsWorker(root); },
+    readDeadlineMs: 5_000,
+    ...(idleGraceMs === undefined ? {} : { idleGraceMs }),
+  });
+  return { backend, created: () => created };
+}
+
+test("serial writers inside the idle grace share one OPFS Worker", async () => {
+  const root = new FakeDirectory();
+  const { backend, created } = countingBackend(root, "opfs-idle-reuse-v1", 5_000);
+  // open() probes write support through the Worker and releases it; without a
+  // grace that release alone terminates the thread.
+  await backend.open();
+  assert.equal(created(), 1);
+  // Each staging body, index write and pin write is its own open/close cycle.
+  for (const name of ["one", "two", "three", "four", "five", "six"]) {
+    const writer = await backend.createWriter(name);
+    await writer.write(new Uint8Array([1, 2, 3]));
+    await writer.close();
+  }
+  assert.equal(created(), 1, "six serial writers must not each spawn a Worker");
+  backend.close();
+});
+
+test("without the idle grace every serial writer spawns its own OPFS Worker", async () => {
+  const root = new FakeDirectory();
+  const { backend, created } = countingBackend(root, "opfs-idle-none-v1", 0);
+  await backend.open();
+  assert.equal(created(), 1);
+  for (const name of ["one", "two", "three"]) {
+    const writer = await backend.createWriter(name);
+    await writer.write(new Uint8Array([1]));
+    await writer.close();
+  }
+  // This is the cost the grace removes; it is pinned so the regression is visible.
+  assert.equal(created(), 4);
+  backend.close();
+});
+
+test("the idle grace expires and releases the OPFS thread", async () => {
+  const root = new FakeDirectory();
+  const { backend, created } = countingBackend(root, "opfs-idle-expiry-v1", 20);
+  await backend.open();
+  const writer = await backend.createWriter("one");
+  await writer.close();
+  assert.equal(created(), 1);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const next = await backend.createWriter("two");
+  await next.close();
+  assert.equal(created(), 2, "an idle store must not hold the Worker past the grace");
+  backend.close();
+});
+
+test("close during the idle grace terminates the Worker immediately", async () => {
+  const harness = controlledWorkerHarness();
+  const client = new OpfsWriteWorkerClient({ idleGraceMs: 5_000, createWorker: () => harness.worker });
+  const opening = client.createWriter("folder", "one");
+  harness.emit({ type: "worker-ready", writeSupport: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  const open = harness.messages.find((message) => message.type === "write-open")!;
+  harness.emit({ type: "opfs-ok", requestId: open.requestId });
+  const writer = await opening;
+  const closing = writer.close();
+  await new Promise((resolve) => setImmediate(resolve));
+  const close = harness.messages.find((message) => message.type === "write-close")!;
+  harness.emit({ type: "opfs-ok", requestId: close.requestId });
+  await closing;
+  assert.equal(harness.terminations, 0);
+  assert.equal(client.workersActive, 1);
+  client.close();
+  assert.equal(harness.terminations, 1);
+  assert.equal(client.workersActive, 0);
+});
+
+test("a writer reused from the idle grace still honours its deadline", async () => {
+  const first = controlledWorkerHarness();
+  const second = controlledWorkerHarness();
+  let generation = 0;
+  const client = new OpfsWriteWorkerClient({
+    idleGraceMs: 5_000,
+    deadlineMs: 20,
+    createWorker: () => (generation++ === 0 ? first.worker : second.worker),
+  });
+  const opening = client.createWriter("folder", "one");
+  first.emit({ type: "worker-ready", writeSupport: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  const open = first.messages.find((message) => message.type === "write-open")!;
+  first.emit({ type: "opfs-ok", requestId: open.requestId });
+  const writer = await opening;
+  const closing = writer.close();
+  await new Promise((resolve) => setImmediate(resolve));
+  const close = first.messages.find((message) => message.type === "write-close")!;
+  first.emit({ type: "opfs-ok", requestId: close.requestId });
+  await closing;
+  assert.equal(first.terminations, 0);
+  // The reused generation performs no second handshake.
+  const reused = client.createWriter("folder", "two");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(generation, 1, "the grace must not create a replacement Worker");
+  await assert.rejects(reused, (error: unknown) => error instanceof DOMException && error.name === "TimeoutError");
+  assert.equal(first.terminations, 1, "a timeout on a reused generation still terminates immediately");
+  client.close();
+});
+
+test("idleGraceMs must be a non-negative finite number", () => {
+  assert.throws(() => new OpfsWriteWorkerClient({ idleGraceMs: -1 }), RangeError);
+  assert.throws(() => new OpfsWriteWorkerClient({ idleGraceMs: Number.NaN }), RangeError);
+  assert.throws(() => new OpfsWriteWorkerClient({ idleGraceMs: Number.POSITIVE_INFINITY }), RangeError);
+});

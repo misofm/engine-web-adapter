@@ -69,6 +69,7 @@ export class OpfsStorageBackend implements StemStorageBackend {
     readonly readDeadlineMs?: number;
     readonly assets?: AdapterAssetOverrides;
     readonly createWorker?: () => OpfsWorkerLike;
+    readonly idleGraceMs?: number;
   } = {}) {
     this.#folderName = options.folderName ?? "miso-engine-web-stems-v1";
     if (this.#folderName.length === 0 || this.#folderName === "." || this.#folderName === ".." || this.#folderName.includes("/")) {
@@ -79,6 +80,7 @@ export class OpfsStorageBackend implements StemStorageBackend {
     this.#writes = new OpfsWriteWorkerClient({
       ...(options.assets === undefined ? {} : { assets: options.assets }),
       ...(options.createWorker === undefined ? {} : { createWorker: options.createWorker }),
+      ...(options.idleGraceMs === undefined ? {} : { idleGraceMs: options.idleGraceMs }),
       // The worker generation owns the same bounded deadline as backend
       // operations, so a stalled handshake/request is torn down with its
       // physical handles before a replacement generation can be observed.
