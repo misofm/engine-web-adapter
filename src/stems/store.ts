@@ -570,7 +570,7 @@ export class VerifiedStemStore implements StemStore {
 
 export class OpfsStemStore extends VerifiedStemStore {
   constructor(options: Omit<VerifiedStemStoreOptions, "backend"> & ConstructorParameters<typeof OpfsStorageBackend>[0] = {}) {
-    const { folderName, storage, assets, createWorker, ...storeOptions } = options;
+    const { folderName, storage, assets, createWorker, idleGraceMs, ...storeOptions } = options;
     super({
       ...storeOptions,
       backend: new OpfsStorageBackend({
@@ -578,6 +578,7 @@ export class OpfsStemStore extends VerifiedStemStore {
         ...(storage === undefined ? {} : { storage }),
         ...(assets === undefined ? {} : { assets }),
         ...(createWorker === undefined ? {} : { createWorker }),
+        ...(idleGraceMs === undefined ? {} : { idleGraceMs }),
         ...(options.readDeadlineMs === undefined ? {} : { readDeadlineMs: options.readDeadlineMs }),
       }),
     });
