@@ -626,7 +626,12 @@ test("OPFS removal retries transient locks and bounds permanent locks and stalle
     } else {
       await assert.rejects(backend.remove("owned"), { name: scenario === "other" ? "SecurityError" : "TimeoutError" });
       assert.equal(folder.files.has("owned"), true);
-      if (scenario === "permanent") assert.ok(attempts >= 2 && attempts <= 5, `bounded attempts: ${attempts}`);
+      // The invariant is that a permanent lock retries inside one budget and
+      // then stops, not an exact count: how many 10ms waits fit in the 35ms
+      // budget shifts with timer granularity (a wait can land just under 10ms).
+      // The ceiling only has to exclude an unbounded spin, which would retry in
+      // the hundreds.
+      if (scenario === "permanent") assert.ok(attempts >= 2 && attempts <= 12, `bounded attempts: ${attempts}`);
       else assert.equal(attempts, 1);
       assert.ok(performance.now() - started < 250, "one bounded removal budget");
     }
