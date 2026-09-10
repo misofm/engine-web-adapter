@@ -492,8 +492,10 @@ async function pausedSeekFixture(attached = true, hooks: {
   readonly onError?: (error: EngineWebAdapterError) => void;
   readonly onProgress?: EngineWebSessionCommonOptions["onProgress"];
   readonly cleanupGate?: Promise<void>;
+  readonly sessionMap?: BrowserEngine["host"]["sessionMap"];
+  readonly events?: string[];
 } = {}) {
-  const events: string[] = [];
+  const events: string[] = hooks.events ?? [];
   const context = fakeContext(events);
   const sources: DeclaredStemSource[] = [{ id: "source", spec: { channels: 1, bitDepth: 16, frames: 512, content: IDENTITY } }];
   let ring!: SharedArrayBuffer;
@@ -514,10 +516,12 @@ async function pausedSeekFixture(attached = true, hooks: {
   };
   const host = {
     node: { connect() {}, disconnect() {} },
+    ...(hooks.sessionMap === undefined ? {} : { sessionMap: hooks.sessionMap }),
     async dispose() { events.push("dispose"); await hooks.cleanupGate; },
   } as unknown as BrowserEngine["host"];
   const session = await openEngineWebSession({
-    ...baseOptions(), sources, document: documentFor(sources), console: false,
+    ...baseOptions(), sources, document: documentFor(sources),
+    ...(hooks.sessionMap === undefined ? { console: false as const } : {}),
     ...(hooks.onError === undefined ? {} : { onError: hooks.onError }),
     ...(hooks.onProgress === undefined ? {} : { onProgress: hooks.onProgress }),
     capabilityScope: capabilities(), createContext: () => context, createHost: async () => host,
@@ -620,6 +624,52 @@ test("pump failure during opening rejects open instead of duplicating a runtime 
     onProgress: (progress) => { if (progress.stage === "prefilling") failed.resolve(reason); },
   }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.playback" && error.cause === reason);
   assert.equal(notifications, 0);
+});
+
+test("pump failure interrupts either opening console map without awaiting late success or rejection", { timeout: 2000 }, async () => {
+  for (const pendingMap of [1, 2]) for (const lateReject of [false, true]) {
+    const failed = deferred<unknown>(); const entered = deferred<void>(); const release = deferred<void>();
+    const events: string[] = []; const reason = new Error("pump failed while attaching console");
+    let calls = 0; let notifications = 0;
+    const opening = pausedSeekFixture(true, {
+      failure: failed.promise, events, onError: () => { notifications++; },
+      async sessionMap() {
+        if (++calls === pendingMap) {
+          entered.resolve(); await release.promise;
+          if (lateReject) throw new Error("late map rejection");
+        }
+        return { tag: "miso.sessionmap.v1", requestId: calls, result: 0, tracks: [], sources: [{ id: "source", channels: 1, frames: 512n }], metersAttached: false };
+      },
+    });
+    const refused = assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.playback" && error.cause === reason);
+    await entered.promise; failed.resolve(reason);
+    await refused;
+    assert.equal(notifications, 0, "opening failures only reject open");
+    for (const event of ["pump.close", "dispose", "context.close", "lease.close"]) assert.equal(events.filter((value) => value === event).length, 1, event + " must not wait for a map");
+    release.resolve(); await tick();
+    assert.equal(notifications, 0);
+    for (const event of ["pump.close", "dispose", "context.close", "lease.close"]) assert.equal(events.filter((value) => value === event).length, 1, "late attachment must not repeat " + event);
+  }
+});
+
+test("same-turn console map completion and pump failure preserve the opening cause", async () => {
+  for (const failFirst of [false, true]) {
+    const failed = deferred<unknown>(); const entered = deferred<void>(); const release = deferred<void>();
+    const events: string[] = []; const reason = new Error("same-turn failure"); let calls = 0;
+    const opening = pausedSeekFixture(true, {
+      failure: failed.promise, events,
+      async sessionMap() {
+        if (++calls === 2) { entered.resolve(); await release.promise; }
+        return { tag: "miso.sessionmap.v1", requestId: calls, result: 0, tracks: [], sources: [{ id: "source", channels: 1, frames: 512n }], metersAttached: false };
+      },
+    });
+    const refused = assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.playback" && error.cause === reason);
+    await entered.promise;
+    if (failFirst) { failed.resolve(reason); release.resolve(); }
+    else { release.resolve(); failed.resolve(reason); }
+    await refused; await tick();
+    for (const event of ["pump.close", "dispose", "context.close", "lease.close"]) assert.equal(events.filter((value) => value === event).length, 1);
+  }
 });
 
 test("initial readiness waits for every source's full runway while accepting exact short tails", async () => {

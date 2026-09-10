@@ -203,7 +203,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     // so a first console command and a first meter subscription work in either
     // order and neither caller nor adapter ever names an identifier.
     if (consoleAttached(policy)) {
-      control = await attachSessionControl(engine.host);
+      control = await abortable(attachSessionControl(engine.host), abort.signal, undefined, (late) => late.close());
       cleanup.push(() => control!.close());
     }
     abort.signal.throwIfAborted();
@@ -710,19 +710,28 @@ function forwardAbort(parent: AbortSignal | undefined, child: AbortController): 
   return () => parent.removeEventListener("abort", abort);
 }
 
-function abortable<T>(operation: Promise<T>, signal: AbortSignal, timeoutMs?: number): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
+function abortable<T>(operation: Promise<T>, signal: AbortSignal, timeoutMs?: number, discard?: (value: T) => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const abort = () => { cleanup(); reject(signal.reason ?? new DOMException("Operation aborted", "AbortError")); };
+    const fail = (error: unknown) => { if (settled) return; settled = true; cleanup(); reject(error); };
+    const abort = () => { fail(signal.reason ?? new DOMException("Operation aborted", "AbortError")); };
     const cleanup = () => { signal.removeEventListener("abort", abort); if (timer !== undefined) clearTimeout(timer); };
-    signal.addEventListener("abort", abort, { once: true });
-    if (timeoutMs !== undefined) timer = setTimeout(() => {
-      cleanup(); reject(new EngineWebAdapterError("session.seek", "AudioContext seek transition timed out"));
-    }, timeoutMs);
+    if (signal.aborted) abort();
+    else {
+      signal.addEventListener("abort", abort, { once: true });
+      if (timeoutMs !== undefined) timer = setTimeout(() => {
+        fail(new EngineWebAdapterError("session.seek", "AudioContext seek transition timed out"));
+      }, timeoutMs);
+    }
+    // Always observe the operation, including an already-aborted signal. A late
+    // resource belongs to this abandoned opening, never to its drained stack.
     operation.then(
-      (value) => { cleanup(); resolve(value); },
-      (error) => { cleanup(); reject(error); },
+      (value) => {
+        if (settled) { try { discard?.(value); } catch { /* preserve the original refusal */ } return; }
+        settled = true; cleanup(); resolve(value);
+      },
+      fail,
     );
   });
 }
