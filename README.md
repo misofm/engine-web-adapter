@@ -13,8 +13,8 @@ npm install @misofm/engine-web-adapter@0.3.5 @misofm/engine@0.2.2
 ```
 
 The package is ESM-only and remains pinned to exactly Engine `0.2.2`.
-The integration targets the Engine 0.2.2 release candidate archive
-from commit `cf7e695b29043abcae9f92d5172b719e33764f03`, SHA256
+The integration uses the published Engine 0.2.2 archive
+from commit `f991f8a4130e1c1a3f1476203afe88ea23903a92`, SHA256
 `30639cf1f0f9707534020d584736339da3ef08981af5b6c5148f3ac310261e58`.
 This identifies the SDK dependency; adapter publication is a separate delivery step.
 

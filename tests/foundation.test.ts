@@ -18,7 +18,7 @@ test("foundation is pinned to the exact public Engine release", async () => {
   assert.equal(ADAPTER_PROVENANCE.engine.package, `@misofm/engine@${packageJson.dependencies["@misofm/engine"]}`);
   assert.equal(
     ADAPTER_PROVENANCE.engine.commit,
-    "cf7e695b29043abcae9f92d5172b719e33764f03",
+    "f991f8a4130e1c1a3f1476203afe88ea23903a92",
   );
   assert.equal(ADAPTER_PROVENANCE.safeBaselines.stemStore, "bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c");
 });
