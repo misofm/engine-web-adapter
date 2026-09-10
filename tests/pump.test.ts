@@ -206,6 +206,37 @@ test("pump Worker client bounds requests and terminates on close/error/messageer
   }
 });
 
+test("initialized worker failure fulfills once after termination; explicit close and abort stay quiet", async () => {
+  const shared = ring("failure-channel", 1, 4, 2);
+  const source = { sourceId: "failure-channel", identity: IDENTITY, channels: 1 as const, bitDepth: 16 as const, frames: 4, ring: shared };
+  const lease = { read: async () => new Blob([new Uint8Array(8)]) };
+  for (const type of ["error", "messageerror", "pump-error"] as const) {
+    const worker = new FakePumpWorker(true);
+    const client = await PcmPumpWorkerClient.create({ lease, sources: [source], worker });
+    let notifications = 0;
+    const failure = client.failure.then((reason) => { notifications++; assert.equal(worker.terminateCount, 1); return reason; });
+    if (type === "pump-error") worker.reply({ type: "pump-error", error: { name: "EngineWebAdapterError", message: "window timed out", code: "stem.read_deadline" } });
+    else worker.emit(type, type === "error" ? { error: new Error("worker crashed") } : {});
+    const reason = await failure;
+    assert.ok(reason instanceof Error);
+    if (type === "pump-error") assert.equal((reason as Error & { code: string }).code, "stem.read_deadline");
+    worker.forceLate({ type: "pump-error", error: { name: "Error", message: "duplicate" } });
+    await client.close(); await Promise.resolve();
+    assert.equal(notifications, 1); assert.equal(worker.terminateCount, 1);
+  }
+  for (const intentional of ["close", "abort"] as const) {
+    const worker = new FakePumpWorker(true, (message, self) => {
+      if (message.type === "stop") self.reply({ type: "stopped", requestId: message.requestId });
+    });
+    const controller = new AbortController();
+    const client = await PcmPumpWorkerClient.create({ lease, sources: [source], worker, signal: controller.signal });
+    let notifications = 0; void client.failure.then(() => { notifications++; });
+    if (intentional === "close") await client.close(); else controller.abort();
+    worker.forceLate({ type: "pump-error", error: { name: "Error", message: "late" } });
+    await Promise.resolve(); assert.equal(notifications, 0); assert.equal(worker.terminateCount, 1);
+  }
+});
+
 test("timed-out seek fail-closes before rejection and makes delayed work inert", async () => {
   const shared = ring("timeout", 1, 4, 2);
   let applied = 0;

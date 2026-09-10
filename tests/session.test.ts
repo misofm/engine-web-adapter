@@ -487,7 +487,12 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function pausedSeekFixture(attached = true) {
+async function pausedSeekFixture(attached = true, hooks: {
+  readonly failure?: Promise<unknown>;
+  readonly onError?: (error: EngineWebAdapterError) => void;
+  readonly onProgress?: EngineWebSessionCommonOptions["onProgress"];
+  readonly cleanupGate?: Promise<void>;
+} = {}) {
   const events: string[] = [];
   const context = fakeContext(events);
   const sources: DeclaredStemSource[] = [{ id: "source", spec: { channels: 1, bitDepth: 16, frames: 512, content: IDENTITY } }];
@@ -509,10 +514,12 @@ async function pausedSeekFixture(attached = true) {
   };
   const host = {
     node: { connect() {}, disconnect() {} },
-    async dispose() { events.push("dispose"); },
+    async dispose() { events.push("dispose"); await hooks.cleanupGate; },
   } as unknown as BrowserEngine["host"];
   const session = await openEngineWebSession({
     ...baseOptions(), sources, document: documentFor(sources), console: false,
+    ...(hooks.onError === undefined ? {} : { onError: hooks.onError }),
+    ...(hooks.onProgress === undefined ? {} : { onProgress: hooks.onProgress }),
     capabilityScope: capabilities(), createContext: () => context, createHost: async () => host,
     scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
       backend: "simd128", sources: [{ id: "source", channels: 1, frames: 512n }], tracks: [] }),
@@ -527,7 +534,7 @@ async function pausedSeekFixture(attached = true) {
         writer.reserve(4)![0]!.fill(0.25);
         writer.commit({ generation, startFrame: BigInt(index * 4), frames: 4, endOfRegion: false });
       }
-      return { async seekFrames(frame) {
+      return { ...(hooks.failure === undefined ? {} : { failure: hooks.failure }), async seekFrames(frame) {
         events.push("seek.start"); await seekGate;
         generation++; writer.seek(generation, BigInt(frame) > 512n ? 512n : BigInt(frame));
         events.push("seek.ack"); return generation;
@@ -564,6 +571,56 @@ async function pausedSeekFixture(attached = true) {
 }
 
 async function tick() { await new Promise<void>((resolve) => setTimeout(resolve, 5)); }
+
+test("terminal pump failure closes a playing session before one post-cleanup callback", async () => {
+  const failed = deferred<unknown>(); const cleanup = deferred<void>();
+  const errors: EngineWebAdapterError[] = [];
+  const f = await pausedSeekFixture(true, { failure: failed.promise, cleanupGate: cleanup.promise, onError: (error) => { errors.push(error); } });
+  await f.session.play();
+  const reason = new Error("pump worker crashed"); failed.resolve(reason);
+  await tick();
+  assert.equal(f.session.state, "closed");
+  await assert.rejects(f.session.play(), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+  assert.equal(errors.length, 0, "notification follows cleanup even when cleanup is delayed");
+  const closing = f.session.close(); assert.equal(f.session.close(), closing);
+  cleanup.resolve(); await closing; await tick();
+  assert.equal(errors.length, 1); assert.equal(errors[0]!.code, "session.playback"); assert.equal(errors[0]!.cause, reason);
+  for (const event of ["pump.close", "dispose", "context.close", "lease.close"]) assert.equal(f.events.filter((value) => value === event).length, 1);
+});
+
+test("pump failure during a pending seek aborts the lifecycle and notifies once", async () => {
+  const failed = deferred<unknown>(); const never = deferred<void>();
+  let notifications = 0;
+  const f = await pausedSeekFixture(true, { failure: failed.promise, onError: () => { notifications++; } });
+  f.blockSeek(never.promise);
+  const seeking = f.session.seekFrames(100);
+  const rejected = assert.rejects(seeking, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+  await tick(); failed.resolve(new Error("read deadline")); await rejected; await tick();
+  assert.equal(f.session.state, "closed"); assert.equal(notifications, 1);
+  never.resolve(); await tick(); assert.equal(f.events.includes("context.resume"), false);
+});
+
+test("explicit close wins a late pump failure and callback errors cannot escape cleanup", async () => {
+  const failed = deferred<unknown>(); let notifications = 0;
+  const f = await pausedSeekFixture(true, { failure: failed.promise, onError: () => { notifications++; } });
+  await f.session.close(); failed.resolve(new Error("late crash")); await tick();
+  assert.equal(notifications, 0);
+  for (const onError of [() => { throw new Error("observer throws"); }, async () => { throw new Error("observer rejects"); }]) {
+    const terminal = deferred<unknown>();
+    const g = await pausedSeekFixture(true, { failure: terminal.promise, onError });
+    terminal.resolve(new Error("read rejected")); await tick(); await g.session.close(); await tick();
+    assert.equal(g.session.state, "closed");
+  }
+});
+
+test("pump failure during opening rejects open instead of duplicating a runtime callback", async () => {
+  const failed = deferred<unknown>(); const reason = new Error("prefill worker failed"); let notifications = 0;
+  await assert.rejects(pausedSeekFixture(true, {
+    failure: failed.promise, onError: () => { notifications++; },
+    onProgress: (progress) => { if (progress.stage === "prefilling") failed.resolve(reason); },
+  }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.playback" && error.cause === reason);
+  assert.equal(notifications, 0);
+});
 
 test("initial readiness waits for every source's full runway while accepting exact short tails", async () => {
   const sources: DeclaredStemSource[] = [

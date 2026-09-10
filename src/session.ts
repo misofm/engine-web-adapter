@@ -62,6 +62,17 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
   let pump: EnginePump | undefined;
   let output: AudioNode | undefined;
   let control: SessionControl | undefined;
+  let openedSession: EngineWebSession | undefined;
+  const notifyPumpFailure = (cause: unknown): void => {
+    if (abort.signal.aborted) return;
+    const error = new EngineWebAdapterError("session.playback", "PCM playback worker failed", {}, cause);
+    if (openedSession === undefined) { abort.abort(error); return; }
+    // close marks the session terminal and interrupts pending operations now.
+    // The observer only runs after cleanup, and cannot create an unhandled rejection.
+    void openedSession.close().catch(() => undefined).then(async () => {
+      try { await options.onError?.(error); } catch { /* observer failure cannot undo terminal cleanup */ }
+    });
+  };
 
   try {
     const document = normalizeDocument(options.document);
@@ -179,8 +190,10 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
         ...(options.assets === undefined ? {} : { assets: options.assets }),
       }));
     cleanup.push(() => pump!.close());
+    void pump.failure?.then(notifyPumpFailure, notifyPumpFailure);
     options.onProgress?.({ stage: "prefilling", sourcesTotal: pumpSources.length });
     await waitForPrefill(pumpSources, abort.signal);
+    abort.signal.throwIfAborted();
 
     const context = engine.context;
     output = options.createOutput?.({ context, engineNode: engine.host.node }) ?? engine.host.node;
@@ -193,6 +206,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       control = await attachSessionControl(engine.host);
       cleanup.push(() => control!.close());
     }
+    abort.signal.throwIfAborted();
     detachAbort();
 
     let state: EngineWebSessionState = "ready";
@@ -335,6 +349,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
         return closePromise;
       },
     };
+    openedSession = session;
     return session;
   } catch (error) {
     abort.abort(error);

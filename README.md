@@ -417,3 +417,13 @@ before ready. Initial opening and seek completion require a contiguous full-gene
 across every source's 64 shared-ring slots, or that source's exact shorter remaining tail. At
 48 kHz with 128-frame quanta this is about 171 ms. Seek preparation remains suspended, including
 running seeks; the adapter restores running state only after every source passes that gate.
+
+Pass `onError(error)` to observe a terminal playback-worker failure after opening. The adapter
+marks the session closed immediately, interrupts pending lifecycle calls, and completes cleanup
+before notifying once with `session.playback` and the original `cause`. Opening failures reject
+`openEngineWebSession` instead. Explicit close/abort and ordinary console backpressure do not
+invoke this callback. Keep the callback scoped to the application's current session generation
+so a replaced session cannot overwrite newer UI state. Callback exceptions do not escape cleanup.
+Advanced custom pumps may forward the optional `failure` promise from `PcmPumpWorkerClient`;
+it fulfills once with an unexpected terminal cause and never rejects. Wrappers that omit that
+optional capability cannot provide automatic runtime-failure propagation.

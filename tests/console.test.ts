@@ -516,7 +516,7 @@ function allCodes(): readonly EngineWebAdapterError["code"][] {
     "console.lease_refused": true, "console.not_attached": true, "console.refused": true,
     "session.closed": true, "session.busy": true, "session.seek": true,
     "session.declaration_mismatch": true, "session.input_path": true,
-    "session.open": true, "stem.cancelled": true, "stem.corrupt": true, "stem.decode.asset": true,
+    "session.open": true, "session.playback": true, "stem.cancelled": true, "stem.corrupt": true, "stem.decode.asset": true,
     "stem.decode.flac": true, "stem.decode.output": true, "stem.decode.stall": true,
     "stem.decode.worker": true, "stem.delivery.address": true, "stem.delivery.http": true,
     "stem.delivery.range": true, "stem.delivery.retry_exhausted": true, "stem.delivery.stall": true,
