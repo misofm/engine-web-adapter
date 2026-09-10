@@ -11,12 +11,14 @@ export interface PcmPumpSource {
   readonly ring: SharedArrayBuffer;
 }
 
+interface PcmWindow { readonly bytes: Uint8Array; readonly start: number; }
 interface SourceState extends PcmPumpSource {
   readonly writer: Msb1RingWriter;
   cursor: number;
   blob: Blob | undefined;
-  window: Uint8Array | undefined;
-  windowStart: number;
+  window: PcmWindow | undefined;
+  next: PcmWindow | undefined;
+  reading: Promise<void> | undefined;
   finished: boolean;
 }
 
@@ -26,15 +28,22 @@ export interface PcmPumpOutcome {
   readonly finished: boolean;
 }
 
-/** Bounded-window, fair PCM producer intended to live in a dedicated Worker. */
+export const PCM_WINDOW_FRAMES = 8192;
+const MAXIMUM_READS = 4;
+const READ_DEADLINE_MS = 5_000;
+export const PCM_DRIVE_PASSES = 8;
+
+/** Bounded current/next windows and a shared four-read local I/O scheduler. */
 export class CanonicalPcmPump {
   readonly #lease: Pick<StemSessionLease, "read">;
   readonly #states: SourceState[];
   readonly #windowFrames: number;
-  readonly #abort = new AbortController();
+  readonly #reads = new Set<Promise<void>>();
+  readonly #readTimers = new Set<ReturnType<typeof setTimeout>>();
   #generation: bigint;
   #stopped = false;
   #roundRobin = 0;
+  #failure: unknown;
 
   readonly maximumWindowBytes: number;
   readonly ringBytes: number;
@@ -47,7 +56,7 @@ export class CanonicalPcmPump {
   }) {
     if (typeof options.lease?.read !== "function") throw new TypeError("PCM pump needs a verified lease");
     this.#lease = options.lease;
-    this.#windowFrames = positive(options.windowFrames ?? 4096, "windowFrames");
+    this.#windowFrames = positive(options.windowFrames ?? PCM_WINDOW_FRAMES, "windowFrames");
     this.#generation = options.generation ?? 1n;
     this.#states = options.sources.map((source) => {
       if (!positive(source.frames, "frames") || source.channels < 1 || source.channels > 2 ||
@@ -55,10 +64,12 @@ export class CanonicalPcmPump {
       const writer = new Msb1RingWriter(source.ring);
       if (writer.channels !== source.channels) throw new RangeError("PCM source channels do not match its ring");
       if (this.#windowFrames < writer.frameCapacity) throw new RangeError("windowFrames must cover one render quantum");
-      return { ...source, writer, cursor: 0, blob: undefined, window: undefined, windowStart: -1, finished: false };
+      return { ...source, writer, cursor: 0, blob: undefined, window: undefined, next: undefined, reading: undefined, finished: false };
     });
+    // A pending read owns its destination slot even across seek; that source
+    // cannot start another read until the old operation physically settles.
     this.maximumWindowBytes = this.#states.reduce(
-      (sum, state) => sum + this.#windowFrames * state.channels * (state.bitDepth / 8), 0,
+      (sum, state) => sum + 2 * this.#windowFrames * state.channels * (state.bitDepth / 8), 0,
     );
     this.ringBytes = this.#states.reduce(
       (sum, state) => sum + msb1RingBytes(state.channels, state.writer.frameCapacity, state.writer.capacity), 0,
@@ -69,29 +80,39 @@ export class CanonicalPcmPump {
   get finished(): boolean { return this.#states.every((state) => state.finished); }
   get stopped(): boolean { return this.#stopped; }
 
-  /** One fair round: at most one quantum per source. */
-  async pumpPass(): Promise<PcmPumpOutcome> {
+  /** One fair round; available sources are never blocked by another source's I/O. */
+  async pumpPass(waitForReads = true): Promise<PcmPumpOutcome> {
+    this.#throwIfFailed();
     if (this.#stopped || this.#states.length === 0) return { chunks: 0, frames: 0, finished: this.finished };
+    this.#scheduleReads();
+    // Manual drain callers may wait for progress. Worker ticks never await
+    // storage and always yield, so seek/stop can invalidate outstanding reads.
+    if (waitForReads && !this.#states.some((state) => this.#canWrite(state)) && this.#needsWindow()) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+      this.#throwIfFailed();
+      if (this.#stopped) return { chunks: 0, frames: 0, finished: this.finished };
+    }
     let chunks = 0;
     let frames = 0;
     for (let step = 0; step < this.#states.length; step += 1) {
       const index = (this.#roundRobin + step) % this.#states.length;
-      const written = await this.#writeOne(this.#states[index]!);
+      const written = this.#writeOne(this.#states[index]!);
       if (written > 0) { chunks += 1; frames += written; }
-      if (this.#stopped) break;
     }
     this.#roundRobin = (this.#roundRobin + 1) % this.#states.length;
+    this.#scheduleReads();
     return { chunks, frames, finished: this.finished };
   }
 
-  /** Fill available bounded slots while preserving round-robin service. */
-  async pumpUntilBlocked(): Promise<PcmPumpOutcome> {
+  /** Manual callers drain all available slots; worker callers use finite ticks. */
+  async pumpUntilBlocked(maximumPasses = Number.MAX_SAFE_INTEGER, waitForReads = true): Promise<PcmPumpOutcome> {
+    positive(maximumPasses, "maximumPasses");
     let chunks = 0;
     let frames = 0;
-    while (!this.#stopped) {
-      const pass = await this.pumpPass();
+    for (let passIndex = 0; passIndex < maximumPasses && !this.#stopped; passIndex += 1) {
+      const pass = await this.pumpPass(waitForReads);
       chunks += pass.chunks; frames += pass.frames;
-      if (pass.chunks === 0 || pass.finished) break;
+      if (pass.finished || (pass.chunks === 0 && (!waitForReads || !this.#needsWindow()))) break;
     }
     return { chunks, frames, finished: this.finished };
   }
@@ -103,7 +124,7 @@ export class CanonicalPcmPump {
     this.#generation += 1n;
     for (const state of this.#states) {
       state.cursor = Math.min(Number(target), state.frames);
-      state.window = undefined; state.windowStart = -1;
+      state.window = undefined; state.next = undefined;
       state.finished = state.cursor === state.frames;
       state.writer.seek(this.#generation, BigInt(state.cursor));
     }
@@ -113,48 +134,94 @@ export class CanonicalPcmPump {
   close(reason: unknown = new DOMException("PCM pump closed", "AbortError")): void {
     if (this.#stopped) return;
     this.#stopped = true;
-    this.#abort.abort(reason);
+    void reason;
+    for (const timer of this.#readTimers) clearTimeout(timer);
+    this.#readTimers.clear();
     for (const state of this.#states) {
-      state.writer.release(); state.window = undefined; state.blob = undefined;
+      state.writer.release(); state.window = undefined; state.next = undefined; state.blob = undefined;
     }
   }
 
-  async #writeOne(state: SourceState): Promise<number> {
-    this.#abort.signal.throwIfAborted();
-    if (state.finished || state.cursor >= state.frames) { state.finished = true; return 0; }
-    if (state.writer.occupancy >= state.writer.capacity) return 0;
+  #end(state: SourceState, window: PcmWindow): number {
+    return window.start + window.bytes.byteLength / (state.channels * (state.bitDepth / 8));
+  }
+
+  #canWrite(state: SourceState): boolean {
+    if (state.finished || state.writer.occupancy >= state.writer.capacity) return false;
+    if (state.window !== undefined && state.cursor >= this.#end(state, state.window)) {
+      state.window = state.next; state.next = undefined;
+    }
+    return state.window !== undefined;
+  }
+
+  #needsWindow(): boolean {
+    return this.#states.some((state) => !state.finished && state.writer.occupancy < state.writer.capacity && !this.#canWrite(state));
+  }
+
+  #scheduleReads(): void {
+    if (this.#stopped || this.#failure !== undefined) return;
+    const ordered = Array.from({ length: this.#states.length }, (_, step) => this.#states[(this.#roundRobin + step) % this.#states.length]!);
+    // Current windows take precedence over speculative next windows. Within
+    // each class, shortest shared runway is served first; ties remain fair.
+    ordered.sort((a, b) => Number(a.window !== undefined) - Number(b.window !== undefined) || a.writer.occupancy - b.writer.occupancy);
+    for (const state of ordered) {
+      if (this.#reads.size >= MAXIMUM_READS) break;
+      if (state.finished || state.reading !== undefined) continue;
+      this.#canWrite(state);
+      let start = state.cursor;
+      if (state.window !== undefined) {
+        start = this.#end(state, state.window);
+        if (state.next !== undefined || start >= state.frames || state.cursor - state.window.start < this.#windowFrames / 2) continue;
+      }
+      const generation = this.#generation;
+      const read = this.#readWindow(state, start, generation);
+      state.reading = read;
+      this.#reads.add(read);
+      void read.finally(() => {
+        this.#reads.delete(read);
+        if (state.reading === read) state.reading = undefined;
+        this.#scheduleReads();
+      });
+    }
+  }
+
+  async #readWindow(state: SourceState, start: number, generation: bigint): Promise<void> {
+    const timer = setTimeout(() => {
+      if (!this.#stopped) this.#failure ??= new EngineWebAdapterError("stem.read_deadline", "PCM playback window read timed out");
+    }, READ_DEADLINE_MS);
+    this.#readTimers.add(timer);
+    try {
+      const blob = state.blob ?? await this.#lease.read(state.identity);
+      if (this.#stopped || generation !== this.#generation) return;
+      state.blob = blob;
+      const frameBytes = state.channels * (state.bitDepth / 8);
+      const alignedFrames = Math.floor(this.#windowFrames / state.writer.frameCapacity) * state.writer.frameCapacity;
+      const count = Math.min(alignedFrames, state.frames - start) * frameBytes;
+      const bytes = new Uint8Array(await blob.slice(start * frameBytes, start * frameBytes + count).arrayBuffer());
+      if (this.#stopped || generation !== this.#generation) return;
+      if (bytes.byteLength !== count) throw new Error("PCM playback window has an invalid byte count");
+      const window = { bytes, start };
+      if (state.window === undefined) state.window = window;
+      else state.next = window;
+    } catch (error) {
+      if (!this.#stopped && generation === this.#generation) this.#failure ??= error ?? new Error("PCM playback window read failed without a reason");
+    } finally { clearTimeout(timer); this.#readTimers.delete(timer); }
+  }
+
+  #throwIfFailed(): void { if (this.#failure !== undefined) throw this.#failure; }
+
+  #writeOne(state: SourceState): number {
+    if (!this.#canWrite(state)) return 0;
     const frames = Math.min(state.writer.frameCapacity, state.frames - state.cursor);
+    const window = state.window!;
+    if (state.cursor + frames > this.#end(state, window)) throw new Error("PCM window must end on a render boundary or source tail");
     const planes = state.writer.reserve(frames);
     if (planes === null) return 0;
-    const frameBytes = state.channels * (state.bitDepth / 8);
-    const windowEnd = state.windowStart + (state.window?.byteLength ?? 0) / frameBytes;
-    if (state.window === undefined || state.cursor < state.windowStart || state.cursor + frames > windowEnd) {
-      state.blob ??= await this.#lease.read(state.identity);
-      this.#abort.signal.throwIfAborted();
-      const firstByte = state.cursor * frameBytes;
-      const finalByte = Math.min(state.frames, state.cursor + this.#windowFrames) * frameBytes;
-      state.window = new Uint8Array(await state.blob.slice(firstByte, finalByte).arrayBuffer());
-      this.#abort.signal.throwIfAborted();
-      state.windowStart = state.cursor;
-      if (state.window.byteLength > this.#windowFrames * frameBytes) throw new Error("PCM window exceeded its bound");
-    }
-    deinterleaveCanonicalPcm(
-      state.window,
-      state.cursor - state.windowStart,
-      frames,
-      state.channels,
-      state.bitDepth,
-      planes,
-    );
+    deinterleaveCanonicalPcm(window.bytes, state.cursor - window.start, frames, state.channels, state.bitDepth, planes);
     const startFrame = state.cursor;
     state.cursor += frames;
     state.finished = state.cursor === state.frames;
-    state.writer.commit({
-      generation: this.#generation,
-      startFrame: BigInt(startFrame),
-      frames,
-      endOfRegion: state.finished,
-    });
+    state.writer.commit({ generation: this.#generation, startFrame: BigInt(startFrame), frames, endOfRegion: state.finished });
     return frames;
   }
 }
@@ -192,11 +259,11 @@ export class SelfDrivingPcmPump {
     try {
       while (this.#token === token) {
         const outcome = await this.#enqueue(() => this.#token === token
-          ? this.#pump.pumpUntilBlocked()
+          ? this.#pump.pumpUntilBlocked(PCM_DRIVE_PASSES, false)
           : { chunks: 0, frames: 0, finished: this.#pump.finished });
         if (outcome.finished || this.#token !== token) break;
-        if (outcome.chunks === 0) await new Promise<void>((resolve) => {
-          const timer = setTimeout(finish, this.#idleMs);
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(finish, outcome.chunks === 0 ? this.#idleMs : 0);
           const previous = this.#wake;
           const self = this;
           function finish() { clearTimeout(timer); if (self.#wake === finish) self.#wake = previous; resolve(); }

@@ -2,6 +2,7 @@ import { createPumpWorker } from "../assets.js";
 import type { AdapterAssetOverrides } from "../assets.js";
 import { EngineWebAdapterError } from "../errors.js";
 import type { PumpAllocation } from "../session-types.js";
+import { PCM_WINDOW_FRAMES } from "./pump.js";
 import type { PcmPumpSource } from "./pump.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "./worker-protocol.js";
 import type { StemSessionLease } from "./types.js";
@@ -17,11 +18,17 @@ export class PcmPumpWorkerClient {
   readonly #worker: PumpWorkerLike;
   readonly #pending = new Map<number, { resolve(value: PumpWorkerResponse): void; reject(reason: unknown): void; timer: ReturnType<typeof setTimeout> }>();
   readonly #onMessage = (event: MessageEvent<PumpWorkerResponse>) => this.#receive(event.data);
-  readonly #onWorkerError = (event: ErrorEvent) => this.#terminate(event.error ?? new Error(event.message));
+  readonly #onWorkerError = (event: ErrorEvent) => {
+    event.preventDefault?.();
+    this.#terminate(event.error ?? new Error(event.message));
+  };
   readonly #onMessageError = () => this.#terminate(new EngineWebAdapterError("session.open", "PCM pump Worker message could not be cloned"));
   readonly #requestDeadlineMs: number;
   #allocation!: PumpAllocation;
   get allocation(): PumpAllocation { return this.#allocation; }
+  #reportFailure!: (reason: unknown) => void;
+  /** Fulfilled rather than rejected so an unused failure observer cannot leak a rejection. */
+  readonly failure = new Promise<unknown>((resolve) => { this.#reportFailure = resolve; });
 
   #detachAbort: (() => void) | undefined;
   #failureReason: unknown;
@@ -54,11 +61,11 @@ export class PcmPumpWorkerClient {
     if (!Number.isSafeInteger(deadline) || deadline <= 0) throw new RangeError("requestDeadlineMs must be positive");
     const client = new PcmPumpWorkerClient(worker, deadline);
     try {
-      const windowFrames = options.windowFrames ?? 4096;
+      const windowFrames = options.windowFrames ?? PCM_WINDOW_FRAMES;
       if (!Number.isSafeInteger(windowFrames) || windowFrames <= 0) throw new RangeError("windowFrames must be positive");
       options.signal?.throwIfAborted();
       if (options.signal !== undefined) {
-        const abort = () => client.#terminate(options.signal?.reason ?? new DOMException("PCM pump Worker aborted", "AbortError"));
+        const abort = () => client.#terminate(options.signal?.reason ?? new DOMException("PCM pump Worker aborted", "AbortError"), false);
         options.signal.addEventListener("abort", abort, { once: true });
         client.#detachAbort = () => options.signal?.removeEventListener("abort", abort);
       }
@@ -105,8 +112,8 @@ export class PcmPumpWorkerClient {
 
   close(): Promise<void> {
     if (this.#closePromise === undefined) {
-      const operation = this.#closeOnce();
       this.#closing = true;
+      const operation = this.#closeOnce();
       this.#closePromise = operation;
     }
     return this.#closePromise;
@@ -150,6 +157,7 @@ export class PcmPumpWorkerClient {
     if (message.type === "pump-error") {
       const error = new Error(message.error.message);
       error.name = message.error.name;
+      if (message.error.code !== undefined) Object.assign(error, { code: message.error.code });
       if (message.requestId === undefined) { this.#terminate(error); return; }
       const pending = this.#pending.get(message.requestId);
       if (pending !== undefined) { clearTimeout(pending.timer); pending.reject(error); }
@@ -159,10 +167,11 @@ export class PcmPumpWorkerClient {
     const pending = this.#pending.get(message.requestId);
     if (pending !== undefined) { clearTimeout(pending.timer); this.#pending.delete(message.requestId); pending.resolve(message); }
   }
-  #terminate(reason: unknown): void {
+  #terminate(reason: unknown, unexpected = true): void {
     this.#failureReason ??= reason;
     const authoritative = this.#failureReason;
     if (this.#closed) return;
+    const report = unexpected && !this.#closing;
     this.#closed = true;
     this.#closing = true;
     this.#detachAbort?.();
@@ -171,6 +180,7 @@ export class PcmPumpWorkerClient {
     this.#worker.removeEventListener("error", this.#onWorkerError);
     this.#worker.removeEventListener("messageerror", this.#onMessageError);
     try { this.#worker.terminate(); } catch { /* pending callers still receive the authoritative cause */ }
+    if (report) this.#reportFailure(authoritative);
     for (const pending of this.#pending.values()) { clearTimeout(pending.timer); pending.reject(authoritative); }
     this.#pending.clear();
   }

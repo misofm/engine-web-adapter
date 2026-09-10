@@ -63,6 +63,22 @@ class Capture extends AudioWorkletProcessor {
 }
 registerProcessor('capture-first-quantum', Capture);
 `);
+await writeFile(join(consumer, "fault-pump-worker.ts"), `
+import "./node_modules/@misofm/engine-web-adapter/dist/internal/engine-web-pcm-pump-worker.js";
+let fault;
+const originalSlice = Blob.prototype.slice;
+Blob.prototype.slice = function(...args) {
+  if (fault === "reject") throw new Error("injected playback storage rejection");
+  if (fault === "stall") return { arrayBuffer() { return new Promise(() => {}); } };
+  return originalSlice.apply(this, args);
+};
+const handle = self.onmessage;
+self.onmessage = (event) => {
+  if (event.data.type !== "test-fault") { handle(event); return; }
+  fault = event.data.mode;
+  if (fault === "crash") setTimeout(() => { throw new Error("injected worker crash"); }, 0);
+};
+`);
 await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
 await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><script type="module" src="/src/main.ts"></script>\n');
 await mkdir(join(consumer, "src"));
@@ -227,6 +243,13 @@ try {
     } finally { oracle.dispose(); }
   }
   assert.deepEqual(result.result.seekProofs.map((proof) => proof.mode), ["initial", "resumed", "running"]);
+  assert.deepEqual(result.result.terminalPumpFailures.map((proof) => proof.mode), ["reject", "stall", "crash"]);
+  for (const proof of result.result.terminalPumpFailures) {
+    assert.equal(proof.notifications, 1); assert.equal(proof.terminations, 1);
+    assert.equal(proof.state, "closed"); assert.equal(proof.context, "closed");
+    assert.equal(proof.code, "session.playback");
+    if (proof.mode === "stall") assert.equal(proof.causeCode, "stem.read_deadline");
+  }
   assert.deepEqual(consoleErrors, []);
   const requested = [...requests.entries()];
   assert.ok(requested.some(([path, mime]) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm") && mime === "application/wasm"), "decoder Wasm asset/MIME not observed");
@@ -440,15 +463,22 @@ async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
         sampleUnchanged: after.nextAbsoluteSample === before.nextAbsoluteSample };
     };
     const nativeResume = context.resume.bind(context);
+    const assertPreparedRunway = () => {
+      const observation = engine.observeSource("seek-source");
+      let next = 10_000n;
+      let chunks = 0;
+      try {
+        for (let pass = 0; pass < 2; pass++) chunks += observation.pull((chunk) => {
+          if (chunk.generation !== 2n || chunk.startFrame !== next || chunk.frames !== 128) throw new Error("resume preceded contiguous target PCM");
+          next += BigInt(chunk.frames);
+        }, 32);
+        if (chunks !== 64 || next !== 18_192n) throw new Error("resume preceded the complete playback runway");
+      } finally { observation.close(); }
+    };
     context.resume = async () => {
       resumeCalls++;
       if (mode === "running") {
-        const observation = engine.observeSource("seek-source");
-        try {
-          if (observation.pull((chunk) => {
-            if (chunk.generation !== 2n || chunk.startFrame !== 10_000n) throw new Error("automatic resume preceded target PCM");
-          }, 1) !== 1) throw new Error("automatic resume preceded prefill");
-        } finally { observation.close(); }
+        assertPreparedRunway();
         prepared = await readPreparation();
         // Arm only at the actual suspended resume boundary, so earlier audio cannot satisfy it.
         capture = captureNext();
@@ -462,7 +492,7 @@ async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
     const stateAfterSeek = context.state;
     const resumeCallsDuringSeek = resumeCalls;
     context.resume = nativeResume;
-    if (mode !== "running") { prepared = await readPreparation(); capture = captureNext(); }
+    if (mode !== "running") { assertPreparedRunway(); prepared = await readPreparation(); capture = captureNext(); }
     globalThis.__seekStage = { mode, stage: "target-play", prepared };
     if (mode !== "running") await engine.play();
     const first = await capture.first; await engine.pause(); capture.close();
@@ -471,6 +501,48 @@ async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
       internalBackpressure, prepared, pcm: first, staleReleased: counters.stale - old.stale,
       underruns: counters.underruns - old.underruns, refused: counters.refused - old.refused,
       torn: counters.torn - old.torn, errors: counters.errors - old.errors };
+  } finally { await engine.close(); }
+}
+async function exerciseTerminalPumpFailure(mode: "reject" | "stall" | "crash") {
+  const frames = 48_000 * 2;
+  const pcm = new Uint8Array(frames * 2);
+  const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", pcm))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const model = session({ id: "terminal-pump-" + mode, sampleRateHz: 48_000, quantumFrames: 128 })
+    .source("terminal-source", { channels: 1, bitDepth: 16, frames, content: ("sha256:" + digest) as any })
+    .track("terminal-track", { source: { id: "terminal-source", left: 0, right: 0 } })
+    .output("terminal-output")
+    .route({ id: "terminal-route", source: { kind: "track", trackId: "terminal-track", tap: "post_matrix" },
+      destination: { kind: "output_input", outputId: "terminal-output" } });
+  let worker: Worker;
+  let terminations = 0;
+  let notifications = 0;
+  let resolveFailure: (error: any) => void;
+  const failed = new Promise<any>((resolve) => { resolveFailure = resolve; });
+  const engine = await openEngineWebSession({ document: model, leaseId: "terminal-" + mode, console: false,
+    resolver: { async resolve() { return { stream: new Blob([pcm]).stream(), canonicalBytes: pcm.length }; } },
+    onError(error) { notifications++; resolveFailure(error); },
+    createPump: async (options) => {
+      worker = new Worker(new URL("../fault-pump-worker.ts", import.meta.url), { type: "module" });
+      const terminate = worker.terminate.bind(worker);
+      worker.terminate = () => { terminations++; terminate(); };
+      return PcmPumpWorkerClient.create({ ...options, worker });
+    },
+  });
+  const started = performance.now();
+  try {
+    if (notifications !== 0 || engine.state !== "ready") throw new Error("terminal test did not start from a fully ready session");
+    await engine.play();
+    worker.postMessage({ type: "test-fault", mode });
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("terminal pump failure did not propagate")), 7500); });
+    const error = await Promise.race([failed, timeout]).finally(() => clearTimeout(timer));
+    if (engine.state !== "closed" || engine.context.state !== "closed" || notifications !== 1 || terminations !== 1 || error.code !== "session.playback") throw new Error("terminal failure did not close and notify exactly once");
+    let playCode = "";
+    try { await engine.play(); } catch (failure) { playCode = (failure as { code?: string }).code ?? ""; }
+    if (playCode !== "session.closed") throw new Error("terminal session resumed");
+    await engine.close();
+    return { mode, notifications, terminations, state: engine.state, context: engine.context.state,
+      code: error.code, causeCode: error.cause?.code ?? null, milliseconds: performance.now() - started };
   } finally { await engine.close(); }
 }
 try {
@@ -487,7 +559,7 @@ try {
   const allocation = cold.feedDiagnostics().allocation;
   if (initialDiagnostics.allocation.observationBytes !== scratchBytes || allocation.observationBytes !== 2 * scratchBytes ||
       allocation.ringBytes !== rings.reduce((sum, ring) => sum + ring.byteLength, 0) || allocation.engineMemoryBytes !== cold.host.memoryBytes ||
-      allocation.pump?.windowFrames !== 4096 || allocation.pump.maximumWindowBytes !== 4096 * profile.channels * profile.bitDepth / 8) throw new Error("incorrect buffer projection");
+      allocation.pump?.windowFrames !== 8192 || allocation.pump.maximumWindowBytes !== 2 * 8192 * profile.channels * profile.bitDepth / 8) throw new Error("incorrect buffer projection");
   await cold.play();
   await new Promise((resolve) => setTimeout(resolve, 150));
   await cold.pause();
@@ -524,6 +596,7 @@ try {
   catch (error) { meterNotAttached = (error as { code?: string }).code ?? ""; }
   await playbackOnly.close();
   const seekProofs = [await exercisePausedSeek("initial"), await exercisePausedSeek("resumed"), await exercisePausedSeek("running")];
+  const terminalPumpFailures = [await exerciseTerminalPumpFailure("reject"), await exerciseTerminalPumpFailure("stall"), await exerciseTerminalPumpFailure("crash")];
   globalThis.__result = {
     coldProcessing: coldIngest.snapshot().processing, warmProcessing: warmIngest.snapshot().processing,
     coldLocatorCalls, warmLocatorCalls: locatorCalls,
@@ -531,7 +604,7 @@ try {
     coldNetworkRequests, warmNetworkRequests: networkRequests,
     observedRemoteBytes, observedEtag,
     observedChunks, observationBytes: allocation.observationBytes, coldClosed, warmClosed, consoleFirst, meterFirst, notAttached, meterNotAttached,
-    ...counters, seekProofs,
+    ...counters, seekProofs, terminalPumpFailures,
   };
 } catch (error) {
   globalThis.__error = describe(error);

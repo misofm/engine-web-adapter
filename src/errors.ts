@@ -15,6 +15,7 @@ export type EngineWebAdapterErrorCode =
   | "session.declaration_mismatch"
   | "session.input_path"
   | "session.open"
+  | "session.playback"
   | "stem.cancelled"
   | "stem.corrupt"
   | "stem.decode.asset"
@@ -68,6 +69,11 @@ interface CodeRow {
  * one of the sixty call sites, a table row cannot.
  */
 const CODES: Record<EngineWebAdapterErrorCode, CodeRow> = {
+  "session.playback": {
+    phase: "lifecycle",
+    remedy: "Open a new session after the playback worker fails; inspect the retained cause.",
+    transient: false,
+  },
   "session.busy": {
     phase: "lifecycle",
     remedy: "Await seekFrames() before calling play() from a user gesture.",

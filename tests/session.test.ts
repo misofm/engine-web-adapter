@@ -4,7 +4,7 @@ import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { MemoryStemStorageBackend } from "../src/stems/storage.js";
 import { BrowserBootError, Msb1RingWriter, PcmFeedError } from "@misofm/engine/browser";
-import { scratchBootWithWorker } from "../src/scratch.js";
+import { scratchBootWithWorker, prepareBrowserSessionWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -184,6 +184,9 @@ test("every document stem tuple mismatch refuses before store or FLAC delivery",
 test("session composes in order and serializes lifecycle with reverse cleanup", async () => {
   const events: string[] = [];
   const context = fakeContext(events);
+  const verified = deferred<void>();
+  const storeStarted = deferred<void>();
+  let scratchWorker: ScratchWorker | undefined;
   const lease: StemSessionLease = {
     leaseId: "lease",
     stems: [
@@ -195,7 +198,11 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
   };
   const store: StemStore = {
     async open() { return this; },
-    async openSession() { events.push("store.openSession"); return lease; },
+    async openSession() {
+      events.push("store.openSession"); storeStarted.resolve();
+      await verified.promise;
+      return lease;
+    },
   };
   const node = {
     connect() { events.push("output.connect"); },
@@ -220,7 +227,8 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
     ]),
     capabilityScope: capabilities(),
     createContext: () => context,
-    createHost: async ({ context: engineContext }) => {
+    createHost: async ({ context: engineContext, preparedModule }) => {
+      assert.equal(preparedModule, scratchWorker!.module, "the locally received module survives verified ingestion");
       assert.deepEqual((engineContext as unknown as typeof context).modules, ["feed-override.js"]);
       events.push("engine-worklet");
       return host;
@@ -238,13 +246,16 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
       events.push("pump.create");
       assert.deepEqual(sources.map((source) => source.sourceId), ["source", "source-z"]);
       pumpRings = sources.map((source) => source.ring);
-      for (const ring of pumpRings) Atomics.store(new Int32Array(ring), MSB1_CONTROL.WROTE, 1);
+      for (const ring of pumpRings) fillRing(ring, 4);
       return {
         async seekFrames(frame) {
           events.push(`pump.seek:${frame}`);
           for (const ring of pumpRings) {
             const writer = new Msb1RingWriter(ring);
-            writer.seek(2n, BigInt(frame)); writer.reserve(2);
+            writer.seek(2n, BigInt(frame));
+            const control = new Int32Array(ring);
+            Atomics.store(control, MSB1_CONTROL.READ_INDEX, Atomics.load(control, MSB1_CONTROL.WRITE_INDEX));
+            writer.reserve(2);
             writer.commit({ generation: 2n, startFrame: BigInt(frame), frames: 2, endOfRegion: true });
           }
           return 2n;
@@ -254,11 +265,16 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
     },
     assets: {
       feedWorkletModuleUrl: "feed-override.js",
-      createWorker: () => new ScratchWorker(events) as unknown as Worker,
+      createWorker: () => (scratchWorker = new ScratchWorker(events)) as unknown as Worker,
     },
   };
 
-  const session = await openEngineWebSession(options);
+  const opening = openEngineWebSession(options);
+  await storeStarted.promise;
+  assert.deepEqual(events, ["scratch", "scratch.terminate", "store.openSession"]);
+  assert.equal(context.modules.length, 0, "no live worklet starts before canonical verification finishes");
+  verified.resolve();
+  const session = await opening;
   assert.equal(session.state, "ready");
   assert.ok(events.indexOf("scratch") < events.indexOf("scratch.terminate"));
   assert.ok(events.indexOf("scratch.terminate") < events.indexOf("store.openSession"));
@@ -308,6 +324,9 @@ test("session snapshots document and source declarations before deferred scratch
   const releaseScratch = deferred<void>();
   let scratchDocument: Uint8Array | undefined;
   let hostDocument: Uint8Array | undefined;
+  const policy = { sourceRingFrames: 16, console: { commandQueueRecords: 8, meterBlocks: 2 } };
+  let scratchPolicy: unknown;
+  let hostPolicy: unknown;
   let storeStem: unknown;
   const events: string[] = [];
   const context = fakeContext(events);
@@ -323,6 +342,7 @@ test("session snapshots document and source declarations before deferred scratch
   };
   const opening = openEngineWebSession({
     document,
+    policy,
     leaseId: "snapshot",
     sources: originalSources as readonly DeclaredStemSource[],
     resolver: { async resolve() { throw new Error("warm fixture must not resolve"); } },
@@ -333,6 +353,7 @@ test("session snapshots document and source declarations before deferred scratch
     },
     scratchBoot: async (request) => {
       scratchDocument = request.document;
+      scratchPolicy = request.options;
       scratchStarted.resolve();
       await releaseScratch.promise;
       return {
@@ -341,7 +362,10 @@ test("session snapshots document and source declarations before deferred scratch
       };
     },
     createContext: () => context,
-    createHost: async (request) => { hostDocument = request.document; return host; },
+    createHost: async (request) => {
+      assert.equal("preparedModule" in request, false, "custom shape-only scratch remains compatible");
+      hostDocument = request.document; hostPolicy = request.options; return host;
+    },
     createAttachNode: () => ({
       port: { postMessage(message: unknown) {
         const value = message as { op: string; rings?: SharedArrayBuffer[] };
@@ -350,13 +374,16 @@ test("session snapshots document and source declarations before deferred scratch
       disconnect() {},
     }),
     createPump: async ({ sources }) => {
-      for (const source of sources) Atomics.store(new Int32Array(source.ring), MSB1_CONTROL.WROTE, 1);
+      for (const source of sources) fillRing(source.ring, source.frames);
       return { async seekFrames() { return 0n; }, close() {} };
     },
     createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
   });
   await scratchStarted.promise;
   document.fill(0x78);
+  policy.sourceRingFrames = 99;
+  policy.console.commandQueueRecords = 99;
+  policy.console.meterBlocks = 99;
   const mutable = originalSources[0]! as any;
   mutable.id = "mutated";
   mutable.spec.channels = 2;
@@ -367,6 +394,10 @@ test("session snapshots document and source declarations before deferred scratch
   const session = await opening;
   assert.deepEqual(scratchDocument, snapshot, "scratch sees owned document snapshot A");
   assert.deepEqual(hostDocument, snapshot, "createEngine host sees the same document snapshot A");
+  assert.deepEqual(scratchPolicy, { sourceRingFrames: 16, requireSampleRateHz: 0, requireQuantumFrames: 0,
+    console: { commandQueueRecords: 8, meterBlocks: 2 } });
+  assert.deepEqual(hostPolicy, { sourceRingFrames: 16, requireSampleRateHz: 48_000, requireQuantumFrames: 4,
+    console: { commandQueueRecords: 8, meterBlocks: 2 } });
   assert.deepEqual(storeStem, { sourceId: "source", identity: IDENTITY, bytes: 8 });
   assert.deepEqual(session.shape.sources, [{ id: "source", channels: 1, frames: 4n }]);
   await session.close();
@@ -484,8 +515,15 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function pausedSeekFixture(attached = true) {
-  const events: string[] = [];
+async function pausedSeekFixture(attached = true, hooks: {
+  readonly failure?: Promise<unknown>;
+  readonly onError?: (error: EngineWebAdapterError) => void;
+  readonly onProgress?: EngineWebSessionCommonOptions["onProgress"];
+  readonly cleanupGate?: Promise<void>;
+  readonly sessionMap?: BrowserEngine["host"]["sessionMap"];
+  readonly events?: string[];
+} = {}) {
+  const events: string[] = hooks.events ?? [];
   const context = fakeContext(events);
   const sources: DeclaredStemSource[] = [{ id: "source", spec: { channels: 1, bitDepth: 16, frames: 512, content: IDENTITY } }];
   let ring!: SharedArrayBuffer;
@@ -506,10 +544,14 @@ async function pausedSeekFixture(attached = true) {
   };
   const host = {
     node: { connect() {}, disconnect() {} },
-    async dispose() { events.push("dispose"); },
+    ...(hooks.sessionMap === undefined ? {} : { sessionMap: hooks.sessionMap }),
+    async dispose() { events.push("dispose"); await hooks.cleanupGate; },
   } as unknown as BrowserEngine["host"];
   const session = await openEngineWebSession({
-    ...baseOptions(), sources, document: documentFor(sources), console: false,
+    ...baseOptions(), sources, document: documentFor(sources),
+    ...(hooks.sessionMap === undefined ? { console: false as const } : {}),
+    ...(hooks.onError === undefined ? {} : { onError: hooks.onError }),
+    ...(hooks.onProgress === undefined ? {} : { onProgress: hooks.onProgress }),
     capabilityScope: capabilities(), createContext: () => context, createHost: async () => host,
     scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
       backend: "simd128", sources: [{ id: "source", channels: 1, frames: 512n }], tracks: [] }),
@@ -524,7 +566,7 @@ async function pausedSeekFixture(attached = true) {
         writer.reserve(4)![0]!.fill(0.25);
         writer.commit({ generation, startFrame: BigInt(index * 4), frames: 4, endOfRegion: false });
       }
-      return { async seekFrames(frame) {
+      return { ...(hooks.failure === undefined ? {} : { failure: hooks.failure }), async seekFrames(frame) {
         events.push("seek.start"); await seekGate;
         generation++; writer.seek(generation, BigInt(frame) > 512n ? 512n : BigInt(frame));
         events.push("seek.ack"); return generation;
@@ -544,6 +586,15 @@ async function pausedSeekFixture(attached = true) {
         kind: result === 0 ? "confirmed" : "refused", result };
       request = undefined; port.onmessage?.({ data } as MessageEvent);
     },
+    fill(frame: bigint) {
+      while (writer.occupancy < writer.capacity && frame < 512n) {
+        const frames = Number(512n - frame < 4n ? 512n - frame : 4n);
+        writer.reserve(frames)![0]!.fill(0.5);
+        writer.commit({ generation, startFrame: frame, frames, endOfRegion: frame + BigInt(frames) === 512n });
+        frame += BigInt(frames);
+      }
+    },
+    retire() { const c = new Int32Array(ring); Atomics.store(c, MSB1_CONTROL.READ_INDEX, Atomics.load(c, MSB1_CONTROL.WRITE_INDEX)); },
     write(frame: bigint, chunkGeneration = generation) {
       writer.reserve(4)![0]!.fill(0.5);
       writer.commit({ generation: chunkGeneration, startFrame: frame, frames: 4, endOfRegion: false });
@@ -552,6 +603,153 @@ async function pausedSeekFixture(attached = true) {
 }
 
 async function tick() { await new Promise<void>((resolve) => setTimeout(resolve, 5)); }
+
+test("terminal pump failure closes a playing session before one post-cleanup callback", async () => {
+  const failed = deferred<unknown>(); const cleanup = deferred<void>();
+  const errors: EngineWebAdapterError[] = [];
+  const f = await pausedSeekFixture(true, { failure: failed.promise, cleanupGate: cleanup.promise, onError: (error) => { errors.push(error); } });
+  await f.session.play();
+  const reason = new Error("pump worker crashed"); failed.resolve(reason);
+  await tick();
+  assert.equal(f.session.state, "closed");
+  await assert.rejects(f.session.play(), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+  assert.equal(errors.length, 0, "notification follows cleanup even when cleanup is delayed");
+  const closing = f.session.close(); assert.equal(f.session.close(), closing);
+  cleanup.resolve(); await closing; await tick();
+  assert.equal(errors.length, 1); assert.equal(errors[0]!.code, "session.playback"); assert.equal(errors[0]!.cause, reason);
+  for (const event of ["pump.close", "dispose", "context.close", "lease.close"]) assert.equal(f.events.filter((value) => value === event).length, 1);
+});
+
+test("pump failure during a pending seek aborts the lifecycle and notifies once", async () => {
+  const failed = deferred<unknown>(); const never = deferred<void>();
+  let notifications = 0;
+  const f = await pausedSeekFixture(true, { failure: failed.promise, onError: () => { notifications++; } });
+  f.blockSeek(never.promise);
+  const seeking = f.session.seekFrames(100);
+  const rejected = assert.rejects(seeking, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+  await tick(); failed.resolve(new Error("read deadline")); await rejected; await tick();
+  assert.equal(f.session.state, "closed"); assert.equal(notifications, 1);
+  never.resolve(); await tick(); assert.equal(f.events.includes("context.resume"), false);
+});
+
+test("explicit close wins a late pump failure and callback errors cannot escape cleanup", async () => {
+  const failed = deferred<unknown>(); let notifications = 0;
+  const f = await pausedSeekFixture(true, { failure: failed.promise, onError: () => { notifications++; } });
+  await f.session.close(); failed.resolve(new Error("late crash")); await tick();
+  assert.equal(notifications, 0);
+  for (const onError of [() => { throw new Error("observer throws"); }, async () => { throw new Error("observer rejects"); }]) {
+    const terminal = deferred<unknown>();
+    const g = await pausedSeekFixture(true, { failure: terminal.promise, onError });
+    terminal.resolve(new Error("read rejected")); await tick(); await g.session.close(); await tick();
+    assert.equal(g.session.state, "closed");
+  }
+});
+
+test("pump failure during opening rejects open instead of duplicating a runtime callback", async () => {
+  const failed = deferred<unknown>(); const reason = new Error("prefill worker failed"); let notifications = 0;
+  await assert.rejects(pausedSeekFixture(true, {
+    failure: failed.promise, onError: () => { notifications++; },
+    onProgress: (progress) => { if (progress.stage === "prefilling") failed.resolve(reason); },
+  }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.playback" && error.cause === reason);
+  assert.equal(notifications, 0);
+});
+
+test("pump failure interrupts either opening console map without awaiting late success or rejection", { timeout: 2000 }, async () => {
+  for (const pendingMap of [1, 2]) for (const lateReject of [false, true]) {
+    const failed = deferred<unknown>(); const entered = deferred<void>(); const release = deferred<void>();
+    const events: string[] = []; const reason = new Error("pump failed while attaching console");
+    let calls = 0; let notifications = 0;
+    const opening = pausedSeekFixture(true, {
+      failure: failed.promise, events, onError: () => { notifications++; },
+      async sessionMap() {
+        if (++calls === pendingMap) {
+          entered.resolve(); await release.promise;
+          if (lateReject) throw new Error("late map rejection");
+        }
+        return { tag: "miso.sessionmap.v1", requestId: calls, result: 0, tracks: [], sources: [{ id: "source", channels: 1, frames: 512n }], metersAttached: false };
+      },
+    });
+    const refused = assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.playback" && error.cause === reason);
+    await entered.promise; failed.resolve(reason);
+    await refused;
+    assert.equal(notifications, 0, "opening failures only reject open");
+    for (const event of ["pump.close", "dispose", "context.close", "lease.close"]) assert.equal(events.filter((value) => value === event).length, 1, event + " must not wait for a map");
+    release.resolve(); await tick();
+    assert.equal(notifications, 0);
+    for (const event of ["pump.close", "dispose", "context.close", "lease.close"]) assert.equal(events.filter((value) => value === event).length, 1, "late attachment must not repeat " + event);
+  }
+});
+
+test("same-turn console map completion and pump failure preserve the opening cause", async () => {
+  for (const failFirst of [false, true]) {
+    const failed = deferred<unknown>(); const entered = deferred<void>(); const release = deferred<void>();
+    const events: string[] = []; const reason = new Error("same-turn failure"); let calls = 0;
+    const opening = pausedSeekFixture(true, {
+      failure: failed.promise, events,
+      async sessionMap() {
+        if (++calls === 2) { entered.resolve(); await release.promise; }
+        return { tag: "miso.sessionmap.v1", requestId: calls, result: 0, tracks: [], sources: [{ id: "source", channels: 1, frames: 512n }], metersAttached: false };
+      },
+    });
+    const refused = assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.playback" && error.cause === reason);
+    await entered.promise;
+    if (failFirst) { failed.resolve(reason); release.resolve(); }
+    else { release.resolve(); failed.resolve(reason); }
+    await refused; await tick();
+    for (const event of ["pump.close", "dispose", "context.close", "lease.close"]) assert.equal(events.filter((value) => value === event).length, 1);
+  }
+});
+
+test("initial readiness waits for every source's full runway while accepting exact short tails", async () => {
+  const sources: DeclaredStemSource[] = [
+    { id: "source", spec: { channels: 1, bitDepth: 16, frames: 2, content: IDENTITY } },
+    { id: "source-z", spec: { channels: 1, bitDepth: 16, frames: 513, content: IDENTITY_Z } },
+  ];
+  const events: string[] = [];
+  let finish!: () => void;
+  let settled = false;
+  const opening = openEngineWebSession({
+    ...baseOptions(), sources, document: documentFor(sources), console: false,
+    capabilityScope: capabilities(), createContext: () => fakeContext(events),
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: sources.map((source) => ({ id: source.id, channels: 1, frames: BigInt(source.spec.frames) })) }),
+    store: { async open() { return this; }, async openSession() { return {
+      leaseId: "mixed", stems: [], async read() { throw new Error("fixture pump owns PCM"); }, async close() {},
+    }; } },
+    createHost: async () => ({ node: { connect() {}, disconnect() {} }, async dispose() {} }) as unknown as BrowserEngine["host"],
+    createAttachNode: () => ({ port: { postMessage() {} }, disconnect() {} }),
+    createPump: async ({ sources: ready }) => {
+      fillRing(ready[0]!.ring, 2);
+      const writer = new Msb1RingWriter(ready[1]!.ring); writer.engage(1n);
+      writer.reserve(4); writer.commit({ generation: 1n, startFrame: 0n, frames: 4, endOfRegion: false });
+      finish = () => {
+        for (let frame = 4; writer.occupancy < writer.capacity; frame += 4) {
+          writer.reserve(4); writer.commit({ generation: 1n, startFrame: BigInt(frame), frames: 4, endOfRegion: false });
+        }
+      };
+      return { async seekFrames() { return 2n; }, close() { writer.release(); } };
+    },
+  }).then((session) => { settled = true; return session; });
+  await tick(); await tick();
+  assert.equal(settled, false, "one ready short source and one quantum of the long source cannot start playback");
+  finish();
+  const session = await opening;
+  assert.equal(session.state, "ready");
+  await session.close();
+});
+
+test("seek runway clips to the exact source tail and EOF needs no invented PCM", async () => {
+  const f = await pausedSeekFixture();
+  const tail = f.session.seekFrames(510);
+  await tick(); f.confirm(); f.fill(510n); await tail;
+  assert.equal(f.context.state, "suspended");
+  const eof = f.session.seekFrames(512);
+  await tick(); f.confirm(); await eof;
+  const beyond = f.session.seekFrames(600);
+  await tick(); f.confirm(); await beyond;
+  assert.equal(f.context.state, "suspended");
+  await f.session.close();
+});
 
 test("initial paused seeks require attachment, producer ACK, preparation and full-generation target PCM before play", async () => {
   const f = await pausedSeekFixture(false);
@@ -567,7 +765,9 @@ test("initial paused seeks require attachment, producer ACK, preparation and ful
   assert.equal(settled, false, "full old occupancy is not seek readiness");
   f.confirm(); await tick(); assert.equal(settled, false, "prepare alone is not producer prefill");
   f.write(100n, 2n + (1n << 32n)); await tick(); assert.equal(settled, false, "low-word generation collision is insufficient");
-  f.write(100n); await seek;
+  f.retire();
+  f.write(100n); await tick(); assert.equal(settled, false, "one fresh quantum is not a playback runway");
+  f.fill(104n); await seek;
   assert.equal(f.context.state, "suspended");
   const play = f.session.play(); assert.equal(f.events.at(-1), "context.resume"); await play;
   await f.session.close();
@@ -577,7 +777,7 @@ test("queued seeks keep play busy through the last completion; running seeks pre
   const f = await pausedSeekFixture();
   const first = f.session.seekFrames(100);
   const second = f.session.seekFrames(512);
-  await tick(); f.confirm(); f.write(100n); await first;
+  await tick(); f.confirm(); f.fill(100n); await first;
   await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.busy");
   await tick(); f.confirm(); await second;
   assert.equal(f.events.includes("context.resume"), false);
@@ -591,7 +791,7 @@ test("queued seeks keep play busy through the last completion; running seeks pre
   assert.deepEqual(f.events.slice(-4), ["context.suspend", "seek.start", "seek.ack", "prepare"]);
   f.confirm(); await tick();
   assert.equal(f.context.state, "suspended", "fresh target must precede restoration");
-  f.write(20n); await runningSeek;
+  f.fill(20n); await runningSeek;
   assert.equal(f.context.state, "running");
   assert.equal(f.events.filter((event) => event === "prepare").length, count + 1);
   await f.session.close();
@@ -649,9 +849,9 @@ test("running seeks preserve FIFO with later seeks and pause, without late resto
   const second = f.session.seekFrames(200);
   const pause = f.session.pause();
   await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.busy");
-  await tick(); f.confirm(); f.write(100n); await first;
+  await tick(); f.confirm(); f.fill(100n); await first;
   await tick(); assert.equal(f.context.state, "suspended");
-  f.confirm(); f.write(200n); await second; await pause;
+  f.confirm(); f.fill(200n); await second; await pause;
   assert.equal(f.context.state, "suspended"); assert.equal(f.session.state, "paused");
   const resumes = f.events.filter((event) => event === "context.resume").length;
   assert.equal(resumes, 3, "initial play plus one restoration per running seek");
@@ -668,7 +868,7 @@ test("seek context transitions preserve refusals and reject wrong settled states
       const pending = f.session.seekFrames(100);
       const rejected = assert.rejects(pending, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek"
         && (fault === "reject" ? e.cause === reason : e.cause instanceof EngineWebAdapterError));
-      if (transition === "resume") { await tick(); f.confirm(); f.write(100n); }
+      if (transition === "resume") { await tick(); f.confirm(); f.fill(100n); }
       await rejected;
       assert.equal(f.session.state, "closed");
       if (transition === "suspend") assert.equal(f.events.includes("seek.start"), false);
@@ -693,7 +893,7 @@ test("hung seek context transitions time out and clear bounded timers", { timeou
     f.context[transition] = () => new Promise<void>(() => undefined);
     const rejected = assert.rejects(f.session.seekFrames(100), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek"
       && e.cause instanceof EngineWebAdapterError && e.cause.message.includes("timed out"));
-    if (transition === "resume") { await tick(); f.confirm(); f.write(100n); }
+    if (transition === "resume") { await tick(); f.confirm(); f.fill(100n); }
     await rejected;
     assert.equal(f.session.state, "closed"); assert.equal(timers.size, 0);
   }
@@ -710,7 +910,7 @@ test("close wins at every running seek await and late transitions never resume a
     const rejected = assert.rejects(pending, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
     await tick();
     if (stage === "refill" || stage === "resume") f.confirm();
-    if (stage === "resume") f.write(100n);
+    if (stage === "resume") f.fill(100n);
     await tick();
     await f.session.close(); await rejected;
     const expected = stage === "resume" ? 1 : 0;
@@ -846,15 +1046,17 @@ class ValidationWorker extends EventTarget {
 
 class ScratchWorker extends EventTarget {
   #terminated = false;
+  readonly module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
   constructor(readonly events: string[]) {
     super();
     queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: { type: "worker-ready" } })));
   }
   postMessage(message: { type?: string; requestId?: number }) {
-    if (message.type !== "scratch") return;
+    if (message.type !== "scratch" && message.type !== "prepare") return;
     this.events.push("scratch");
     queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: {
       type: "scratch-result", requestId: message.requestId, ok: true,
+      ...(message.type === "prepare" ? { module: this.module } : {}),
       shape: {
         sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
         sources: [{ id: "source", channels: 1, frames: 4n }, { id: "source-z", channels: 1, frames: 4n }], tracks: [],
@@ -867,9 +1069,9 @@ class ScratchWorker extends EventTarget {
 }
 
 test("delegated scratch deadlines use typed adapter translation and terminate", async () => {
-  for (const ready of [false, true]) {
+  for (const boot of [scratchBootWithWorker, prepareBrowserSessionWithWorker]) for (const ready of [false, true]) {
     const worker = new FailingWorker();
-    const pending = scratchBootWithWorker({ document: new Uint8Array(), options: {}, moduleUrl: "chosen-wasm",
+    const pending = boot({ document: new Uint8Array(), options: {}, moduleUrl: "chosen-wasm",
       requestDeadlineMs: 5, assets: { createWorker: () => worker as unknown as Worker } });
     if (ready) worker.dispatchEvent(new MessageEvent("message", { data: { type: "worker-ready" } }));
     await assert.rejects(pending, (error: unknown) => error instanceof EngineWebAdapterError
@@ -880,11 +1082,12 @@ test("delegated scratch deadlines use typed adapter translation and terminate", 
 });
 
 test("delegated scratch retains caller Worker URL, Wasm URL and abort reason", async () => {
+  for (const boot of [scratchBootWithWorker, prepareBrowserSessionWithWorker]) {
   const worker = new FailingWorker(); const controller = new AbortController();
   const workerUrl = new URL("https://caller.invalid/scratch.js");
   let received: unknown;
   worker.postMessage = (request?: unknown) => { received = request; };
-  const opening = scratchBootWithWorker({ document: new Uint8Array([7]), options: {}, moduleUrl: "chosen-wasm",
+  const opening = boot({ document: new Uint8Array([7]), options: {}, moduleUrl: "chosen-wasm",
     signal: controller.signal, assets: { scratchWorkerUrl: workerUrl, createWorker(url, options) {
       assert.equal(url, workerUrl); assert.deepEqual(options, { type: "module" }); return worker as unknown as Worker;
     } } });
@@ -893,6 +1096,7 @@ test("delegated scratch retains caller Worker URL, Wasm URL and abort reason", a
   const reason = new Error("caller stopped"); controller.abort(reason);
   await assert.rejects(opening, (error: unknown) => error === reason);
   assert.equal(worker.terminated, true);
+  }
 });
 
 test("SDK host defaults wait for verified lease, forward URLs and install the SDK feed first", async () => {
@@ -917,7 +1121,7 @@ test("SDK host defaults wait for verified lease, forward URLs and install the SD
       for (const ring of request.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
     } }, disconnect() {} }),
     createPump: async ({ sources }) => {
-      for (const source of sources) Atomics.store(new Int32Array(source.ring), MSB1_CONTROL.WROTE, 1);
+      for (const source of sources) fillRing(source.ring, source.frames);
       return { async seekFrames() { return 2n; }, close() {} };
     },
     assets: { engineHostModuleUrl: hostModuleUrl, engineWasmUrl: "chosen-wasm", engineWorkletModuleUrl: "chosen-worklet", feedWorkletModuleUrl: "chosen-feed" },
@@ -936,9 +1140,9 @@ test("SDK host defaults wait for verified lease, forward URLs and install the SD
 test("source observation maps compiled sources and reports owned buffers without consuming audio", async (t) => {
   const { Msb1RingObserver, Msb1RingWriter } = await import("@misofm/engine/browser");
   const declarations: DeclaredStemSource[] = [
-    { id: "z", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
-    { id: "a", spec: { channels: 2, bitDepth: 24, frames: 4, content: IDENTITY_Z } },
-    { id: "m", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
+    { id: "z", spec: { channels: 1, bitDepth: 16, frames: 6, content: IDENTITY } },
+    { id: "a", spec: { channels: 2, bitDepth: 24, frames: 6, content: IDENTITY_Z } },
+    { id: "m", spec: { channels: 1, bitDepth: 16, frames: 6, content: IDENTITY } },
   ];
   const ordered = [declarations[1]!, declarations[2]!, declarations[0]!];
   for (const allocation of [undefined, { windowFrames: 17, maximumWindowBytes: 170 }]) {
@@ -948,7 +1152,7 @@ test("source observation maps compiled sources and reports owned buffers without
       ...baseOptions(), sources: declarations, document: documentFor(declarations), console: false,
       capabilityScope: capabilities(), createContext: () => fakeContext(events),
       scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
-        backend: "simd128", tracks: [], sources: ordered.map((source) => ({ id: source.id, channels: source.spec.channels, frames: 4n })) }),
+        backend: "simd128", tracks: [], sources: ordered.map((source) => ({ id: source.id, channels: source.spec.channels, frames: 6n })) }),
       store: { async open() { return this; }, async openSession() {
         return { leaseId: "lease", stems: [], async read() { throw new Error("custom pump owns reads"); }, async close() {} };
       } },
@@ -1102,3 +1306,11 @@ test("per-open ingest diagnostics preserve warm admission lifetime, independent 
   }));
   assert.deepEqual(customProducer.snapshot(), { residency: null, reservation: null, processing: null });
 });
+
+function fillRing(ring: SharedArrayBuffer, total: number) {
+  const writer = new Msb1RingWriter(ring); writer.engage(1n);
+  for (let frame = 0; frame < total && writer.occupancy < writer.capacity; frame += writer.frameCapacity) {
+    const frames = Math.min(writer.frameCapacity, total - frame); writer.reserve(frames);
+    writer.commit({ generation: 1n, startFrame: BigInt(frame), frames, endOfRegion: frame + frames === total });
+  }
+}

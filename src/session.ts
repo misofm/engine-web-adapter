@@ -12,7 +12,7 @@ import type { SessionControl } from "./console.js";
 import { EngineWebAdapterError } from "./errors.js";
 import { attachEngineFeed, prepareEngineFeed } from "./feed.js";
 import type { EngineFeed } from "./feed.js";
-import { scratchBootWithWorker } from "./scratch.js";
+import { prepareBrowserSessionWithWorker } from "./scratch.js";
 import type {
   EngineAudioContext,
   EnginePump,
@@ -62,6 +62,17 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
   let pump: EnginePump | undefined;
   let output: AudioNode | undefined;
   let control: SessionControl | undefined;
+  let openedSession: EngineWebSession | undefined;
+  const notifyPumpFailure = (cause: unknown): void => {
+    if (abort.signal.aborted) return;
+    const error = new EngineWebAdapterError("session.playback", "PCM playback worker failed", {}, cause);
+    if (openedSession === undefined) { abort.abort(error); return; }
+    // close marks the session terminal and interrupts pending operations now.
+    // The observer only runs after cleanup, and cannot create an unhandled rejection.
+    void openedSession.close().catch(() => undefined).then(async () => {
+      try { await options.onError?.(error); } catch { /* observer failure cannot undo terminal cleanup */ }
+    });
+  };
 
   try {
     const document = normalizeDocument(options.document);
@@ -79,10 +90,12 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     const engineWorkletUrl = options.assets?.engineWorkletModuleUrl ?? BUNDLED_ENGINE_ASSETS.workletModule;
     const engineHostUrl = options.assets?.engineHostModuleUrl ?? BUNDLED_ENGINE_ASSETS.hostModule;
     const feedPreludeUrl = options.assets?.feedWorkletModuleUrl ?? ADAPTER_ASSETS.feedWorkletModule;
-    const scratchBoot = options.scratchBoot ?? ((request: Parameters<NonNullable<EngineWebSessionOptions["scratchBoot"]>>[0]) =>
-      scratchBootWithWorker({ ...request, moduleUrl: engineWasmUrl,
-        ...(options.assets === undefined ? {} : { assets: options.assets }), signal: abort.signal }));
-    const compiledShape = await scratchBoot({ document, options: scratchBootOptions(policy) });
+    const scratchRequest = { document, options: scratchBootOptions(policy) };
+    const prepared = options.scratchBoot === undefined
+      ? await prepareBrowserSessionWithWorker({ ...scratchRequest, moduleUrl: engineWasmUrl,
+        ...(options.assets === undefined ? {} : { assets: options.assets }), signal: abort.signal })
+      : { shape: await options.scratchBoot(scratchRequest), module: undefined };
+    const compiledShape = prepared.shape;
     const orderedSources = crossSessionDeclarations(compiledShape, documentDeclaration, sources);
 
     let resolver: StemResolver;
@@ -148,6 +161,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       simd128ModuleUrl: String(engineWasmUrl),
       workletModuleUrl: String(engineWorkletUrl),
       policy,
+      ...(prepared.module === undefined ? {} : { preparedModule: prepared.module }),
     };
     engine = options.createContext === undefined
       ? await createEngine(engineOptions)
@@ -179,8 +193,10 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
         ...(options.assets === undefined ? {} : { assets: options.assets }),
       }));
     cleanup.push(() => pump!.close());
+    void pump.failure?.then(notifyPumpFailure, notifyPumpFailure);
     options.onProgress?.({ stage: "prefilling", sourcesTotal: pumpSources.length });
-    await waitForPrefill(feed.rings, abort.signal);
+    await waitForPrefill(pumpSources, abort.signal);
+    abort.signal.throwIfAborted();
 
     const context = engine.context;
     output = options.createOutput?.({ context, engineNode: engine.host.node }) ?? engine.host.node;
@@ -190,9 +206,10 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     // so a first console command and a first meter subscription work in either
     // order and neither caller nor adapter ever names an identifier.
     if (consoleAttached(policy)) {
-      control = await attachSessionControl(engine.host);
+      control = await abortable(attachSessionControl(engine.host), abort.signal, undefined, (late) => late.close());
       cleanup.push(() => control!.close());
     }
+    abort.signal.throwIfAborted();
     detachAbort();
 
     let state: EngineWebSessionState = "ready";
@@ -309,7 +326,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
             await abortable(feed!.ready(), abort.signal);
             const generation = await abortable(pump!.seekFrames(target), abort.signal);
             await abortable(feed!.prepareSeek(), abort.signal);
-            await waitForSeekPrefill(orderedSources, counters, target, generation, abort.signal);
+            await waitForSeekPrefill(orderedSources, feed!.rings, counters, target, generation, abort.signal);
             assertOpen();
             if (restoreRunning) {
               await abortable(context.resume(), abort.signal, PREFILL_TIMEOUT_MS);
@@ -335,6 +352,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
         return closePromise;
       },
     };
+    openedSession = session;
     return session;
   } catch (error) {
     abort.abort(error);
@@ -623,13 +641,11 @@ function exactFrames(value: number | bigint): number {
   return Number(frames);
 }
 
-async function waitForPrefill(rings: readonly SharedArrayBuffer[], signal: AbortSignal): Promise<void> {
-  const deadline = performance.now() + PREFILL_TIMEOUT_MS;
-  while (rings.some((ring) => Atomics.load(new Int32Array(ring), MSB1_CONTROL.WROTE) === 0)) {
-    signal.throwIfAborted();
-    if (performance.now() >= deadline) throw new EngineWebAdapterError("session.open", "PCM pump prefill timed out");
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
+async function waitForPrefill(sources: readonly PcmPumpSource[], signal: AbortSignal): Promise<void> {
+  const observers = new Map(sources.map((source) => [source.sourceId, new Msb1RingObserver(source.ring)]));
+  try {
+    await waitForRunway(sources.map((source) => ({ id: source.sourceId, frames: BigInt(source.frames), ring: source.ring })), observers, 0n, 1n, signal, "session.open");
+  } finally { for (const observer of observers.values()) observer.close(); }
 }
 
 function assertSeekContextState(context: EngineAudioContext, expected: "running" | "suspended"): void {
@@ -638,26 +654,45 @@ function assertSeekContextState(context: EngineAudioContext, expected: "running"
 
 async function waitForSeekPrefill(
   sources: readonly DeclaredStemSource[],
+  rings: readonly SharedArrayBuffer[],
   observers: ReadonlyMap<string, Msb1RingObserver>,
   target: bigint,
   generation: bigint,
   signal: AbortSignal,
 ): Promise<void> {
-  const pending = new Map(sources.flatMap((source) => target < BigInt(source.spec.frames)
-    ? [[source.id, target] as const] : []));
+  await waitForRunway(sources.map((source, index) => ({ id: source.id, frames: BigInt(source.spec.frames), ring: rings[index]! })), observers, target, generation, signal, "session.seek");
+}
+
+async function waitForRunway(
+  sources: readonly { readonly id: string; readonly frames: bigint; readonly ring: SharedArrayBuffer }[],
+  observers: ReadonlyMap<string, Msb1RingObserver>,
+  target: bigint,
+  generation: bigint,
+  signal: AbortSignal,
+  code: "session.open" | "session.seek",
+): Promise<void> {
+  const pending = new Map<string, { next: bigint; end: bigint; total: bigint }>();
+  for (const source of sources) {
+    if (target >= source.frames) continue;
+    const control = new Int32Array(source.ring);
+    const quantum = BigInt(Atomics.load(control, MSB1_CONTROL.FRAME_CAPACITY));
+    const runway = quantum * BigInt(Atomics.load(control, MSB1_CONTROL.CAPACITY));
+    pending.set(source.id, { next: target, end: target + runway < source.frames ? target + runway : source.frames, total: source.frames });
+  }
   const deadline = performance.now() + PREFILL_TIMEOUT_MS;
-  while (pending.size !== 0) {
+  for (;;) {
     signal.throwIfAborted();
-    for (const [id, frame] of pending) {
+    for (const [id, expected] of pending) {
       observers.get(id)!.pull((chunk) => {
-        if (chunk.generation !== generation || chunk.startFrame !== frame) {
-          throw new EngineWebAdapterError("session.seek", "PCM prefill does not begin at the acknowledged seek", { sourceId: id });
+        if (chunk.generation !== generation || chunk.startFrame !== expected.next || chunk.startFrame + BigInt(chunk.frames) > expected.total) {
+          throw new EngineWebAdapterError(code, "PCM prefill is not contiguous at the acknowledged position", { sourceId: id });
         }
-        pending.delete(id);
-      }, 1);
+        expected.next += BigInt(chunk.frames);
+        if (expected.next >= expected.end) pending.delete(id);
+      }, 32);
     }
     if (pending.size === 0) return;
-    if (performance.now() >= deadline) throw new EngineWebAdapterError("session.seek", "Current-generation PCM prefill timed out");
+    if (performance.now() >= deadline) throw new EngineWebAdapterError(code, "Current-generation PCM runway prefill timed out");
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 }
@@ -678,19 +713,28 @@ function forwardAbort(parent: AbortSignal | undefined, child: AbortController): 
   return () => parent.removeEventListener("abort", abort);
 }
 
-function abortable<T>(operation: Promise<T>, signal: AbortSignal, timeoutMs?: number): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
+function abortable<T>(operation: Promise<T>, signal: AbortSignal, timeoutMs?: number, discard?: (value: T) => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const abort = () => { cleanup(); reject(signal.reason ?? new DOMException("Operation aborted", "AbortError")); };
+    const fail = (error: unknown) => { if (settled) return; settled = true; cleanup(); reject(error); };
+    const abort = () => { fail(signal.reason ?? new DOMException("Operation aborted", "AbortError")); };
     const cleanup = () => { signal.removeEventListener("abort", abort); if (timer !== undefined) clearTimeout(timer); };
-    signal.addEventListener("abort", abort, { once: true });
-    if (timeoutMs !== undefined) timer = setTimeout(() => {
-      cleanup(); reject(new EngineWebAdapterError("session.seek", "AudioContext seek transition timed out"));
-    }, timeoutMs);
+    if (signal.aborted) abort();
+    else {
+      signal.addEventListener("abort", abort, { once: true });
+      if (timeoutMs !== undefined) timer = setTimeout(() => {
+        fail(new EngineWebAdapterError("session.seek", "AudioContext seek transition timed out"));
+      }, timeoutMs);
+    }
+    // Always observe the operation, including an already-aborted signal. A late
+    // resource belongs to this abandoned opening, never to its drained stack.
     operation.then(
-      (value) => { cleanup(); resolve(value); },
-      (error) => { cleanup(); reject(error); },
+      (value) => {
+        if (settled) { try { discard?.(value); } catch { /* preserve the original refusal */ } return; }
+        settled = true; cleanup(); resolve(value);
+      },
+      fail,
     );
   });
 }

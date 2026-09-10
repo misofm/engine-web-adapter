@@ -9,6 +9,7 @@ import type {
 } from "@misofm/engine/browser";
 
 import type { AdapterAssetOverrides } from "./assets.js";
+import type { EngineWebAdapterError } from "./errors.js";
 import type { WebCapabilityScope } from "./capabilities.js";
 import type { AudioWorkletNodeLike, EngineFeed } from "./feed.js";
 import type { PcmPumpSource } from "./stems/pump.js";
@@ -30,7 +31,9 @@ export interface EngineAudioContext extends AudioContextLike {
 }
 
 export interface PumpAllocation {
+  /** Requested per-window frame bound; local reads round down to whole render quanta. */
   readonly windowFrames: number;
+  /** Current plus next/pending canonical windows; excludes rings, JS objects and browser caches. */
   readonly maximumWindowBytes: number;
 }
 
@@ -56,6 +59,8 @@ export interface FeedDiagnostics {
 
 export interface EnginePump {
   readonly allocation?: PumpAllocation;
+  /** Fulfills once after unexpected terminal failure; never rejects or fires for explicit close. */
+  readonly failure?: Promise<unknown>;
   seekFrames(frame: number | bigint): Promise<bigint>;
   close(): Promise<void> | void;
 }
@@ -139,6 +144,8 @@ export interface EngineWebSessionCommonOptions {
   readonly console?: false;
   readonly signal?: AbortSignal;
   readonly onProgress?: (progress: StemProgress) => void;
+  /** Terminal post-open playback failure, after session cleanup. Open failures reject open instead. */
+  readonly onError?: (error: EngineWebAdapterError) => void;
   /** Boot policy. Explicit `console` sizes override the adapter's defaults field by field. */
   readonly policy?: BrowserBootPolicy;
   readonly assets?: AdapterAssetOverrides;

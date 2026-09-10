@@ -41,7 +41,7 @@ test("pump memory is fixed rings plus explicit per-source windows", async () => 
     sources: [{ sourceId: "bounded", identity: IDENTITY, channels: 1, bitDepth: 16, frames: 1000, ring: shared }],
     windowFrames: 8,
   });
-  assert.equal(pump.maximumWindowBytes, 16);
+  assert.equal(pump.maximumWindowBytes, 32);
   assert.equal(pump.ringBytes, shared.byteLength);
   const outcome = await pump.pumpUntilBlocked();
   assert.deepEqual(outcome, { chunks: 2, frames: 8, finished: false });
@@ -68,7 +68,7 @@ test("one pass services multiple sources fairly", async () => {
   pump.close();
 });
 
-test("exported self-driver orders a delayed Blob tick before seek", async () => {
+test("exported self-driver invalidates a delayed Blob before seek without blocking control", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();
   const bytes = pcm16(Array.from({ length: 16 }, (_, index) => index));
@@ -90,7 +90,7 @@ test("exported self-driver orders a delayed Blob tick before seek", async () => 
   release.resolve();
   assert.equal(await sought, 2n);
   const headersI64 = new BigInt64Array(shared, MSB1_HEADER_OFFSET, 4 * MSB1_SLOT_HEADER_BYTES / 8);
-  assert.equal(headersI64[2], 1n, "delayed old PCM must commit under its old generation");
+  assert.equal(headersI64[2], 0n, "obsolete pending PCM must not be published");
   assert.equal(headersI64[3], 0n, "the old cursor must not be relabelled as the seek target");
   driver.close();
 });
@@ -203,6 +203,37 @@ test("pump Worker client bounds requests and terminates on close/error/messageer
     failing.emit(type, type === "error" ? { message: "worker died", error: new Error("worker died") } : {});
     await assert.rejects(opening);
     assert.equal(failing.terminated, true);
+  }
+});
+
+test("initialized worker failure fulfills once after termination; explicit close and abort stay quiet", async () => {
+  const shared = ring("failure-channel", 1, 4, 2);
+  const source = { sourceId: "failure-channel", identity: IDENTITY, channels: 1 as const, bitDepth: 16 as const, frames: 4, ring: shared };
+  const lease = { read: async () => new Blob([new Uint8Array(8)]) };
+  for (const type of ["error", "messageerror", "pump-error"] as const) {
+    const worker = new FakePumpWorker(true);
+    const client = await PcmPumpWorkerClient.create({ lease, sources: [source], worker });
+    let notifications = 0;
+    const failure = client.failure.then((reason) => { notifications++; assert.equal(worker.terminateCount, 1); return reason; });
+    if (type === "pump-error") worker.reply({ type: "pump-error", error: { name: "EngineWebAdapterError", message: "window timed out", code: "stem.read_deadline" } });
+    else worker.emit(type, type === "error" ? { error: new Error("worker crashed") } : {});
+    const reason = await failure;
+    assert.ok(reason instanceof Error);
+    if (type === "pump-error") assert.equal((reason as Error & { code: string }).code, "stem.read_deadline");
+    worker.forceLate({ type: "pump-error", error: { name: "Error", message: "duplicate" } });
+    await client.close(); await Promise.resolve();
+    assert.equal(notifications, 1); assert.equal(worker.terminateCount, 1);
+  }
+  for (const intentional of ["close", "abort"] as const) {
+    const worker = new FakePumpWorker(true, (message, self) => {
+      if (message.type === "stop") self.reply({ type: "stopped", requestId: message.requestId });
+    });
+    const controller = new AbortController();
+    const client = await PcmPumpWorkerClient.create({ lease, sources: [source], worker, signal: controller.signal });
+    let notifications = 0; void client.failure.then(() => { notifications++; });
+    if (intentional === "close") await client.close(); else controller.abort();
+    worker.forceLate({ type: "pump-error", error: { name: "Error", message: "late" } });
+    await Promise.resolve(); assert.equal(notifications, 0); assert.equal(worker.terminateCount, 1);
   }
 });
 
@@ -374,12 +405,12 @@ test("pump client retains requested window and validates initialized allocation 
   for (const windowFrames of [undefined, 17]) {
     const worker = new FakePumpWorker(false, (message, self) => {
       if (message.type === "initialize") {
-        assert.equal(message.windowFrames, windowFrames ?? 4096);
+        assert.equal(message.windowFrames, windowFrames ?? 8192);
         self.reply({ type: "initialized", requestId: message.requestId, bounds: { windowBytes: 12345, ringBytes: shared.byteLength } });
       } else if (message.type === "stop") self.reply({ type: "stopped", requestId: message.requestId });
     });
     const client = await PcmPumpWorkerClient.create({ lease, sources: [source], worker, ...(windowFrames === undefined ? {} : { windowFrames }) });
-    assert.deepEqual(client.allocation, { windowFrames: windowFrames ?? 4096, maximumWindowBytes: 12345 });
+    assert.deepEqual(client.allocation, { windowFrames: windowFrames ?? 8192, maximumWindowBytes: 12345 });
     assert.equal(Object.isFrozen(client.allocation), true);
     await client.close();
   }
