@@ -12,7 +12,7 @@ import type { SessionControl } from "./console.js";
 import { EngineWebAdapterError } from "./errors.js";
 import { attachEngineFeed, prepareEngineFeed } from "./feed.js";
 import type { EngineFeed } from "./feed.js";
-import { scratchBootWithWorker } from "./scratch.js";
+import { prepareBrowserSessionWithWorker } from "./scratch.js";
 import type {
   EngineAudioContext,
   EnginePump,
@@ -90,10 +90,12 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     const engineWorkletUrl = options.assets?.engineWorkletModuleUrl ?? BUNDLED_ENGINE_ASSETS.workletModule;
     const engineHostUrl = options.assets?.engineHostModuleUrl ?? BUNDLED_ENGINE_ASSETS.hostModule;
     const feedPreludeUrl = options.assets?.feedWorkletModuleUrl ?? ADAPTER_ASSETS.feedWorkletModule;
-    const scratchBoot = options.scratchBoot ?? ((request: Parameters<NonNullable<EngineWebSessionOptions["scratchBoot"]>>[0]) =>
-      scratchBootWithWorker({ ...request, moduleUrl: engineWasmUrl,
-        ...(options.assets === undefined ? {} : { assets: options.assets }), signal: abort.signal }));
-    const compiledShape = await scratchBoot({ document, options: scratchBootOptions(policy) });
+    const scratchRequest = { document, options: scratchBootOptions(policy) };
+    const prepared = options.scratchBoot === undefined
+      ? await prepareBrowserSessionWithWorker({ ...scratchRequest, moduleUrl: engineWasmUrl,
+        ...(options.assets === undefined ? {} : { assets: options.assets }), signal: abort.signal })
+      : { shape: await options.scratchBoot(scratchRequest), module: undefined };
+    const compiledShape = prepared.shape;
     const orderedSources = crossSessionDeclarations(compiledShape, documentDeclaration, sources);
 
     let resolver: StemResolver;
@@ -159,6 +161,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       simd128ModuleUrl: String(engineWasmUrl),
       workletModuleUrl: String(engineWorkletUrl),
       policy,
+      ...(prepared.module === undefined ? {} : { preparedModule: prepared.module }),
     };
     engine = options.createContext === undefined
       ? await createEngine(engineOptions)

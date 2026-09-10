@@ -4,7 +4,7 @@ import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { MemoryStemStorageBackend } from "../src/stems/storage.js";
 import { BrowserBootError, Msb1RingWriter, PcmFeedError } from "@misofm/engine/browser";
-import { scratchBootWithWorker } from "../src/scratch.js";
+import { scratchBootWithWorker, prepareBrowserSessionWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -184,6 +184,9 @@ test("every document stem tuple mismatch refuses before store or FLAC delivery",
 test("session composes in order and serializes lifecycle with reverse cleanup", async () => {
   const events: string[] = [];
   const context = fakeContext(events);
+  const verified = deferred<void>();
+  const storeStarted = deferred<void>();
+  let scratchWorker: ScratchWorker | undefined;
   const lease: StemSessionLease = {
     leaseId: "lease",
     stems: [
@@ -195,7 +198,11 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
   };
   const store: StemStore = {
     async open() { return this; },
-    async openSession() { events.push("store.openSession"); return lease; },
+    async openSession() {
+      events.push("store.openSession"); storeStarted.resolve();
+      await verified.promise;
+      return lease;
+    },
   };
   const node = {
     connect() { events.push("output.connect"); },
@@ -220,7 +227,8 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
     ]),
     capabilityScope: capabilities(),
     createContext: () => context,
-    createHost: async ({ context: engineContext }) => {
+    createHost: async ({ context: engineContext, preparedModule }) => {
+      assert.equal(preparedModule, scratchWorker!.module, "the locally received module survives verified ingestion");
       assert.deepEqual((engineContext as unknown as typeof context).modules, ["feed-override.js"]);
       events.push("engine-worklet");
       return host;
@@ -257,11 +265,16 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
     },
     assets: {
       feedWorkletModuleUrl: "feed-override.js",
-      createWorker: () => new ScratchWorker(events) as unknown as Worker,
+      createWorker: () => (scratchWorker = new ScratchWorker(events)) as unknown as Worker,
     },
   };
 
-  const session = await openEngineWebSession(options);
+  const opening = openEngineWebSession(options);
+  await storeStarted.promise;
+  assert.deepEqual(events, ["scratch", "scratch.terminate", "store.openSession"]);
+  assert.equal(context.modules.length, 0, "no live worklet starts before canonical verification finishes");
+  verified.resolve();
+  const session = await opening;
   assert.equal(session.state, "ready");
   assert.ok(events.indexOf("scratch") < events.indexOf("scratch.terminate"));
   assert.ok(events.indexOf("scratch.terminate") < events.indexOf("store.openSession"));
@@ -311,6 +324,9 @@ test("session snapshots document and source declarations before deferred scratch
   const releaseScratch = deferred<void>();
   let scratchDocument: Uint8Array | undefined;
   let hostDocument: Uint8Array | undefined;
+  const policy = { sourceRingFrames: 16, console: { commandQueueRecords: 8, meterBlocks: 2 } };
+  let scratchPolicy: unknown;
+  let hostPolicy: unknown;
   let storeStem: unknown;
   const events: string[] = [];
   const context = fakeContext(events);
@@ -326,6 +342,7 @@ test("session snapshots document and source declarations before deferred scratch
   };
   const opening = openEngineWebSession({
     document,
+    policy,
     leaseId: "snapshot",
     sources: originalSources as readonly DeclaredStemSource[],
     resolver: { async resolve() { throw new Error("warm fixture must not resolve"); } },
@@ -336,6 +353,7 @@ test("session snapshots document and source declarations before deferred scratch
     },
     scratchBoot: async (request) => {
       scratchDocument = request.document;
+      scratchPolicy = request.options;
       scratchStarted.resolve();
       await releaseScratch.promise;
       return {
@@ -344,7 +362,10 @@ test("session snapshots document and source declarations before deferred scratch
       };
     },
     createContext: () => context,
-    createHost: async (request) => { hostDocument = request.document; return host; },
+    createHost: async (request) => {
+      assert.equal("preparedModule" in request, false, "custom shape-only scratch remains compatible");
+      hostDocument = request.document; hostPolicy = request.options; return host;
+    },
     createAttachNode: () => ({
       port: { postMessage(message: unknown) {
         const value = message as { op: string; rings?: SharedArrayBuffer[] };
@@ -360,6 +381,9 @@ test("session snapshots document and source declarations before deferred scratch
   });
   await scratchStarted.promise;
   document.fill(0x78);
+  policy.sourceRingFrames = 99;
+  policy.console.commandQueueRecords = 99;
+  policy.console.meterBlocks = 99;
   const mutable = originalSources[0]! as any;
   mutable.id = "mutated";
   mutable.spec.channels = 2;
@@ -370,6 +394,10 @@ test("session snapshots document and source declarations before deferred scratch
   const session = await opening;
   assert.deepEqual(scratchDocument, snapshot, "scratch sees owned document snapshot A");
   assert.deepEqual(hostDocument, snapshot, "createEngine host sees the same document snapshot A");
+  assert.deepEqual(scratchPolicy, { sourceRingFrames: 16, requireSampleRateHz: 0, requireQuantumFrames: 0,
+    console: { commandQueueRecords: 8, meterBlocks: 2 } });
+  assert.deepEqual(hostPolicy, { sourceRingFrames: 16, requireSampleRateHz: 48_000, requireQuantumFrames: 4,
+    console: { commandQueueRecords: 8, meterBlocks: 2 } });
   assert.deepEqual(storeStem, { sourceId: "source", identity: IDENTITY, bytes: 8 });
   assert.deepEqual(session.shape.sources, [{ id: "source", channels: 1, frames: 4n }]);
   await session.close();
@@ -1018,15 +1046,17 @@ class ValidationWorker extends EventTarget {
 
 class ScratchWorker extends EventTarget {
   #terminated = false;
+  readonly module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
   constructor(readonly events: string[]) {
     super();
     queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: { type: "worker-ready" } })));
   }
   postMessage(message: { type?: string; requestId?: number }) {
-    if (message.type !== "scratch") return;
+    if (message.type !== "scratch" && message.type !== "prepare") return;
     this.events.push("scratch");
     queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: {
       type: "scratch-result", requestId: message.requestId, ok: true,
+      ...(message.type === "prepare" ? { module: this.module } : {}),
       shape: {
         sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
         sources: [{ id: "source", channels: 1, frames: 4n }, { id: "source-z", channels: 1, frames: 4n }], tracks: [],
@@ -1039,9 +1069,9 @@ class ScratchWorker extends EventTarget {
 }
 
 test("delegated scratch deadlines use typed adapter translation and terminate", async () => {
-  for (const ready of [false, true]) {
+  for (const boot of [scratchBootWithWorker, prepareBrowserSessionWithWorker]) for (const ready of [false, true]) {
     const worker = new FailingWorker();
-    const pending = scratchBootWithWorker({ document: new Uint8Array(), options: {}, moduleUrl: "chosen-wasm",
+    const pending = boot({ document: new Uint8Array(), options: {}, moduleUrl: "chosen-wasm",
       requestDeadlineMs: 5, assets: { createWorker: () => worker as unknown as Worker } });
     if (ready) worker.dispatchEvent(new MessageEvent("message", { data: { type: "worker-ready" } }));
     await assert.rejects(pending, (error: unknown) => error instanceof EngineWebAdapterError
@@ -1052,11 +1082,12 @@ test("delegated scratch deadlines use typed adapter translation and terminate", 
 });
 
 test("delegated scratch retains caller Worker URL, Wasm URL and abort reason", async () => {
+  for (const boot of [scratchBootWithWorker, prepareBrowserSessionWithWorker]) {
   const worker = new FailingWorker(); const controller = new AbortController();
   const workerUrl = new URL("https://caller.invalid/scratch.js");
   let received: unknown;
   worker.postMessage = (request?: unknown) => { received = request; };
-  const opening = scratchBootWithWorker({ document: new Uint8Array([7]), options: {}, moduleUrl: "chosen-wasm",
+  const opening = boot({ document: new Uint8Array([7]), options: {}, moduleUrl: "chosen-wasm",
     signal: controller.signal, assets: { scratchWorkerUrl: workerUrl, createWorker(url, options) {
       assert.equal(url, workerUrl); assert.deepEqual(options, { type: "module" }); return worker as unknown as Worker;
     } } });
@@ -1065,6 +1096,7 @@ test("delegated scratch retains caller Worker URL, Wasm URL and abort reason", a
   const reason = new Error("caller stopped"); controller.abort(reason);
   await assert.rejects(opening, (error: unknown) => error === reason);
   assert.equal(worker.terminated, true);
+  }
 });
 
 test("SDK host defaults wait for verified lease, forward URLs and install the SDK feed first", async () => {
