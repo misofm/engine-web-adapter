@@ -172,6 +172,11 @@ try {
   assert.equal(result.error, undefined, JSON.stringify({ error: result.error, consoleErrors, requests: [...requests.entries()] }));
   assert.ok(result.result?.coldLocatorCalls > 0, "cold FLAC open must locate exact ranges");
   assert.equal(result.result?.warmLocatorCalls, result.result?.coldLocatorCalls, "warm open must make zero locator calls");
+  assert.ok(result.result?.coldProcessing.hashMs > 0, "cold digest must run in the packaged decoder Worker");
+  assert.equal(result.result?.coldProcessing.runnablePeak, 1);
+  assert.equal(result.result?.coldProcessing.workers.active, 0);
+  assert.equal(result.result?.warmProcessing.workers.count, 0);
+  assert.equal(result.result?.warmProcessing.downloads.count, 0);
   assert.equal(result.result?.coldFlacWorkers, 1, "cold open must construct one FLAC Worker");
   assert.equal(result.result?.warmFlacWorkers, result.result?.coldFlacWorkers, "warm open must construct zero FLAC Workers");
   assert.equal(result.result?.warmNetworkRequests, result.result?.coldNetworkRequests, "warm open must make zero network requests");
@@ -263,7 +268,7 @@ function resolveChromeExecutable() {
 
 function browserSource(profile) { return String.raw`
 import { session } from "@misofm/engine";
-import { openEngineWebSession } from "@misofm/engine-web-adapter";
+import { createIngestDiagnostics, openEngineWebSession } from "@misofm/engine-web-adapter";
 import { MSB1_CONTROL, PcmPumpWorkerClient } from "@misofm/engine-web-adapter/stems";
 import { ADAPTER_ASSETS } from "@misofm/engine-web-adapter/assets";
 
@@ -312,7 +317,7 @@ let rings: readonly SharedArrayBuffer[] = [];
 async function open(overrides: Record<string, unknown> = {}) {
   return openEngineWebSession({
     document,
-    flac: { locate(requested) {
+    flac: { ...(overrides.leaseId === "cold" || overrides.leaseId === "warm" ? { processing: { maximumWorkers: 16 } } : {}), locate(requested) {
       if (requested !== identity) throw new Error("unexpected identity");
       locatorCalls += 1;
       return assetUrl;
@@ -469,7 +474,9 @@ async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
   } finally { await engine.close(); }
 }
 try {
-  const cold = await open({ leaseId: "cold" });
+  const coldIngest = createIngestDiagnostics();
+  const warmIngest = createIngestDiagnostics();
+  const cold = await open({ leaseId: "cold", ingestDiagnostics: coldIngest });
   const initialDiagnostics = cold.feedDiagnostics();
   const sourceObservation = cold.observeSource(source.id);
   const observedChunks = sourceObservation.pull((chunk) => {
@@ -497,7 +504,7 @@ try {
   const coldLocatorCalls = locatorCalls;
   const coldFlacWorkers = flacWorkers;
   const coldNetworkRequests = networkRequests;
-  const warm = await open({ leaseId: "warm" });
+  const warm = await open({ leaseId: "warm", ingestDiagnostics: warmIngest });
   await warm.play(); await new Promise((resolve) => setTimeout(resolve, 50));
   const consoleFirst = await exerciseControl(warm, true);
   await warm.pause(); await warm.close();
@@ -518,6 +525,7 @@ try {
   await playbackOnly.close();
   const seekProofs = [await exercisePausedSeek("initial"), await exercisePausedSeek("resumed"), await exercisePausedSeek("running")];
   globalThis.__result = {
+    coldProcessing: coldIngest.snapshot().processing, warmProcessing: warmIngest.snapshot().processing,
     coldLocatorCalls, warmLocatorCalls: locatorCalls,
     coldFlacWorkers, warmFlacWorkers: flacWorkers,
     coldNetworkRequests, warmNetworkRequests: networkRequests,

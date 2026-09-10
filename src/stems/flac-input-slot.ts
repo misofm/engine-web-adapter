@@ -69,8 +69,10 @@ export class FlacInputSlotConsumer {
   readonly #bytes: Uint8Array;
   readonly #requestRefill: () => void;
   #refillRequested = false;
+  readonly #onWait: ((waiting: boolean) => void) | undefined;
 
-  constructor(buffers: FlacInputSlotBuffers, requestRefill: () => void) {
+  constructor(buffers: FlacInputSlotBuffers, requestRefill: () => void, onWait?: (waiting: boolean) => void) {
+    this.#onWait = onWait;
     ({ control: this.#control, bytes: this.#bytes } = views(buffers));
     this.#requestRefill = requestRefill;
   }
@@ -86,7 +88,9 @@ export class FlacInputSlotConsumer {
           this.#refillRequested = true;
           this.#requestRefill();
         }
-        Atomics.wait(this.#control, STATE, EMPTY);
+        this.#onWait?.(true);
+        try { Atomics.wait(this.#control, STATE, EMPTY); }
+        finally { this.#onWait?.(false); }
         continue;
       }
       if (state !== FULL) throw new Error("FLAC input slot has an invalid state");

@@ -356,7 +356,8 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
       }
       const oldCreated = phase === "handshake" ? 1 : phase === "open" ? 2 : 1 + count * 2;
       assert.equal(getEventListeners(oldLifetime.signal, "abort").length, count, phase);
-      assert.equal(created, oldCreated, phase);
+      const refreshedTimers = phase === "shared" ? 1 : 0;
+      assert.equal(created, oldCreated + refreshedTimers, phase);
       assert.equal(timers.size, phase === "handshake" ? 1 : count, phase);
       if (phase === "close") client.close();
       else {
@@ -412,7 +413,7 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
       assert.equal(getEventListeners(freshLifetime.signal, "abort").length, 1, phase);
       assert.equal(unsettled, 0, phase);
       assert.equal(timers.size, 0, phase);
-      assert.equal(created, oldCreated + 2, phase);
+      assert.equal(created, oldCreated + refreshedTimers + 2, phase);
       assert.equal(cleared, created, phase);
       assert.equal(fired, phase === "close" ? 0 : 1, phase);
       assert.equal(settlements, (writers.length ? count * 2 : count) + 1, phase);
@@ -424,7 +425,7 @@ for (const phase of ["handshake", "open", "write", "shared", "close"] as const) 
       assert.equal(getEventListeners(freshLifetime.signal, "abort").length, 0, phase);
       assert.deepEqual(second.counts(), [0, 0, 0], phase);
       assert.equal(second.messages.length, 2, phase);
-      assert.equal(created, oldCreated + 3, phase);
+      assert.equal(created, oldCreated + refreshedTimers + 3, phase);
       assert.equal(cleared, created, phase);
       assert.equal(unsettled + timers.size, 0, phase);
     } finally {
@@ -920,4 +921,38 @@ test("idleGraceMs must be a non-negative finite number", () => {
   assert.throws(() => new OpfsWriteWorkerClient({ idleGraceMs: -1 }), RangeError);
   assert.throws(() => new OpfsWriteWorkerClient({ idleGraceMs: Number.NaN }), RangeError);
   assert.throws(() => new OpfsWriteWorkerClient({ idleGraceMs: Number.POSITIVE_INFINITY }), RangeError);
+});
+
+test("healthy queued OPFS writes outlive a request deadline while started stalled writes still fail closed", async () => {
+  const harness = historicalWorkerHarness({ ready: true });
+  const client = new OpfsWriteWorkerClient({ deadlineMs: 60, idleGraceMs: 0, createWorker: () => harness.worker });
+  const opening = Promise.all(Array.from({ length: 8 }, (_, index) => client.createWriter("folder", `queued-${index}`)));
+  while (harness.messages.length < 8) await new Promise<void>(resolve => setImmediate(resolve));
+  for (const message of harness.messages.splice(0)) harness.emit({ type: "opfs-ok", requestId: message.requestId });
+  const writers = await opening;
+  const writing = Promise.all(writers.map(writer => writer.write(new Uint8Array([1]))));
+  const requests = harness.messages.splice(0);
+  const start = performance.now();
+  for (const request of requests) {
+    harness.emit({ type: "opfs-started", requestId: request.requestId });
+    await new Promise<void>(resolve => setTimeout(resolve, 15));
+    harness.emit({ type: "opfs-ok", requestId: request.requestId });
+  }
+  await writing;
+  assert.ok(performance.now() - start > 60);
+  assert.equal(harness.terminations, 0);
+  const stalled = assert.rejects(writers[0]!.write(new Uint8Array([2])));
+  const first = harness.messages.shift()!;
+  harness.emit({ type: "opfs-started", requestId: first.requestId });
+  for (let index = 0; index < 2; index++) {
+    const healthy = writers[index + 1]!.write(new Uint8Array([3]));
+    const request = harness.messages.shift()!;
+    await new Promise<void>(resolve => setTimeout(resolve, 15));
+    harness.emit({ type: "opfs-started", requestId: request.requestId });
+    harness.emit({ type: "opfs-ok", requestId: request.requestId });
+    await healthy;
+  }
+  await stalled;
+  assert.equal(harness.terminations, 1);
+  assert.equal(client.workersActive, 0);
 });

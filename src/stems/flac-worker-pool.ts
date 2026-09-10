@@ -1,10 +1,11 @@
 import { createFlacWorker, type AdapterAssetOverrides } from "../assets.js";
-import { BoundedStemAdmission, defaultFlacMemoryBudgetBytes, flacAdmissionWidth } from "./flac-admission.js";
+import { BoundedStemAdmission, flacPipelineWidths, type FlacProcessingOptions } from "./flac-admission.js";
 import type { StemProgress } from "./types.js";
 import type { FlacWorkerLike } from "./flac-worker-protocol.js";
 
 export interface FlacWorkerPoolOptions {
   readonly admission?: BoundedStemAdmission;
+  readonly processing?: FlacProcessingOptions;
   readonly assets?: AdapterAssetOverrides;
   readonly createWorker?: () => FlacWorkerLike;
   readonly hardwareConcurrency?: number;
@@ -19,15 +20,7 @@ export class FlacWorkerPool {
   readonly #createWorker: () => FlacWorkerLike;
 
   constructor(options: FlacWorkerPoolOptions = {}) {
-    const navigatorHints = typeof navigator === "undefined"
-      ? undefined
-      : navigator as Navigator & { readonly deviceMemory?: number };
-    const hardwareConcurrency = options.hardwareConcurrency ?? navigatorHints?.hardwareConcurrency;
-    this.#admission = options.admission ?? new BoundedStemAdmission(flacAdmissionWidth({
-      ...(hardwareConcurrency === undefined ? {} : { hardwareConcurrency }),
-      memoryBudgetBytes: options.memoryBudgetBytes ?? defaultFlacMemoryBudgetBytes(options.deviceMemory ?? navigatorHints?.deviceMemory),
-      ...(options.maximumWorkers === undefined ? {} : { maximum: options.maximumWorkers }),
-    }));
+    this.#admission = options.admission ?? new BoundedStemAdmission(flacPipelineWidths(options).processing);
     this.#createWorker = options.createWorker ?? (() => createFlacWorker(options.assets) as unknown as FlacWorkerLike);
   }
 
@@ -37,6 +30,7 @@ export class FlacWorkerPool {
     readonly signal?: AbortSignal;
     readonly onProgress?: (progress: StemProgress) => void;
     readonly work: (worker: FlacWorkerLike) => Promise<T>;
+    readonly onTerminated?: () => void;
   }): Promise<T> {
     if (this.stats.active >= this.stats.limit) {
       options.onProgress?.({
@@ -53,7 +47,9 @@ export class FlacWorkerPool {
       worker = this.#createWorker();
       return await options.work(worker);
     } finally {
-      try { worker?.terminate(); } finally { lease.release(); }
+      try { worker?.terminate(); } finally {
+        try { options.onTerminated?.(); } finally { lease.release(); }
+      }
     }
   }
 }

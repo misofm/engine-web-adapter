@@ -41,6 +41,7 @@ export class NativeFlacDecoder {
     readonly url: string;
     readonly inputSlot: FlacInputSlotBuffers;
     readonly requestRefill: () => void;
+    readonly onInputWait?: (waiting: boolean) => void;
   }): Promise<NativeFlacDecoder> {
     let response: Response;
     try { response = await fetch(options.url); }
@@ -48,7 +49,7 @@ export class NativeFlacDecoder {
     if (!response.ok) throw decoderError("stem.decode.asset", `FLAC decoder asset returned HTTP ${response.status}`, { phase: "decoder-load", status: response.status });
     const mime = (response.headers.get("content-type") ?? "").split(";", 1)[0]!.trim().toLowerCase();
     if (mime !== "application/wasm") throw decoderError("stem.decode.asset", "FLAC decoder asset has the wrong MIME type", { phase: "decoder-load", mime });
-    const consumer = new FlacInputSlotConsumer(options.inputSlot, options.requestRefill);
+    const consumer = new FlacInputSlotConsumer(options.inputSlot, options.requestRefill, options.onInputWait);
     let instance: WebAssembly.Instance | undefined;
     let module: WebAssembly.Module;
     try { module = await WebAssembly.compileStreaming(Promise.resolve(response)); }

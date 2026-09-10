@@ -21,4 +21,4 @@ export type {
 } from "./session-types.js";
 
 export { createIngestDiagnostics } from "./stems/ingest-diagnostics.js";
-export type { IngestDiagnostics, IngestResidency, IngestReservation } from "./stems/ingest-diagnostics.js";
+export type { IngestDiagnostics, IngestResidency, IngestReservation, IngestProcessing, IngestStage } from "./stems/ingest-diagnostics.js";

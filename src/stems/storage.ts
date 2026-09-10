@@ -56,6 +56,8 @@ export interface StorageManagerLike {
  * `createSyncAccessHandle()` is the only write API every target engine ships
  * and its handle is synchronous, so it cannot be created on the main thread.
  */
+const opfsWriteDeadlines = new WeakMap<StemStorageBackend, number>();
+
 export class OpfsStorageBackend implements StemStorageBackend {
   readonly #folderName: string;
   readonly #storage: StorageManagerLike | undefined;
@@ -77,6 +79,7 @@ export class OpfsStorageBackend implements StemStorageBackend {
     }
     this.#storage = options.storage ?? browserStorage();
     this.#readDeadlineMs = options.readDeadlineMs ?? 15_000;
+    opfsWriteDeadlines.set(this, this.#readDeadlineMs);
     this.#writes = new OpfsWriteWorkerClient({
       ...(options.assets === undefined ? {} : { assets: options.assets }),
       ...(options.createWorker === undefined ? {} : { createWorker: options.createWorker }),
@@ -292,4 +295,11 @@ function concat(chunks: readonly Uint8Array[]): Uint8Array {
   let offset = 0;
   for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength; }
   return output;
+}
+
+/** Only the unmodified package backend can replace the store's write watchdog. */
+export function ownsOpfsWriteDeadlines(backend: StemStorageBackend, storeDeadlineMs: number): boolean {
+  return Object.getPrototypeOf(backend) === OpfsStorageBackend.prototype &&
+    backend.createWriter === OpfsStorageBackend.prototype.createWriter &&
+    (opfsWriteDeadlines.get(backend) ?? Infinity) <= storeDeadlineMs;
 }

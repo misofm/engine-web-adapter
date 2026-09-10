@@ -33,6 +33,7 @@ scope.onmessage = (event) => {
   const prior = chains.get(request.writerId) ?? Promise.resolve();
   const next = prior.then(async () => {
     try {
+      scope.postMessage({ type: "opfs-started", requestId: request.requestId });
       await apply(request);
       scope.postMessage({ type: "opfs-ok", requestId: request.requestId });
     } catch (error) {

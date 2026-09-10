@@ -9,7 +9,8 @@ import type { StemStorageWriter } from "./storage.js";
 interface Pending {
   resolve(): void;
   reject(reason: unknown): void;
-  readonly timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout>;
+  started: boolean;
 }
 
 /**
@@ -288,7 +289,7 @@ export class OpfsWriteWorkerClient {
         if (!this.#pending.has(message.requestId)) return;
         this.#fail(new DOMException("Stem read deadline exceeded", "TimeoutError"));
       }, this.#deadlineMs);
-      this.#pending.set(message.requestId, { resolve, reject, timer });
+      this.#pending.set(message.requestId, { resolve, reject, timer, started: false });
       try { worker.postMessage(message); }
       catch (error) {
         clearTimeout(timer);
@@ -304,6 +305,17 @@ export class OpfsWriteWorkerClient {
     if (message.type === "worker-ready") return;
     const pending = this.#pending.get(message.requestId);
     if (pending === undefined) return;
+    // The worker sends started from its actual execution turn. Healthy replies
+    // keep queued requests alive, while every started operation keeps its own
+    // strict deadline even when other files are still making progress.
+    for (const [requestId, entry] of this.#pending) {
+      if (entry.started || (requestId === message.requestId && message.type !== "opfs-started")) continue;
+      clearTimeout(entry.timer);
+      entry.timer = setTimeout(() => {
+        if (this.#pending.has(requestId)) this.#fail(new DOMException("Stem read deadline exceeded", "TimeoutError"));
+      }, this.#deadlineMs);
+    }
+    if (message.type === "opfs-started") { pending.started = true; return; }
     this.#pending.delete(message.requestId);
     clearTimeout(pending.timer);
     if (message.type === "opfs-ok") { pending.resolve(); return; }

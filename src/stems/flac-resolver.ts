@@ -1,8 +1,9 @@
-import { deliveredRangeOwner, registerFlacResolver, releaseDecoded, retainDecoded, type IngestDiagnostics } from "./ingest-diagnostics.js";
+import { beginIngestStage, ownRunnableWorker, configureProcessingDiagnostics, recordWorkerProcessing, deliveredRangeOwner, registerFlacResolver, releaseDecoded, retainDecoded, type IngestDiagnostics } from "./ingest-diagnostics.js";
 import { MAXIMUM_CANONICAL_OUTPUT_BYTES } from "./native-flac-decoder.js";
 import { EngineWebAdapterError } from "../errors.js";
 import { ADAPTER_ASSETS, type AdapterAssetOverrides } from "../assets.js";
-import type { BoundedStemAdmission } from "./flac-admission.js";
+import { BoundedStemAdmission, flacPipelineWidths, type FlacProcessingOptions } from "./flac-admission.js";
+import { registerFlacResult } from "./flac-result.js";
 import { assertStemIdentity } from "./identity.js";
 import { readExactFlacRange, type FlacLocator } from "./flac-delivery.js";
 import { FLAC_INPUT_SLOT_BYTES, FlacInputSlotProducer } from "./flac-input-slot.js";
@@ -17,8 +18,10 @@ import type { ResolvedStem, StemIdentity, StemProgress, StemResolver } from "./t
 
 export interface FlacDeliveryOptions {
   readonly locate: FlacLocator;
-  /** Optional shared admission used to bound both decode and cache verification. */
+  /** Legacy shared admission, or bounded processing admission with an explicit processing policy. */
   readonly admission?: BoundedStemAdmission;
+  /** Opt in to independent, device-aware decode and hashing (up to 16 workers). */
+  readonly processing?: FlacProcessingOptions;
   /**
    * The transport every physical range attempt runs through.
    *
@@ -51,16 +54,36 @@ function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): E
 
 /** Create the advanced low-level native-FLAC resolver used by session integration. */
 export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolver {
-  return makeFlacStemResolver(options);
+  // Worker construction is lazy. Snapshot policy and every asset URL now so a
+  // caller cannot change the factory after package-owned digest trust is set.
+  const assets = options.assets === undefined ? undefined : Object.fromEntries(
+    (["scratchWorkerUrl", "flacWorkerUrl", "flacDecoderWasmUrl", "opfsWorkerUrl", "pumpWorkerUrl",
+      "feedWorkletModuleUrl", "engineWasmUrl", "engineWorkletModuleUrl", "engineHostModuleUrl", "createWorker"] as const)
+      .map(key => [key, options.assets![key]] as const).filter(([, value]) => value !== undefined)
+      .map(([key, value]) => [key, key === "createWorker" && typeof value === "function"
+        ? value.bind(options.assets) : value instanceof URL ? String(value) : value]),
+  ) as AdapterAssetOverrides;
+  return makeFlacStemResolver({ ...options,
+    ...(assets === undefined ? {} : { assets }),
+    ...(options.processing === undefined ? {} : { processing: { ...options.processing } }),
+  });
 }
 
-function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: IngestDiagnostics, sharedPool?: FlacWorkerPool): StemResolver {
+function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: IngestDiagnostics, sharedPool?: FlacWorkerPool, sharedDownloads?: BoundedStemAdmission, sharedVerification?: BoundedStemAdmission): StemResolver {
   if (typeof options.locate !== "function") throw new TypeError("createFlacStemResolver requires locate");
   const decodeNoProgressMs = options.decodeNoProgressMs ?? 30_000;
   if (!Number.isSafeInteger(decodeNoProgressMs) || decodeNoProgressMs < 1) {
     throw new RangeError("decodeNoProgressMs must be positive");
   }
+  const widths = flacPipelineWidths(options);
+  const downloads = sharedDownloads ?? new BoundedStemAdmission(widths.downloads);
+  const verification = sharedVerification ?? new BoundedStemAdmission(widths.verification);
+  configureProcessingDiagnostics(diagnostics, widths);
+  const workerHashes = options.processing !== undefined && options.createWorker === undefined &&
+    options.assets?.createWorker === undefined && options.assets?.flacWorkerUrl === undefined &&
+    options.assets?.flacDecoderWasmUrl === undefined;
   const poolOptions: FlacWorkerPoolOptions = {
+    ...(options.processing === undefined ? {} : { processing: options.processing }),
     ...(options.admission === undefined ? {} : { admission: options.admission }),
     ...(options.assets === undefined ? {} : { assets: options.assets }),
     ...(options.createWorker === undefined ? {} : { createWorker: options.createWorker }),
@@ -79,6 +102,9 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
       let decoderInput: FlacInputSlotProducer | undefined;
       let ended = false;
       let failure: unknown;
+      let verifiedDigest: string | undefined;
+      let resumeConsumer: (() => void) | undefined;
+      let runnable: ReturnType<typeof ownRunnableWorker>;
       const blocks: ArrayBuffer[] = [];
       const retainRange = deliveredRangeOwner(diagnostics);
       const discardBlocks = () => {
@@ -107,26 +133,37 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
 
       const workflow = pool.run({
         signal: controller.signal,
+        onTerminated: () => { runnable?.release(); runnable = undefined; },
         ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
         work: (physical) => new Promise<void>((resolve, reject) => {
+          const finishWorker = beginIngestStage(diagnostics, "workers");
+          runnable = ownRunnableWorker(diagnostics);
           worker = physical;
           decoderInput = new FlacInputSlotProducer();
           let stopping = false;
           let offset = 0;
           let totalBytes: number | undefined;
           let decodedBytes = 0;
+          let decodedFrames = 0;
+          let expectedFrames = 0;
+          let totalPcmBytes = 0;
+          let networkPending = 0;
           const deliveryState: { totalBytes?: number; etag?: string } = {};
           let inputTail = Promise.resolve();
           let watchdog: ReturnType<typeof setTimeout> | undefined;
           const resetWatchdog = (phase: "decoder-load" | "metadata" | "frame" | "finish") => {
-            if (stopping) return;
             if (watchdog !== undefined) clearTimeout(watchdog);
+            watchdog = undefined;
+            if (stopping || networkPending > 0 || blocks.length >= 2) return;
             watchdog = setTimeout(() => stop(new EngineWebAdapterError(
               "stem.decode.stall", `FLAC decoder made no progress for ${decodeNoProgressMs}ms`,
               { identity, phase, milliseconds: decodeNoProgressMs, retryable: false },
             ), true), decodeNoProgressMs);
           };
+          resumeConsumer = () => resetWatchdog("frame");
           const cleanup = () => {
+            finishWorker();
+            resumeConsumer = undefined;
             if (watchdog !== undefined) clearTimeout(watchdog);
             physical.removeEventListener("message", onMessage);
             physical.removeEventListener("error", onWorkerFailure);
@@ -158,16 +195,24 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             new EngineWebAdapterError("stem.decode.worker", "FLAC Worker reply could not be cloned"),
             false,
           );
-          const range = (phase: "probe" | "metadata" | "audio", start: number, end: number) => readExactFlacRange({
+          const range = (phase: "probe" | "metadata" | "audio", start: number, end: number) => {
+            networkPending += 1;
+            resetWatchdog("frame");
+            return readExactFlacRange({
             locate: options.locate,
             ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
             ...(options.readDeadlineMs === undefined ? {} : { readDeadlineMs: options.readDeadlineMs }),
             ...(options.maximumAttempts === undefined ? {} : { maximumAttempts: options.maximumAttempts }),
             identity, phase, start, end, signal: controller.signal, state: deliveryState,
-            retainRange,
+            retainRange, downloadAdmission: downloads,
+            ...(diagnostics === undefined ? {} : { diagnostics }),
             ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
             onActivity: () => resetWatchdog(phase === "audio" ? "frame" : phase === "metadata" ? "metadata" : "decoder-load"),
-          });
+            }).finally(() => {
+              networkPending -= 1;
+              resetWatchdog(phase === "audio" ? "frame" : "metadata");
+            });
+          };
           const prepare = async () => {
             const parsed = await (async () => {
               const probe = await range("probe", 0, NATIVE_FLAC_STREAMINFO_PROBE_BYTES - 1);
@@ -184,11 +229,11 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               finally { header.release(); }
             }
             if (totalBytes === undefined || offset >= totalBytes) throw new EngineWebAdapterError("stem.flac.invalid", "FLAC has no compressed audio suffix");
-            const expectedFrames = resolveOptions.expected?.frames ?? parsed.streamInfo.totalSamples;
+            expectedFrames = resolveOptions.expected?.frames ?? parsed.streamInfo.totalSamples;
             if (expectedFrames === 0) {
               throw new EngineWebAdapterError("stem.flac.shape", "Unknown FLAC total samples require a compiled source declaration");
             }
-            const totalPcmBytes = resolveOptions.expected?.canonicalBytes ??
+            totalPcmBytes = resolveOptions.expected?.canonicalBytes ??
               expectedFrames * parsed.streamInfo.channels * (parsed.streamInfo.bitDepth / 8);
             physical.postMessage({
               type: "initialize", requestId, streamInfo: parsed.streamInfo, expectedFrames, totalPcmBytes,
@@ -232,6 +277,9 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               retainDecoded(diagnostics, message.bytes);
               blocks.push(message.bytes);
               decodedBytes += message.bytes.byteLength;
+              decodedFrames += message.frames;
+              if (message.metrics !== undefined) recordWorkerProcessing(diagnostics, message.metrics);
+              resetWatchdog("frame");
               resolveOptions.onProgress?.({
                 stage: "decoding", identity, bytes: decodedBytes,
                 totalBytes: message.totalPcmBytes,
@@ -239,6 +287,14 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               });
               notify();
             } else if (message.type === "complete") {
+              if (message.pcmBytes !== decodedBytes || message.frames !== decodedFrames ||
+                (options.processing !== undefined && (decodedBytes !== totalPcmBytes || decodedFrames !== expectedFrames)) ||
+                (workerHashes && (message.digest !== identity.slice(7) || !/^[a-f0-9]{64}$/u.test(message.digest)))) {
+                stop(new EngineWebAdapterError("stem.corrupt", "FLAC Worker completion does not verify canonical PCM", { identity }), true);
+                return;
+              }
+              if (message.metrics !== undefined) recordWorkerProcessing(diagnostics, message.metrics);
+              if (workerHashes) verifiedDigest = message.digest;
               stop(undefined, false, true);
             } else if (message.type === "error") {
               stop(workerError(message), false);
@@ -253,6 +309,8 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               type: "start", requestId, identity,
               decoderWasmUrl: String(options.assets?.flacDecoderWasmUrl ?? ADAPTER_ASSETS.flacDecoderWasm),
               inputSlot: decoderInput!.buffers,
+              verifyPcm: workerHashes,
+              ...(runnable === undefined ? {} : { runnable: runnable.buffer, runnableMask: runnable.mask }),
               ...(resolveOptions.expected === undefined ? {} : { expected: resolveOptions.expected }),
             });
           } catch (error) { stop(error, false); }
@@ -280,6 +338,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
                 streamController.enqueue(new Uint8Array(block));
               } catch (error) { releaseDecoded(block); throw error; }
               worker?.postMessage({ type: "output-credit", requestId });
+              resumeConsumer?.();
               return;
             }
             if (failure !== undefined) throw failure;
@@ -288,12 +347,15 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           }
         },
       }, { highWaterMark: 0 });
-      return Promise.resolve({
+      const resolved: ResolvedStem = {
         stream,
         ...(resolveOptions.expected === undefined ? {} : { canonicalBytes: resolveOptions.expected.canonicalBytes }),
-      });
+      };
+      registerFlacResult(resolved, workerHashes ? () => verifiedDigest : undefined);
+      return Promise.resolve(resolved);
     },
   };
-  registerFlacResolver(resolver, collector => makeFlacStemResolver(options, collector, pool));
+  registerFlacResolver(resolver, collector => makeFlacStemResolver(options, collector, pool, downloads, verification),
+    options.processing === undefined ? undefined : { limit: widths.processing, verification });
   return resolver;
 }

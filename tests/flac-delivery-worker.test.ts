@@ -779,3 +779,111 @@ test("synchronous probe-completion cancellation releases the range before any re
   assert.equal(worker.posted.some(message => message.type === "initialize"), false);
   assert.equal([...backend.files.keys()].some(name => name.startsWith("staging-") || name.startsWith("sha256-")), false);
 });
+
+test("eight processing slots make progress beyond the store deadline while queued behind two downloads", async () => {
+  const source = singleFrameFlac();
+  putU64(source, 18, (44_100n << 44n) | (1n << 41n) | (15n << 36n) | 1n);
+  const pcms = Array.from({ length: 12 }, (_, index) => new Uint8Array([9, 8, 7, index]));
+  const stems = pcms.map((pcm, index) => ({ sourceId: String(index), bytes: 4,
+    identity: `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const }));
+  const lookup = new Map(stems.map((stem, index) => [stem.identity, pcms[index]!]));
+  class DistinctWorker extends FakeWorker {
+    identity = IDENTITY as string;
+    override postMessage(message: FlacWorkerRequest): void {
+      if (message.type === "start") this.identity = message.identity;
+      super.postMessage(message);
+    }
+    override emit(message: FlacWorkerResponse): void {
+      if (message.type === "pcm") message = { ...message, bytes: lookup.get(this.identity as typeof IDENTITY)!.slice().buffer };
+      super.emit(message);
+    }
+  }
+  const admission = new BoundedStemAdmission(8);
+  let activeBodies = 0;
+  let bodyPeak = 0;
+  const resolver = createFlacStemResolver({
+    admission, hardwareConcurrency: 32, deviceMemory: 8, memoryBudgetBytes: 16 * 1024 * 1024,
+    processing: { maximumWorkers: 8 }, createWorker: () => new DistinctWorker(),
+    decodeNoProgressMs: 20, readDeadlineMs: 200, maximumAttempts: 1,
+    locate: () => "https://caller.invalid/queued",
+    fetch: async (_input, init) => {
+      const match = /^bytes=(\d+)-(\d+)$/u.exec(new Headers(init?.headers).get("range")!)!;
+      const start = Number(match[1]); const end = Number(match[2]);
+      activeBodies += 1; bodyPeak = Math.max(bodyPeak, activeBodies);
+      return new Response(new ReadableStream({ start(controller) {
+        setTimeout(() => { activeBodies -= 1; controller.enqueue(source.slice(start, end + 1)); controller.close(); }, 30);
+      } }), { status: 206, headers: { "Content-Range": `bytes ${start}-${end}/${source.length}`, "Content-Length": String(end - start + 1) } });
+    },
+  });
+  const diagnostics = createIngestDiagnostics();
+  const store = new VerifiedStemStore({ backend: new MemoryStemStorageBackend(), readDeadlineMs: 20 });
+  const lease = await store.openSession({ leaseId: "eight", stems: stems.slice(0, 8), resolver, ingestDiagnostics: diagnostics });
+  assert.equal(bodyPeak, 2);
+  assert.equal(diagnostics.snapshot().processing!.workers.peak, 8);
+  assert.equal(diagnostics.snapshot().processing!.downloads.peak, 2);
+  assert.ok(diagnostics.snapshot().processing!.downloadQueue.milliseconds > 20);
+  for (let index = 0; index < 8; index++) assert.deepEqual(new Uint8Array(await (await lease.read(stems[index]!.identity)).arrayBuffer()), pcms[index]);
+  await lease.close();
+  assert.equal(diagnostics.snapshot().residency!.decodedBytes, 0);
+  assert.equal(diagnostics.snapshot().processing!.downloads.active, 0);
+  assert.equal(diagnostics.snapshot().processing!.downloadQueue.active, 0);
+  assert.equal(diagnostics.snapshot().processing!.workers.active, 0);
+  const mixedDiagnostics = createIngestDiagnostics();
+  const mixed = await store.openSession({ leaseId: "mixed", stems: [...stems.slice(0, 4), ...stems.slice(8)], resolver,
+    ingestDiagnostics: mixedDiagnostics });
+  assert.equal(mixedDiagnostics.snapshot().processing!.workers.count, 4, "only uncached members decode");
+  assert.ok(mixedDiagnostics.snapshot().processing!.verification.peak <= 2);
+  for (const index of [0, 1, 2, 3, 8, 9, 10, 11]) assert.deepEqual(new Uint8Array(await (await mixed.read(stems[index]!.identity)).arrayBuffer()), pcms[index]);
+  await mixed.close();
+  assert.equal(mixedDiagnostics.snapshot().processing!.workers.active, 0);
+  assert.equal(mixedDiagnostics.snapshot().processing!.verification.active, 0);
+});
+
+test("custom Worker digest claims cannot bypass canonical store hashing and completion checks", async () => {
+  const source = singleFrameFlac();
+  putU64(source, 18, (44_100n << 44n) | (1n << 41n) | (15n << 36n) | 1n);
+  const pcm = new Uint8Array([9, 8, 7, 6]);
+  const identity = `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const;
+  for (const problem of ["mutated-output", "early-complete", "wrong-count", "cancel-before-promotion"] as const) {
+    class ForgingWorker extends FakeWorker {
+      override emit(message: FlacWorkerResponse): void {
+        if (message.type === "pcm" && problem === "early-complete") return;
+        if (message.type === "pcm" && problem === "mutated-output") new Uint8Array(message.bytes)[0] = 0;
+        if (message.type === "complete") message = { ...message, digest: identity.slice(7),
+          ...(problem === "wrong-count" ? { pcmBytes: 3 } : {}) };
+        super.emit(message);
+      }
+    }
+    const backend = new MemoryStemStorageBackend();
+    const abort = new AbortController();
+    const resolver = createFlacStemResolver({ hardwareConcurrency: 2, processing: {}, createWorker: () => new ForgingWorker(),
+      locate: () => "https://caller.invalid/forged",
+      fetch: responseFetch(request => { const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+        return exactResponse(source, Number(match[1]), Number(match[2])); }),
+    });
+    await assert.rejects(new VerifiedStemStore({ backend }).openSession({
+      leaseId: problem, stems: [{ sourceId: "source", identity, bytes: 4 }], resolver, signal: abort.signal,
+      onProgress: event => { if (problem === "cancel-before-promotion" && event.stage === "ingesting") abort.abort(problem); },
+    }), error => error instanceof EngineWebAdapterError && error.code === (problem === "cancel-before-promotion" ? "stem.cancelled" : "stem.corrupt"));
+    assert.equal([...backend.files.keys()].some(name => name.startsWith("staging-") || name.startsWith("sha256-")), false);
+  }
+});
+
+test("resolver snapshots mutable factories and URL assets before lazy Worker construction", async () => {
+  const source = singleFrameFlac();
+  const worker = new FakeWorker();
+  const wasm = new URL("https://caller.invalid/original.wasm");
+  const assets = { flacDecoderWasmUrl: wasm, createWorker: () => worker as unknown as Worker };
+  const options = { hardwareConcurrency: 2, assets, locate: () => "https://caller.invalid/snapshot",
+    fetch: responseFetch(request => { const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+      return exactResponse(source, Number(match[1]), Number(match[2])); }),
+  };
+  const resolver = createFlacStemResolver(options);
+  wasm.pathname = "/changed.wasm";
+  assets.createWorker = () => assert.fail("changed factory selected");
+  const reader = (await resolver.resolve(IDENTITY)).stream.getReader();
+  while (!(await reader.read()).done) { /* drain */ }
+  const start = worker.posted.find((message): message is Extract<FlacWorkerRequest, { type: "start" }> => message.type === "start")!;
+  assert.equal(start.decoderWasmUrl, "https://caller.invalid/original.wasm");
+  assert.equal(start.verifyPcm, false);
+});

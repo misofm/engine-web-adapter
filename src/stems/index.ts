@@ -24,7 +24,7 @@ export type { Msb1RingCounters } from "./ring.js";
 // `OpfsStorageBackend`'s `createWorker` override is a contract a caller can
 // legitimately supply.
 export type { OpfsWorkerLike } from "./opfs-worker-protocol.js";
-export type { StemAdmissionLease } from "./flac-admission.js";
+export type { FlacProcessingOptions, StemAdmissionLease } from "./flac-admission.js";
 export type { FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";
 export type { FlacDeliveryOptions } from "./flac-resolver.js";
 export type {
