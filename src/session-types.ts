@@ -30,7 +30,9 @@ export interface EngineAudioContext extends AudioContextLike {
 }
 
 export interface PumpAllocation {
+  /** Requested per-window frame bound; local reads round down to whole render quanta. */
   readonly windowFrames: number;
+  /** Current plus next/pending canonical windows; excludes rings, JS objects and browser caches. */
   readonly maximumWindowBytes: number;
 }
 

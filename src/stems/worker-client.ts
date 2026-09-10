@@ -2,6 +2,7 @@ import { createPumpWorker } from "../assets.js";
 import type { AdapterAssetOverrides } from "../assets.js";
 import { EngineWebAdapterError } from "../errors.js";
 import type { PumpAllocation } from "../session-types.js";
+import { PCM_WINDOW_FRAMES } from "./pump.js";
 import type { PcmPumpSource } from "./pump.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "./worker-protocol.js";
 import type { StemSessionLease } from "./types.js";
@@ -54,7 +55,7 @@ export class PcmPumpWorkerClient {
     if (!Number.isSafeInteger(deadline) || deadline <= 0) throw new RangeError("requestDeadlineMs must be positive");
     const client = new PcmPumpWorkerClient(worker, deadline);
     try {
-      const windowFrames = options.windowFrames ?? 4096;
+      const windowFrames = options.windowFrames ?? PCM_WINDOW_FRAMES;
       if (!Number.isSafeInteger(windowFrames) || windowFrames <= 0) throw new RangeError("windowFrames must be positive");
       options.signal?.throwIfAborted();
       if (options.signal !== undefined) {

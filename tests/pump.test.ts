@@ -41,7 +41,7 @@ test("pump memory is fixed rings plus explicit per-source windows", async () => 
     sources: [{ sourceId: "bounded", identity: IDENTITY, channels: 1, bitDepth: 16, frames: 1000, ring: shared }],
     windowFrames: 8,
   });
-  assert.equal(pump.maximumWindowBytes, 16);
+  assert.equal(pump.maximumWindowBytes, 32);
   assert.equal(pump.ringBytes, shared.byteLength);
   const outcome = await pump.pumpUntilBlocked();
   assert.deepEqual(outcome, { chunks: 2, frames: 8, finished: false });
@@ -68,7 +68,7 @@ test("one pass services multiple sources fairly", async () => {
   pump.close();
 });
 
-test("exported self-driver orders a delayed Blob tick before seek", async () => {
+test("exported self-driver invalidates a delayed Blob before seek without blocking control", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();
   const bytes = pcm16(Array.from({ length: 16 }, (_, index) => index));
@@ -90,7 +90,7 @@ test("exported self-driver orders a delayed Blob tick before seek", async () => 
   release.resolve();
   assert.equal(await sought, 2n);
   const headersI64 = new BigInt64Array(shared, MSB1_HEADER_OFFSET, 4 * MSB1_SLOT_HEADER_BYTES / 8);
-  assert.equal(headersI64[2], 1n, "delayed old PCM must commit under its old generation");
+  assert.equal(headersI64[2], 0n, "obsolete pending PCM must not be published");
   assert.equal(headersI64[3], 0n, "the old cursor must not be relabelled as the seek target");
   driver.close();
 });
@@ -374,12 +374,12 @@ test("pump client retains requested window and validates initialized allocation 
   for (const windowFrames of [undefined, 17]) {
     const worker = new FakePumpWorker(false, (message, self) => {
       if (message.type === "initialize") {
-        assert.equal(message.windowFrames, windowFrames ?? 4096);
+        assert.equal(message.windowFrames, windowFrames ?? 8192);
         self.reply({ type: "initialized", requestId: message.requestId, bounds: { windowBytes: 12345, ringBytes: shared.byteLength } });
       } else if (message.type === "stop") self.reply({ type: "stopped", requestId: message.requestId });
     });
     const client = await PcmPumpWorkerClient.create({ lease, sources: [source], worker, ...(windowFrames === undefined ? {} : { windowFrames }) });
-    assert.deepEqual(client.allocation, { windowFrames: windowFrames ?? 4096, maximumWindowBytes: 12345 });
+    assert.deepEqual(client.allocation, { windowFrames: windowFrames ?? 8192, maximumWindowBytes: 12345 });
     assert.equal(Object.isFrozen(client.allocation), true);
     await client.close();
   }

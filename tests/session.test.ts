@@ -238,13 +238,16 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
       events.push("pump.create");
       assert.deepEqual(sources.map((source) => source.sourceId), ["source", "source-z"]);
       pumpRings = sources.map((source) => source.ring);
-      for (const ring of pumpRings) Atomics.store(new Int32Array(ring), MSB1_CONTROL.WROTE, 1);
+      for (const ring of pumpRings) fillRing(ring, 4);
       return {
         async seekFrames(frame) {
           events.push(`pump.seek:${frame}`);
           for (const ring of pumpRings) {
             const writer = new Msb1RingWriter(ring);
-            writer.seek(2n, BigInt(frame)); writer.reserve(2);
+            writer.seek(2n, BigInt(frame));
+            const control = new Int32Array(ring);
+            Atomics.store(control, MSB1_CONTROL.READ_INDEX, Atomics.load(control, MSB1_CONTROL.WRITE_INDEX));
+            writer.reserve(2);
             writer.commit({ generation: 2n, startFrame: BigInt(frame), frames: 2, endOfRegion: true });
           }
           return 2n;
@@ -350,7 +353,7 @@ test("session snapshots document and source declarations before deferred scratch
       disconnect() {},
     }),
     createPump: async ({ sources }) => {
-      for (const source of sources) Atomics.store(new Int32Array(source.ring), MSB1_CONTROL.WROTE, 1);
+      for (const source of sources) fillRing(source.ring, source.frames);
       return { async seekFrames() { return 0n; }, close() {} };
     },
     createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
@@ -544,6 +547,15 @@ async function pausedSeekFixture(attached = true) {
         kind: result === 0 ? "confirmed" : "refused", result };
       request = undefined; port.onmessage?.({ data } as MessageEvent);
     },
+    fill(frame: bigint) {
+      while (writer.occupancy < writer.capacity && frame < 512n) {
+        const frames = Number(512n - frame < 4n ? 512n - frame : 4n);
+        writer.reserve(frames)![0]!.fill(0.5);
+        writer.commit({ generation, startFrame: frame, frames, endOfRegion: frame + BigInt(frames) === 512n });
+        frame += BigInt(frames);
+      }
+    },
+    retire() { const c = new Int32Array(ring); Atomics.store(c, MSB1_CONTROL.READ_INDEX, Atomics.load(c, MSB1_CONTROL.WRITE_INDEX)); },
     write(frame: bigint, chunkGeneration = generation) {
       writer.reserve(4)![0]!.fill(0.5);
       writer.commit({ generation: chunkGeneration, startFrame: frame, frames: 4, endOfRegion: false });
@@ -552,6 +564,57 @@ async function pausedSeekFixture(attached = true) {
 }
 
 async function tick() { await new Promise<void>((resolve) => setTimeout(resolve, 5)); }
+
+test("initial readiness waits for every source's full runway while accepting exact short tails", async () => {
+  const sources: DeclaredStemSource[] = [
+    { id: "source", spec: { channels: 1, bitDepth: 16, frames: 2, content: IDENTITY } },
+    { id: "source-z", spec: { channels: 1, bitDepth: 16, frames: 513, content: IDENTITY_Z } },
+  ];
+  const events: string[] = [];
+  let finish!: () => void;
+  let settled = false;
+  const opening = openEngineWebSession({
+    ...baseOptions(), sources, document: documentFor(sources), console: false,
+    capabilityScope: capabilities(), createContext: () => fakeContext(events),
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: sources.map((source) => ({ id: source.id, channels: 1, frames: BigInt(source.spec.frames) })) }),
+    store: { async open() { return this; }, async openSession() { return {
+      leaseId: "mixed", stems: [], async read() { throw new Error("fixture pump owns PCM"); }, async close() {},
+    }; } },
+    createHost: async () => ({ node: { connect() {}, disconnect() {} }, async dispose() {} }) as unknown as BrowserEngine["host"],
+    createAttachNode: () => ({ port: { postMessage() {} }, disconnect() {} }),
+    createPump: async ({ sources: ready }) => {
+      fillRing(ready[0]!.ring, 2);
+      const writer = new Msb1RingWriter(ready[1]!.ring); writer.engage(1n);
+      writer.reserve(4); writer.commit({ generation: 1n, startFrame: 0n, frames: 4, endOfRegion: false });
+      finish = () => {
+        for (let frame = 4; writer.occupancy < writer.capacity; frame += 4) {
+          writer.reserve(4); writer.commit({ generation: 1n, startFrame: BigInt(frame), frames: 4, endOfRegion: false });
+        }
+      };
+      return { async seekFrames() { return 2n; }, close() { writer.release(); } };
+    },
+  }).then((session) => { settled = true; return session; });
+  await tick(); await tick();
+  assert.equal(settled, false, "one ready short source and one quantum of the long source cannot start playback");
+  finish();
+  const session = await opening;
+  assert.equal(session.state, "ready");
+  await session.close();
+});
+
+test("seek runway clips to the exact source tail and EOF needs no invented PCM", async () => {
+  const f = await pausedSeekFixture();
+  const tail = f.session.seekFrames(510);
+  await tick(); f.confirm(); f.fill(510n); await tail;
+  assert.equal(f.context.state, "suspended");
+  const eof = f.session.seekFrames(512);
+  await tick(); f.confirm(); await eof;
+  const beyond = f.session.seekFrames(600);
+  await tick(); f.confirm(); await beyond;
+  assert.equal(f.context.state, "suspended");
+  await f.session.close();
+});
 
 test("initial paused seeks require attachment, producer ACK, preparation and full-generation target PCM before play", async () => {
   const f = await pausedSeekFixture(false);
@@ -567,7 +630,9 @@ test("initial paused seeks require attachment, producer ACK, preparation and ful
   assert.equal(settled, false, "full old occupancy is not seek readiness");
   f.confirm(); await tick(); assert.equal(settled, false, "prepare alone is not producer prefill");
   f.write(100n, 2n + (1n << 32n)); await tick(); assert.equal(settled, false, "low-word generation collision is insufficient");
-  f.write(100n); await seek;
+  f.retire();
+  f.write(100n); await tick(); assert.equal(settled, false, "one fresh quantum is not a playback runway");
+  f.fill(104n); await seek;
   assert.equal(f.context.state, "suspended");
   const play = f.session.play(); assert.equal(f.events.at(-1), "context.resume"); await play;
   await f.session.close();
@@ -577,7 +642,7 @@ test("queued seeks keep play busy through the last completion; running seeks pre
   const f = await pausedSeekFixture();
   const first = f.session.seekFrames(100);
   const second = f.session.seekFrames(512);
-  await tick(); f.confirm(); f.write(100n); await first;
+  await tick(); f.confirm(); f.fill(100n); await first;
   await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.busy");
   await tick(); f.confirm(); await second;
   assert.equal(f.events.includes("context.resume"), false);
@@ -591,7 +656,7 @@ test("queued seeks keep play busy through the last completion; running seeks pre
   assert.deepEqual(f.events.slice(-4), ["context.suspend", "seek.start", "seek.ack", "prepare"]);
   f.confirm(); await tick();
   assert.equal(f.context.state, "suspended", "fresh target must precede restoration");
-  f.write(20n); await runningSeek;
+  f.fill(20n); await runningSeek;
   assert.equal(f.context.state, "running");
   assert.equal(f.events.filter((event) => event === "prepare").length, count + 1);
   await f.session.close();
@@ -649,9 +714,9 @@ test("running seeks preserve FIFO with later seeks and pause, without late resto
   const second = f.session.seekFrames(200);
   const pause = f.session.pause();
   await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.busy");
-  await tick(); f.confirm(); f.write(100n); await first;
+  await tick(); f.confirm(); f.fill(100n); await first;
   await tick(); assert.equal(f.context.state, "suspended");
-  f.confirm(); f.write(200n); await second; await pause;
+  f.confirm(); f.fill(200n); await second; await pause;
   assert.equal(f.context.state, "suspended"); assert.equal(f.session.state, "paused");
   const resumes = f.events.filter((event) => event === "context.resume").length;
   assert.equal(resumes, 3, "initial play plus one restoration per running seek");
@@ -668,7 +733,7 @@ test("seek context transitions preserve refusals and reject wrong settled states
       const pending = f.session.seekFrames(100);
       const rejected = assert.rejects(pending, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek"
         && (fault === "reject" ? e.cause === reason : e.cause instanceof EngineWebAdapterError));
-      if (transition === "resume") { await tick(); f.confirm(); f.write(100n); }
+      if (transition === "resume") { await tick(); f.confirm(); f.fill(100n); }
       await rejected;
       assert.equal(f.session.state, "closed");
       if (transition === "suspend") assert.equal(f.events.includes("seek.start"), false);
@@ -693,7 +758,7 @@ test("hung seek context transitions time out and clear bounded timers", { timeou
     f.context[transition] = () => new Promise<void>(() => undefined);
     const rejected = assert.rejects(f.session.seekFrames(100), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek"
       && e.cause instanceof EngineWebAdapterError && e.cause.message.includes("timed out"));
-    if (transition === "resume") { await tick(); f.confirm(); f.write(100n); }
+    if (transition === "resume") { await tick(); f.confirm(); f.fill(100n); }
     await rejected;
     assert.equal(f.session.state, "closed"); assert.equal(timers.size, 0);
   }
@@ -710,7 +775,7 @@ test("close wins at every running seek await and late transitions never resume a
     const rejected = assert.rejects(pending, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
     await tick();
     if (stage === "refill" || stage === "resume") f.confirm();
-    if (stage === "resume") f.write(100n);
+    if (stage === "resume") f.fill(100n);
     await tick();
     await f.session.close(); await rejected;
     const expected = stage === "resume" ? 1 : 0;
@@ -917,7 +982,7 @@ test("SDK host defaults wait for verified lease, forward URLs and install the SD
       for (const ring of request.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
     } }, disconnect() {} }),
     createPump: async ({ sources }) => {
-      for (const source of sources) Atomics.store(new Int32Array(source.ring), MSB1_CONTROL.WROTE, 1);
+      for (const source of sources) fillRing(source.ring, source.frames);
       return { async seekFrames() { return 2n; }, close() {} };
     },
     assets: { engineHostModuleUrl: hostModuleUrl, engineWasmUrl: "chosen-wasm", engineWorkletModuleUrl: "chosen-worklet", feedWorkletModuleUrl: "chosen-feed" },
@@ -936,9 +1001,9 @@ test("SDK host defaults wait for verified lease, forward URLs and install the SD
 test("source observation maps compiled sources and reports owned buffers without consuming audio", async (t) => {
   const { Msb1RingObserver, Msb1RingWriter } = await import("@misofm/engine/browser");
   const declarations: DeclaredStemSource[] = [
-    { id: "z", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
-    { id: "a", spec: { channels: 2, bitDepth: 24, frames: 4, content: IDENTITY_Z } },
-    { id: "m", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
+    { id: "z", spec: { channels: 1, bitDepth: 16, frames: 6, content: IDENTITY } },
+    { id: "a", spec: { channels: 2, bitDepth: 24, frames: 6, content: IDENTITY_Z } },
+    { id: "m", spec: { channels: 1, bitDepth: 16, frames: 6, content: IDENTITY } },
   ];
   const ordered = [declarations[1]!, declarations[2]!, declarations[0]!];
   for (const allocation of [undefined, { windowFrames: 17, maximumWindowBytes: 170 }]) {
@@ -948,7 +1013,7 @@ test("source observation maps compiled sources and reports owned buffers without
       ...baseOptions(), sources: declarations, document: documentFor(declarations), console: false,
       capabilityScope: capabilities(), createContext: () => fakeContext(events),
       scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
-        backend: "simd128", tracks: [], sources: ordered.map((source) => ({ id: source.id, channels: source.spec.channels, frames: 4n })) }),
+        backend: "simd128", tracks: [], sources: ordered.map((source) => ({ id: source.id, channels: source.spec.channels, frames: 6n })) }),
       store: { async open() { return this; }, async openSession() {
         return { leaseId: "lease", stems: [], async read() { throw new Error("custom pump owns reads"); }, async close() {} };
       } },
@@ -1102,3 +1167,11 @@ test("per-open ingest diagnostics preserve warm admission lifetime, independent 
   }));
   assert.deepEqual(customProducer.snapshot(), { residency: null, reservation: null, processing: null });
 });
+
+function fillRing(ring: SharedArrayBuffer, total: number) {
+  const writer = new Msb1RingWriter(ring); writer.engage(1n);
+  for (let frame = 0; frame < total && writer.occupancy < writer.capacity; frame += writer.frameCapacity) {
+    const frames = Math.min(writer.frameCapacity, total - frame); writer.reserve(frames);
+    writer.commit({ generation: 1n, startFrame: BigInt(frame), frames, endOfRegion: frame + frames === total });
+  }
+}

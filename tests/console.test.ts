@@ -15,7 +15,7 @@ import type {
   MeterUpdate,
   TrackMeter,
 } from "../src/session-types.js";
-import { MSB1_CONTROL } from "../src/stems/ring.js";
+import { MSB1_CONTROL, Msb1RingWriter } from "../src/stems/ring.js";
 import type { DeclaredStemSource, StemSessionLease, StemStore } from "../src/stems/types.js";
 
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
@@ -570,7 +570,13 @@ async function open(setup: {
       disconnect() {},
     }),
     createPump: async ({ sources }) => {
-      for (const source of sources) Atomics.store(new Int32Array(source.ring), MSB1_CONTROL.WROTE, 1);
+      for (const source of sources) {
+        const writer = new Msb1RingWriter(source.ring); writer.engage(1n);
+        for (let frame = 0; frame < source.frames && writer.occupancy < writer.capacity; frame += writer.frameCapacity) {
+          const frames = Math.min(writer.frameCapacity, source.frames - frame); writer.reserve(frames);
+          writer.commit({ generation: 1n, startFrame: BigInt(frame), frames, endOfRegion: frame + frames === source.frames });
+        }
+      }
       return { async seekFrames() { return 0n; }, close() {} };
     },
     createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,

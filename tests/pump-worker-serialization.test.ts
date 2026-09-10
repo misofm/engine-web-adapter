@@ -4,7 +4,7 @@ import test from "node:test";
 import { MSB1_CONTROL, MSB1_CONTROL_BYTES, MSB1_HEADER_OFFSET, MSB1_SLOT_HEADER_BYTES, createMsb1Ring } from "../src/stems/ring.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "../src/stems/worker-protocol.js";
 
-test("Worker orders a delayed Blob tick before a later seek generation", async () => {
+test("Worker handles seek while an old Blob read is outstanding and discards its result", async () => {
   const originalSelf = (globalThis as { self?: unknown }).self;
   const scope = new LocalWorkerScope();
   (globalThis as { self?: unknown }).self = scope;
@@ -27,14 +27,14 @@ test("Worker orders a delayed Blob tick before a later seek generation", async (
     await scope.waitFor("initialized");
     await entered.promise;
     scope.send({ type: "seek", requestId: 2, frame: 5n });
-    release.resolve();
     await scope.waitFor("sought");
+    release.resolve();
 
     const control = new Int32Array(ring, 0, MSB1_CONTROL_BYTES / 4);
     const headersI64 = new BigInt64Array(ring, MSB1_HEADER_OFFSET, 4 * MSB1_SLOT_HEADER_BYTES / 8);
-    assert.ok(Atomics.load(control, MSB1_CONTROL.WROTE) > 0);
+    assert.equal(Atomics.load(control, MSB1_CONTROL.WROTE), 0);
     // If seek interleaved with the delayed read, this slot would be generation 2 at old frame 0.
-    assert.equal(headersI64[2], 1n);
+    assert.equal(headersI64[2], 0n);
     assert.equal(headersI64[3], 0n);
     scope.send({ type: "stop", requestId: 3 });
     await scope.waitFor("stopped");

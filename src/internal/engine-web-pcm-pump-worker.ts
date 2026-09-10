@@ -1,4 +1,4 @@
-import { CanonicalPcmPump } from "../stems/pump.js";
+import { CanonicalPcmPump, PCM_DRIVE_PASSES } from "../stems/pump.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "../stems/worker-protocol.js";
 import type { StemIdentity } from "../stems/types.js";
 
@@ -86,10 +86,10 @@ async function drive(token: object): Promise<void> {
   while (driveToken === token) {
     // Every tick is appended to the same queue as seek and stop. No cursor,
     // generation, or window mutation can interleave with an in-flight tick.
-    const outcome = await enqueue(() => driveToken === token ? pump?.pumpUntilBlocked() : undefined);
+    const outcome = await enqueue(() => driveToken === token ? pump?.pumpUntilBlocked(PCM_DRIVE_PASSES, false) : undefined);
     if (driveToken !== token || outcome === undefined) return;
     if (outcome.finished) { driveToken = undefined; return; }
-    if (outcome.chunks === 0) await sleep(idleMs);
+    await sleep(outcome.chunks === 0 ? idleMs : 0);
   }
 }
 

@@ -440,15 +440,22 @@ async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
         sampleUnchanged: after.nextAbsoluteSample === before.nextAbsoluteSample };
     };
     const nativeResume = context.resume.bind(context);
+    const assertPreparedRunway = () => {
+      const observation = engine.observeSource("seek-source");
+      let next = 10_000n;
+      let chunks = 0;
+      try {
+        for (let pass = 0; pass < 2; pass++) chunks += observation.pull((chunk) => {
+          if (chunk.generation !== 2n || chunk.startFrame !== next || chunk.frames !== 128) throw new Error("resume preceded contiguous target PCM");
+          next += BigInt(chunk.frames);
+        }, 32);
+        if (chunks !== 64 || next !== 18_192n) throw new Error("resume preceded the complete playback runway");
+      } finally { observation.close(); }
+    };
     context.resume = async () => {
       resumeCalls++;
       if (mode === "running") {
-        const observation = engine.observeSource("seek-source");
-        try {
-          if (observation.pull((chunk) => {
-            if (chunk.generation !== 2n || chunk.startFrame !== 10_000n) throw new Error("automatic resume preceded target PCM");
-          }, 1) !== 1) throw new Error("automatic resume preceded prefill");
-        } finally { observation.close(); }
+        assertPreparedRunway();
         prepared = await readPreparation();
         // Arm only at the actual suspended resume boundary, so earlier audio cannot satisfy it.
         capture = captureNext();
@@ -462,7 +469,7 @@ async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
     const stateAfterSeek = context.state;
     const resumeCallsDuringSeek = resumeCalls;
     context.resume = nativeResume;
-    if (mode !== "running") { prepared = await readPreparation(); capture = captureNext(); }
+    if (mode !== "running") { assertPreparedRunway(); prepared = await readPreparation(); capture = captureNext(); }
     globalThis.__seekStage = { mode, stage: "target-play", prepared };
     if (mode !== "running") await engine.play();
     const first = await capture.first; await engine.pause(); capture.close();
@@ -487,7 +494,7 @@ try {
   const allocation = cold.feedDiagnostics().allocation;
   if (initialDiagnostics.allocation.observationBytes !== scratchBytes || allocation.observationBytes !== 2 * scratchBytes ||
       allocation.ringBytes !== rings.reduce((sum, ring) => sum + ring.byteLength, 0) || allocation.engineMemoryBytes !== cold.host.memoryBytes ||
-      allocation.pump?.windowFrames !== 4096 || allocation.pump.maximumWindowBytes !== 4096 * profile.channels * profile.bitDepth / 8) throw new Error("incorrect buffer projection");
+      allocation.pump?.windowFrames !== 8192 || allocation.pump.maximumWindowBytes !== 2 * 8192 * profile.channels * profile.bitDepth / 8) throw new Error("incorrect buffer projection");
   await cold.play();
   await new Promise((resolve) => setTimeout(resolve, 150));
   await cold.pause();

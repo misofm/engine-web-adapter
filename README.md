@@ -406,7 +406,14 @@ actual feed SAB `ringBytes`, host `engineMemoryBytes`, and `observationBytes` fo
 owned by one counter observer per source plus each open source observer. Counter observers are
 reused across snapshots. `allocation.pump` contains `windowFrames` and the Worker-reported
 `maximumWindowBytes`; a custom pump without allocation facts returns `null`. The default pump
-retains its exact requested window (4096 frames by default) and validates initialization bounds.
+uses up to two 8192-frame canonical windows per source: the current window and bounded local
+read-ahead. At most four physical Blob reads run together, including obsolete reads that have
+not settled after a seek. Custom window sizes round down to a render-quantum multiple for I/O;
+the allocation bound conservatively retains the requested size. Worker ticks contain at most
+eight fair passes and yield between ticks so seek and close do not wait behind storage I/O.
 These are bounded buffer facts, not JS-object/browser-heap measurements or an atomic multiword
 snapshot. The app owns diagnostic aggregation; opening still verifies/stores all PCM and prefills
-before ready.
+before ready. Initial opening and seek completion require a contiguous full-generation runway
+across every source's 64 shared-ring slots, or that source's exact shorter remaining tail. At
+48 kHz with 128-frame quanta this is about 171 ms. Seek preparation remains suspended, including
+running seeks; the adapter restores running state only after every source passes that gate.
