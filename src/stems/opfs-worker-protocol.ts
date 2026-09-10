@@ -25,6 +25,7 @@ export type OpfsWorkerResponse =
    * store refuses at `open()`, before any resolver or network work.
    */
   | { readonly type: "worker-ready"; readonly writeSupport: boolean }
+  | { readonly type: "opfs-started"; readonly requestId: number }
   | { readonly type: "opfs-ok"; readonly requestId: number }
   | {
       readonly type: "opfs-error";

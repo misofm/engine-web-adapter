@@ -24,8 +24,7 @@ import type {
 } from "./session-types.js";
 import {
   BoundedStemAdmission,
-  defaultFlacMemoryBudgetBytes,
-  flacAdmissionWidth,
+  flacPipelineWidths,
 } from "./stems/flac-admission.js";
 import { createFlacStemResolver } from "./stems/flac-resolver.js";
 import { canonicalPcmBytes } from "./stems/identity.js";
@@ -88,18 +87,11 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
 
     let resolver: StemResolver;
     let admission: BoundedStemAdmission | undefined;
+    let verificationAdmission: BoundedStemAdmission | undefined;
     if (options.flac !== undefined) {
-      const navigatorHints = typeof navigator === "undefined"
-        ? undefined
-        : navigator as Navigator & { readonly deviceMemory?: number };
-      const hardwareConcurrency = options.flac.hardwareConcurrency ?? navigatorHints?.hardwareConcurrency;
-      admission = options.flac.admission ?? new BoundedStemAdmission(flacAdmissionWidth({
-        ...(hardwareConcurrency === undefined ? {} : { hardwareConcurrency }),
-        memoryBudgetBytes: options.flac.memoryBudgetBytes ?? defaultFlacMemoryBudgetBytes(
-          options.flac.deviceMemory ?? navigatorHints?.deviceMemory,
-        ),
-        ...(options.flac.maximumWorkers === undefined ? {} : { maximum: options.flac.maximumWorkers }),
-      }));
+      const widths = flacPipelineWidths(options.flac);
+      admission = options.flac.admission ?? new BoundedStemAdmission(widths.processing);
+      verificationAdmission = options.flac.processing === undefined ? admission : new BoundedStemAdmission(widths.verification);
       const expectations = expectationsFor(orderedSources, compiledShape.sampleRateHz);
       const flacResolver = createFlacStemResolver({
         ...options.flac,
@@ -133,6 +125,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       resolver,
       ...(options.ingestDiagnostics === undefined ? {} : { ingestDiagnostics: options.ingestDiagnostics }),
       ...(admission === undefined ? {} : { admission }),
+      ...(verificationAdmission === undefined ? {} : { verificationAdmission }),
       signal: abort.signal,
       ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
     });

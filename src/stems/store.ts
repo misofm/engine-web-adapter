@@ -1,9 +1,10 @@
-import { diagnosticResolver, initializeIngestDiagnostics, releaseDecoded, retainActive, type IngestDiagnostics } from "./ingest-diagnostics.js";
+import { beginIngestStage, flacResolverScheduling, diagnosticResolver, initializeIngestDiagnostics, releaseDecoded, retainActive, type IngestDiagnostics } from "./ingest-diagnostics.js";
 import { EngineWebAdapterError } from "../errors.js";
 import { assertStemIdentity } from "./identity.js";
 import { deadline, IncrementalSha256, sha256Stream } from "./sha256.js";
+import { flacResult } from "./flac-result.js";
 import type { BoundedStemAdmission } from "./flac-admission.js";
-import { OpfsStorageBackend } from "./storage.js";
+import { ownsOpfsWriteDeadlines, OpfsStorageBackend } from "./storage.js";
 import type { StemStorageBackend, StemStorageWriter } from "./storage.js";
 import type {
   StemIdentity,
@@ -94,6 +95,7 @@ export class VerifiedStemStore implements StemStore {
     readonly stems: readonly StemRequirement[];
     readonly resolver: StemResolver;
     readonly admission?: BoundedStemAdmission;
+    readonly verificationAdmission?: BoundedStemAdmission;
     readonly ingestDiagnostics?: IngestDiagnostics;
     readonly signal?: AbortSignal;
     readonly onProgress?: (progress: StemProgress) => void;
@@ -107,7 +109,10 @@ export class VerifiedStemStore implements StemStore {
       throw new EngineWebAdapterError("stem.cancelled", "Stem session open was cancelled", {}, options.signal.reason);
     }
 
-    const diagnostics = initializeIngestDiagnostics(options.ingestDiagnostics, options.resolver, options.admission?.limit ?? 1);
+    const scheduling = flacResolverScheduling(options.resolver);
+    const concurrency = options.admission?.limit ?? scheduling?.limit ?? 1;
+    const verification = options.verificationAdmission ?? scheduling?.verification ?? options.admission;
+    const diagnostics = initializeIngestDiagnostics(options.ingestDiagnostics, options.resolver, concurrency);
     const resolver = diagnosticResolver(options.resolver, diagnostics);
     const controller = new AbortController();
     const detach = forwardAbort(options.signal, controller);
@@ -131,9 +136,9 @@ export class VerifiedStemStore implements StemStore {
       };
       await runBounded(
         unique,
-        options.admission?.limit ?? 1,
+        concurrency,
         async (stem) => {
-          await this.#ensure(stem, resolver, controller.signal, own, options.onProgress, options.admission, diagnostics);
+          await this.#ensure(stem, resolver, controller.signal, own, options.onProgress, verification, diagnostics);
           controller.signal.throwIfAborted();
           options.onProgress?.({ stage: "source-ready", identity: stem.identity, bytes: stem.bytes });
           controller.signal.throwIfAborted();
@@ -240,9 +245,11 @@ export class VerifiedStemStore implements StemStore {
     diagnostics?: IngestDiagnostics,
   ): Promise<void> {
     let releaseActive: (() => void) | undefined;
-    const admittedVerification = () => {
+    const admittedVerification = async () => {
       releaseActive ??= retainActive(diagnostics);
-      return this.#verifyIndexed(stem, signal, onProgress);
+      const finish = beginIngestStage(diagnostics, "verification");
+      try { return await this.#verifyIndexed(stem, signal, onProgress); }
+      finally { finish(); }
     };
     const verify = () => admission === undefined
       ? admittedVerification()
@@ -268,7 +275,7 @@ export class VerifiedStemStore implements StemStore {
       }
       await this.#withLock(this.#stemLock(stem.identity), signal, async () => {
         // A concurrent opener may have installed the final while we reclaimed.
-        if (!(await verify())) await this.#ingest(stem, resolver, signal, onProgress);
+        if (!(await verify())) await this.#ingest(stem, resolver, signal, onProgress, diagnostics);
         await own(stem);
       });
     } finally { releaseActive?.(); }
@@ -326,17 +333,26 @@ export class VerifiedStemStore implements StemStore {
     resolver: StemResolver,
     signal: AbortSignal,
     onProgress?: (progress: StemProgress) => void,
+    diagnostics?: IngestDiagnostics,
   ): Promise<void> {
     signal.throwIfAborted();
     await this.#preflight(stem.bytes, signal, false);
     const staging = `${STAGING_PREFIX}${this.#instanceId}-${digest(stem.identity)}`;
     await this.#backend.remove(staging);
     const writerLifetime = new AbortController();
+    const detachWriter = forwardAbort(signal, writerLifetime);
+    const writeOperation = <T>(work: () => Promise<T>): Promise<T> => {
+      signal.throwIfAborted();
+      const operation = work();
+      return ownsOpfsWriteDeadlines(this.#backend, this.#readDeadlineMs)
+        ? operation : deadline(operation, this.#readDeadlineMs, signal);
+    };
     let writer: StemStorageWriter | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let promoted = false;
     let consumed = false;
     try {
+      signal.throwIfAborted();
       const resolved = await deadline(
         Promise.resolve(optionsResolve(resolver, stem.identity, signal, onProgress)),
         this.#readDeadlineMs,
@@ -344,18 +360,27 @@ export class VerifiedStemStore implements StemStore {
       );
       if (!(resolved.stream instanceof ReadableStream)) throw new TypeError("Resolver must return a ReadableStream");
       reader = resolved.stream.getReader();
-      writer = await deadline(this.#backend.createWriter(staging, writerLifetime.signal), this.#readDeadlineMs, signal);
-      const hash = new IncrementalSha256();
+      writer = await writeOperation(() => this.#backend.createWriter(staging, writerLifetime.signal));
+      const packageResult = flacResult(resolved);
+      const hash = packageResult?.digest === undefined ? new IncrementalSha256() : undefined;
       let bytes = 0;
       while (true) {
-        const result = await deadline(reader.read(), this.#readDeadlineMs, signal);
-        if (result.done) { consumed = true; break; }
+        signal.throwIfAborted();
+        // Package FLAC owns separate queue-aware network and decoder deadlines.
+        // Generic PCM resolvers retain the store's no-progress watchdog.
+        const result = packageResult === undefined
+          ? await deadline(reader.read(), this.#readDeadlineMs, signal)
+          : await reader.read();
+        if (result.done) { signal.throwIfAborted(); consumed = true; break; }
         try {
+          signal.throwIfAborted();
           if (!(result.value instanceof Uint8Array)) throw new TypeError("Resolver chunks must be Uint8Array");
           bytes += result.value.byteLength;
           if (bytes > stem.bytes) throw integrity(stem, bytes, "byte count exceeds declaration");
-          hash.update(result.value);
-          await deadline(writer.write(result.value), this.#readDeadlineMs, signal);
+          hash?.update(result.value);
+          const finishWrite = beginIngestStage(diagnostics, "writes");
+          try { await writeOperation(() => writer!.write(result.value)); }
+          finally { finishWrite(); }
           onProgress?.({
             stage: "ingesting", sourceId: stem.sourceId, identity: stem.identity,
             bytes, totalBytes: stem.bytes, byteKind: "pcm",
@@ -364,14 +389,16 @@ export class VerifiedStemStore implements StemStore {
           if (result.value instanceof Uint8Array) releaseDecoded(result.value.buffer);
         }
       }
-      const observed = hash.digestHex();
+      const observed = hash?.digestHex() ?? packageResult?.digest?.();
       if (bytes !== stem.bytes || observed !== digest(stem.identity)) {
         throw integrity(stem, bytes, observed !== digest(stem.identity) ? "SHA-256 mismatch" : "truncated stream");
       }
-      await deadline(writer.close(), this.#readDeadlineMs, signal);
+      signal.throwIfAborted();
+      await writeOperation(() => writer!.close());
       writer = undefined;
       await deadline(this.#backend.move(staging, finalName(stem.identity)), this.#readDeadlineMs, signal);
       promoted = true;
+      signal.throwIfAborted();
       await this.#mutateIndex((index) => {
         index.stems[stem.identity] = { bytes: stem.bytes, pins: index.stems[stem.identity]?.pins ?? [], lastUsedAt: this.#now() };
       }, signal);
@@ -395,6 +422,7 @@ export class VerifiedStemStore implements StemStore {
       }
       throw error;
     } finally {
+      detachWriter();
       if (!consumed) await reader?.cancel(signal.reason).catch(() => undefined);
       try { reader?.releaseLock(); } catch { /* deadline may leave a read pending */ }
     }

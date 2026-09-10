@@ -84,6 +84,7 @@ export interface StemStore {
     readonly stems: readonly StemRequirement[];
     readonly resolver: StemResolver;
     readonly admission?: BoundedStemAdmission;
+    readonly verificationAdmission?: BoundedStemAdmission;
     readonly ingestDiagnostics?: IngestDiagnostics;
     readonly signal?: AbortSignal;
     readonly onProgress?: (progress: StemProgress) => void;

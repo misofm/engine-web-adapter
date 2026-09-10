@@ -1011,10 +1011,10 @@ test("source observation maps compiled sources and reports owned buffers without
 
 test("per-open ingest diagnostics preserve warm admission lifetime, independent snapshots and unknown custom paths", { timeout: 5000 }, async () => {
   const early = createIngestDiagnostics();
-  assert.deepEqual(early.snapshot(), { residency: null, reservation: null });
+  assert.deepEqual(early.snapshot(), { residency: null, reservation: null, processing: null });
   await assert.rejects(openEngineWebSession({ ...baseOptions(), ingestDiagnostics: early,
     capabilityScope: { crossOriginIsolated: false } }));
-  assert.deepEqual(early.snapshot(), { residency: null, reservation: null });
+  assert.deepEqual(early.snapshot(), { residency: null, reservation: null, processing: null });
   await assert.rejects(openEngineWebSession({ ...baseOptions(), ingestDiagnostics: early }), /only one open/);
 
   const pcm = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
@@ -1094,11 +1094,11 @@ test("per-open ingest diagnostics preserve warm admission lifetime, independent 
 
   const customStore = createIngestDiagnostics();
   await assert.rejects(open({ async open() { return this; }, async openSession() { throw afterStore; } }, customStore, new BoundedStemAdmission(1)));
-  assert.deepEqual(customStore.snapshot(), { residency: null, reservation: null });
+  assert.deepEqual(customStore.snapshot(), { residency: null, reservation: null, processing: null });
   const customProducer = createIngestDiagnostics();
   await assert.rejects(openEngineWebSession({ ...common, ingestDiagnostics: customProducer,
     store: new VerifiedStemStore({ backend: new MemoryStemStorageBackend() }),
     resolver: { async resolve() { throw afterStore; } },
   }));
-  assert.deepEqual(customProducer.snapshot(), { residency: null, reservation: null });
+  assert.deepEqual(customProducer.snapshot(), { residency: null, reservation: null, processing: null });
 });

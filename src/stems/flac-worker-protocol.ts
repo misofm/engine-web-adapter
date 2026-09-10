@@ -1,3 +1,4 @@
+import type { WorkerProcessingMetrics } from "./ingest-diagnostics.js";
 import type { CanonicalPcmExpectation, StemIdentity } from "./types.js";
 import type { FlacInputSlotBuffers } from "./flac-input-slot.js";
 import type { NativeFlacStreamInfo } from "./native-flac-metadata.js";
@@ -12,6 +13,9 @@ export type FlacWorkerRequest =
       readonly decoderWasmUrl: string;
       readonly inputSlot: FlacInputSlotBuffers;
       readonly expected?: CanonicalPcmExpectation;
+      readonly verifyPcm?: boolean;
+      readonly runnable?: SharedArrayBuffer;
+      readonly runnableMask?: number;
     }
   | {
       readonly type: "initialize";
@@ -38,8 +42,9 @@ export type FlacWorkerResponse =
       readonly bytes: ArrayBuffer;
       readonly frames: number;
       readonly totalPcmBytes: number;
+      readonly metrics?: WorkerProcessingMetrics;
     }
-  | { readonly type: "complete"; readonly requestId: number; readonly pcmBytes: number; readonly frames: number }
+  | { readonly type: "complete"; readonly requestId: number; readonly pcmBytes: number; readonly frames: number; readonly digest?: string; readonly metrics?: WorkerProcessingMetrics }
   | {
       readonly type: "error";
       readonly requestId: number;

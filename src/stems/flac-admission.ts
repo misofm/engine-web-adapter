@@ -53,6 +53,60 @@ export function flacAdmissionWidth(options: {
   );
 }
 
+/** Opt-in decode and canonical-hash policy; each worker reserves 8 MiB. */
+export interface FlacProcessingOptions {
+  readonly maximumWorkers?: number;
+  readonly memoryBudgetBytes?: number;
+  /** Warm-cache verification remains independently bounded (default: download width). */
+  readonly maximumVerifications?: number;
+}
+
+export interface FlacAdmissionOptions {
+  readonly admission?: BoundedStemAdmission;
+  readonly hardwareConcurrency?: number;
+  readonly deviceMemory?: number;
+  readonly memoryBudgetBytes?: number;
+  readonly maximumWorkers?: number;
+  readonly processing?: FlacProcessingOptions;
+}
+
+/** Resolve truthful browser hints once; processing never expands physical delivery. */
+export function flacPipelineWidths(options: FlacAdmissionOptions): Readonly<{
+  processing: number; downloads: number; verification: number;
+}> {
+  const hints = typeof navigator === "undefined" ? undefined : navigator as Navigator & { readonly deviceMemory?: number };
+  const hardwareConcurrency = options.hardwareConcurrency ?? hints?.hardwareConcurrency;
+  const deviceMemory = options.deviceMemory ?? hints?.deviceMemory;
+  const legacy = flacAdmissionWidth({
+    ...(hardwareConcurrency === undefined ? {} : { hardwareConcurrency }),
+    memoryBudgetBytes: options.memoryBudgetBytes ?? defaultFlacMemoryBudgetBytes(deviceMemory),
+    ...(options.maximumWorkers === undefined ? {} : { maximum: options.maximumWorkers }),
+  });
+  if (options.processing === undefined) {
+    const width = options.admission?.limit ?? legacy;
+    return { processing: width, downloads: width, verification: width };
+  }
+  const maximum = options.processing.maximumWorkers ?? 16;
+  const verificationMaximum = options.processing.maximumVerifications ?? 4;
+  for (const [name, value, ceiling] of [["processing.maximumWorkers", maximum, 16], ["processing.maximumVerifications", verificationMaximum, 4]] as const) {
+    if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new RangeError(`${name} must be between 1 and ${ceiling}`);
+  }
+  const automaticMemory = deviceMemory === undefined || !Number.isFinite(deviceMemory) || deviceMemory <= 0
+    ? DEFAULT_FLAC_MEMORY_BUDGET_BYTES
+    : Math.min(128 * 1024 * 1024, Math.max(MINIMUM_FLAC_MEMORY_BUDGET_BYTES, Math.floor(deviceMemory * 16 * 1024 * 1024)));
+  const processing = flacAdmissionWidth({
+    ...(hardwareConcurrency === undefined ? {} : { hardwareConcurrency }),
+    memoryBudgetBytes: options.processing.memoryBudgetBytes ?? automaticMemory,
+    maximum,
+  });
+  // A supplied shared processing admission can reduce, never bypass the policy.
+  if (options.admission !== undefined && options.admission.limit > processing) {
+    throw new RangeError("admission exceeds the device and memory bounded processing policy");
+  }
+  const downloads = Math.min(4, legacy);
+  return { processing: options.admission?.limit ?? processing, downloads, verification: Math.min(downloads, verificationMaximum) };
+}
+
 export interface StemAdmissionLease {
   release(): void;
 }
@@ -69,6 +123,8 @@ export class BoundedStemAdmission {
   readonly limit: number;
   #active = 0;
   #queued: Waiter[] = [];
+  #closed = false;
+  #failure: unknown;
 
   constructor(limit: number) {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError("limit must be a positive integer");
@@ -79,7 +135,19 @@ export class BoundedStemAdmission {
     return { active: this.#active, queued: this.#queued.length, limit: this.limit };
   }
 
+  /** Fail closed when a physical resource cannot be proven released. */
+  close(reason: unknown): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#failure = reason;
+    for (const waiter of this.#queued.splice(0)) {
+      waiter.signal?.removeEventListener("abort", waiter.abort);
+      waiter.reject(reason);
+    }
+  }
+
   acquire(signal?: AbortSignal): Promise<StemAdmissionLease> {
+    if (this.#closed) return Promise.reject(this.#failure);
     if (signal?.aborted) return Promise.reject(cancelled(signal.reason));
     if (this.#active < this.limit) {
       this.#active += 1;
@@ -125,6 +193,7 @@ export class BoundedStemAdmission {
   }
 
   #admitNext(): void {
+    if (this.#closed) return;
     while (this.#active < this.limit) {
       const waiter = this.#queued.shift();
       if (waiter === undefined) return;

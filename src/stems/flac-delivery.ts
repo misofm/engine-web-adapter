@@ -2,6 +2,8 @@ import { Effect, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 
 import { EngineWebAdapterError } from "../errors.js";
+import type { BoundedStemAdmission } from "./flac-admission.js";
+import { beginIngestStage, type IngestDiagnostics } from "./ingest-diagnostics.js";
 import type { StemIdentity, StemProgress } from "./types.js";
 
 export interface FlacRangeAttempt {
@@ -101,6 +103,8 @@ export function readExactFlacRange(options: FlacHttpOptions & {
   readonly onProgress?: (progress: StemProgress) => void;
   readonly onActivity?: () => void;
   readonly retainRange?: (bytes: number) => () => void;
+  readonly downloadAdmission?: BoundedStemAdmission;
+  readonly diagnostics?: IngestDiagnostics;
 }): Promise<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>> {
   const maximumAttempts = options.maximumAttempts ?? 4;
   const deadlineMs = options.readDeadlineMs ?? 30_000;
@@ -122,7 +126,61 @@ export function readExactFlacRange(options: FlacHttpOptions & {
   const physicalAttempt = (attempt: number) => {
     let release = () => {};
     let produced = false;
-    return Effect.gen(function* () {
+    let cleanupFailure: EngineWebAdapterError | undefined;
+    return Effect.scoped(Effect.gen(function* () {
+    if (options.downloadAdmission !== undefined) {
+      yield* Effect.acquireRelease(Effect.tryPromise({
+        try: async () => {
+          const finishQueue = options.downloadAdmission!.stats.active >= options.downloadAdmission!.limit
+            ? beginIngestStage(options.diagnostics, "downloadQueue") : () => {};
+          try { return await options.downloadAdmission!.acquire(options.signal); }
+          finally { finishQueue(); }
+        },
+        catch: error => error,
+      }), lease => Effect.sync(() => lease.release()));
+    }
+    const finishDownload = beginIngestStage(options.diagnostics, "downloads");
+    yield* Effect.addFinalizer(() => Effect.sync(finishDownload));
+    let physicalResponse: Response | undefined;
+    let transportSettlement: Promise<void> | undefined;
+    let finalized = false;
+    const quarantine = (cause?: unknown) => {
+      cleanupFailure ??= failure("stem.delivery.stall", "FLAC physical request cleanup did not settle safely", {
+        identity: options.identity, phase: options.phase, range: [options.start, options.end], attempt,
+        retryable: false, cleanup: true,
+      }, cause);
+      options.downloadAdmission?.close(cleanupFailure);
+    };
+    const boundedCleanup = async (operation: Promise<unknown>): Promise<void> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        operation.catch(quarantine),
+        new Promise<void>(resolve => {
+          timer = setTimeout(() => { quarantine(); resolve(); }, deadlineMs);
+        }),
+      ]);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+    yield* Effect.addFinalizer(() => Effect.promise(async () => {
+      // HttpClient's scope aborts its request before this finalizer. Wait for
+      // the actual fetch promise, not only the interrupted Effect continuation.
+      if (transportSettlement !== undefined) await boundedCleanup(transportSettlement);
+      if (physicalResponse?.body !== null && physicalResponse?.body !== undefined && !physicalResponse.body.locked) {
+        await boundedCleanup(physicalResponse.body.cancel());
+      }
+      finalized = true;
+    }));
+    const physicalFetch: typeof globalThis.fetch = (input, init) => {
+      const flight = Promise.resolve().then(() => (options.fetch ?? globalThis.fetch)(input, init)).then(response => {
+        physicalResponse = response;
+        // A misbehaving transport may deliver headers after bounded teardown.
+        // Its admission is quarantined; dispose late bytes without reviving it.
+        if (finalized) void boundedCleanup(response.body?.cancel() ?? Promise.resolve());
+        return response;
+      });
+      transportSettlement = flight.then(() => undefined, () => undefined);
+      return flight;
+    };
     const location = yield* Effect.tryPromise({
       try: () => Promise.resolve(options.locate(options.identity, {
         identity: options.identity,
@@ -135,7 +193,11 @@ export function readExactFlacRange(options: FlacHttpOptions & {
       catch: (error) => failure("stem.delivery.address", "FLAC locator failed", {
         identity: options.identity, phase: options.phase, range: [options.start, options.end], attempt, retryable: false,
       }, error),
-    });
+    }).pipe(Effect.timeoutOrElse({ duration: deadlineMs, orElse: () => Effect.fail(failure(
+      "stem.delivery.address", "FLAC locator exceeded its deadline", {
+        identity: options.identity, phase: options.phase, range: [options.start, options.end], attempt, retryable: false,
+      },
+    )) }));
     const normalized = yield* Effect.try({
       try: () => requestFor(location, range, options.signal, {
         identity: options.identity,
@@ -153,6 +215,7 @@ export function readExactFlacRange(options: FlacHttpOptions & {
     });
     const response = yield* client.execute(normalized.request).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, normalized.fetchInit),
+      Effect.provideService(FetchHttpClient.Fetch, physicalFetch),
       Effect.provideService(HttpClient.TracerPropagationEnabled, false),
       Effect.timeoutOrElse({ duration: deadlineMs, orElse: () => Effect.fail(stalled()) }),
     );
@@ -198,7 +261,19 @@ export function readExactFlacRange(options: FlacHttpOptions & {
     const bytes = new Uint8Array(expectedBytes);
     release = options.retainRange?.(bytes.byteLength) ?? (() => {});
     let received = 0;
-    yield* response.stream.pipe(
+    if (physicalResponse?.body === null || physicalResponse?.body === undefined) {
+      return yield* Effect.fail(failure("stem.delivery.range", "FLAC response has no body", {
+        identity: options.identity, phase: options.phase, range: [options.start, options.end], attempt, retryable: false,
+      }));
+    }
+    yield* Stream.fromReadableStream({
+      evaluate: () => physicalResponse!.body!,
+      onError: error => failure("stem.delivery.http", "FLAC response body failed", {
+        identity: options.identity, phase: options.phase, range: [options.start, options.end], attempt, retryable: true,
+      }, error),
+      // Our enclosing attempt owns bounded cancellation before its permit release.
+      releaseLockOnEnd: true,
+    }).pipe(
       Stream.timeoutOrElse({ duration: deadlineMs, orElse: () => Stream.fail(stalled()) }),
       Stream.runForEach((chunk) => Effect.try({
         try: () => {
@@ -234,7 +309,9 @@ export function readExactFlacRange(options: FlacHttpOptions & {
     unhandedRelease = release;
     produced = true;
     return { bytes, totalBytes, release };
-    }).pipe(Effect.ensuring(Effect.sync(() => { if (!produced) release(); })));
+    }).pipe(Effect.ensuring(Effect.sync(() => { if (!produced) release(); })))).pipe(
+      Effect.catch(error => Effect.fail(cleanupFailure ?? error)),
+    );
   };
 
   const attempt = (number: number): Effect.Effect<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>, unknown, HttpClient.HttpClient | import("effect").Scope.Scope> =>

@@ -9,7 +9,7 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.3.3 @misofm/engine@0.2.1
+npm install @misofm/engine-web-adapter@0.3.4 @misofm/engine@0.2.1
 ```
 
 The package is ESM-only and remains pinned to exactly Engine `0.2.1`.
@@ -182,7 +182,8 @@ asset fields without discarding the other common fields; the low-level
 - The decoder memory is fixed at 2 MiB; package-owned buffers are independent of
   compressed-stem duration. Browser network, Worker, and compiled-code memory is
   opaque and excluded.
-- Cold decode and warm OPFS verification share one FIFO admission width.
+- Legacy defaults share one FIFO width. Opt-in processing separates decode/hash,
+  physical FLAC delivery, and warm-cache verification.
 - PCM is not leased or pumped until exact byte count and incremental SHA-256
   verification succeeds and the staging file is promoted.
 - Canonical PCM is headerless interleaved little-endian PCM16 or PCM24 at
@@ -228,8 +229,8 @@ const afterOpen = ingestDiagnostics.snapshot();
 The collector belongs to one open invocation, including a failed invocation;
 reuse rejects. Every snapshot is a fresh readonly value. Live values drain as
 their owners finish, while peaks remain readable after ready, cancellation, or
-failure. Before the participating pipeline initializes, both `residency` and
-`reservation` are `null`. Arbitrary injected producers or stores retain that
+failure. Before the participating pipeline initializes, `residency`,
+`reservation`, and `processing` are `null`. Arbitrary injected producers or stores retain that
 unknown result. Package FLAC resolvers paired with `VerifiedStemStore` or
 `OpfsStemStore` participate, including injected stores using an existing folder.
 An empty package FLAC session initializes known zero counters and its limit.
@@ -249,7 +250,83 @@ verification and trailing writes after a decode Worker finishes.
 includes 4,198,416 named bytes: the exact range, input SAB, fixed 2,097,152-byte
 libFLAC memory, two output credits, one 393,216-byte in-flight store write,
 one 393,216-byte OPFS write-clone allowance, and metadata/control. The remaining
-4,190,192 bytes are headroom. Admission sizing is unchanged.
+4,190,192 bytes are headroom. This reservation is a policy envelope, not a
+measurement of total browser/process memory.
+
+`processing` is also `null` before initialization or for an unknown producer.
+It reports `downloadLimit`, `workerLimit`, and `verificationLimit`, plus numeric
+`downloads`, `downloadQueue`, `workers`, `verification`, and `writes` counters
+(`active`, `peak`, `count`, aggregate completed `milliseconds`). `workers` counts
+physical decoder lifetimes; it does not imply simultaneous CPU execution.
+`runnablePeak` measures overlapping runnable decode/hash sections with shared
+atomic worker ownership, excluding input and output-credit waits. Termination
+clears the retired worker's ownership. Legacy widths above 32 do not collect
+runnable overlap; the opt-in policy is capped at 16.
+
+`decodeMs` is summed elapsed time inside decoder calls excluding explicit input
+waits; it is not operating-system CPU time. `hashMs`, `inputWaitMs`,
+`outputWaitMs`, and `blocks` are worker-reported completed-block totals (a failed
+block may contribute no final timing). Queued and active I/O timing is reported
+separately. These counters are bounded numbers, with no retained event history.
+
+## Adaptive processing
+
+Use the public processing policy to qualify larger decode/hash concurrency:
+
+```ts
+const session = await openEngineWebSession({
+  document,
+  flac: {
+    locate,
+    processing: { maximumWorkers: 8 },
+  },
+});
+```
+
+`maximumWorkers` accepts 1–16 and defaults to 16 when `processing` is supplied.
+The actual processing width is the minimum of that ceiling, logical CPU count
+minus one (at least one), and the memory budget divided by 8 MiB per worker.
+The automatic processing budget is 16 MiB without a valid device-memory hint;
+otherwise it is device-memory GiB ×16 MiB, clamped to 8–128 MiB. Consequently an
+8 GiB hint and at least 17 logical CPUs can admit 16; missing CPU hints still
+admit only one. `processing.memoryBudgetBytes` explicitly replaces the memory
+budget, while the CPU and 16-worker limits still apply. Browser hints can be
+coarse or absent. Benchmark the policy on target devices before choosing a cap.
+
+Physical HTTP admission retains the legacy device/memory-derived width and is
+capped at four when processing is enabled. The legacy top-level
+`maximumWorkers` and `memoryBudgetBytes` do not raise that four-request ceiling.
+Every probe, metadata range, audio range and retry holds one permit through
+body consumption or cancellation; no permit is held while awaiting decoding
+or storage. The cap belongs to a resolver/session, not the entire browser.
+A custom `fetch` must honor its abort signal and serialize any internal
+fallback, fully disposing the previous response before starting another
+physical request. An indeterminate fetch/cancellation cleanup closes that
+resolver's download admission without retries or reuse of uncertain capacity.
+
+Warm verification keeps the legacy width, independently capped at four;
+`processing.maximumVerifications` can reduce it to 1–4. Cached sources perform
+no FLAC HTTP or decode/hash-worker work. The package store uses the processing
+width for cold scheduling, including when paired directly with
+`createFlacStemResolver`. Omitting `processing` preserves legacy sizing and
+main-realm hashing. A supplied shared `admission` can reduce an opt-in processing
+width, but cannot exceed its CPU/memory policy.
+
+With processing enabled, the immutable package decoder Worker hashes the exact
+canonical bytes before transferring them. Only its private result handoff can
+replace store hashing; byte/frame counts, expected digest, EOF, successful
+writes and promotion remain required. Custom worker factories or decoder/worker
+asset overrides retain store hashing. Options and asset URLs are snapshotted
+before lazy worker construction, so later caller mutation cannot change digest
+provenance. Generic PCM resolvers always retain store hashing and read deadlines.
+
+Waiting for a download/worker permit does not consume the active I/O/decode
+no-progress deadline. The one OPFS write worker reports when a request starts;
+healthy progress refreshes queued requests while each started operation retains
+its own timeout. The standard OPFS backend owns those write deadlines; a tighter
+explicit store deadline remains a ceiling. Generic storage retains store
+watchdogs. Storage and two-output-credit backpressure remain bounded; additional
+decoders may wait for the shared writer, so a higher cap need not be faster.
 
 These live counters measure owned main-realm buffers, not allocator or total
 heap residency. Shared buffers, decoder memory, browser fetch/Blob internals,
