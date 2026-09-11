@@ -1,6 +1,6 @@
 # Admit sparse stem packages and read bounded packed PCM windows
 
-Status: attempt 1 at `65c023f` received Astra medium FAIL; bounded attempt 2 authorized below. Matching adapter GitHub issue: #54. Luna xhigh implements; an independent Astra medium adversarially verifies. Maximum five coherent attempts. No production delivery claim until the successor cache/network/app issues are complete.
+Status: attempt 2 at `b90a182` received Astra medium FAIL for residual derivation admission; bounded attempt 3 authorized below. Matching adapter GitHub issue: #54. Luna xhigh implements; an independent Astra medium adversarially verifies. Maximum five coherent attempts. No production delivery claim until the successor cache/network/app issues are complete.
 
 ## Problem and smallest closable capability
 
@@ -117,3 +117,28 @@ artist-data behavior changed. The worker must re-admit a structured-cloned
 index in its own module realm; this issue still does not add worker/session
 integration. Astra's attempt-2 verdict and root's checkpoint/push remain
 pending.
+
+## Attempt 2 adversarial verdict (Astra medium): FAIL
+
+Reviewed upstream `b90a182`. R1 is fixed: active and all-gap reads over an
+admitted 10,000-interval index produce zero freeze calls. Direct transport and
+PCM admission now enforce early counts and strict keys. The expanded 11
+focused tests pass and cover meaningful wire/binding/oracle cases.
+
+Residual R2: `deriveSparsePcmIndex` calls `sourceManifest`, which rebases
+nonzero-offset units by cloning them before admission. A 65,537-unit source's
+last-element getter is read through derivation but not direct validation. An
+original first offset of -1 is also normalized to zero and accepted. The
+public derivation API has no admitted-source proof, so it cannot assume a
+caller-supplied source already passed validation.
+
+Attempt 3 is limited to admitting raw source shape/count/offset arithmetic
+before any rebasing or cloning, preserving valid global nonzero offsets, and
+adding the discriminating oversized-derivation and invalid-base tests. Add the
+remaining small contracted cases: bad format tag, declared index above 8 MiB
+or beyond the Blob, invalid window frame count/range. Validate raw offsets
+and endpoints before subtraction so rebasing cannot hide invalid arithmetic.
+Do not alter the wire format, enlarge limits, add a public API family, or
+start cache/network integration. Reuse bounded internal source validation
+where practical. One coherent correction receives the next independent
+Astra verdict.
