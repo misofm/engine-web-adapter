@@ -12,7 +12,7 @@ import type { AdapterAssetOverrides } from "./assets.js";
 import type { EngineWebAdapterError } from "./errors.js";
 import type { WebCapabilityScope } from "./capabilities.js";
 import type { AudioWorkletNodeLike, EngineFeed } from "./feed.js";
-import type { PcmPumpSource } from "./stems/pump.js";
+import type { PcmPumpSource, SparsePcmPumpSource } from "./stems/pump.js";
 import type {
   DeclaredStemSource,
   FlacDeliveryOptions,
@@ -20,6 +20,12 @@ import type {
   StemResolver,
   StemStore,
 } from "./stems/index.js";
+import type {
+  SparsePcmExpectation,
+  SparsePcmSessionLease,
+  SparsePcmSessionOptions,
+  VerifiedSparsePcmStore,
+} from "./stems/sparse-store.js";
 
 export type EngineSessionDocument = Uint8Array | string | { toJson(): string };
 export type EngineWebSessionState = "opening" | "ready" | "playing" | "paused" | "closed";
@@ -184,8 +190,22 @@ export type EngineWebSessionOptions = EngineWebSessionCommonOptions & (
       /** Advanced escape hatch: already-decoded canonical PCM. */
       readonly resolver: StemResolver;
       readonly flac?: never;
-    }
+  }
 );
+
+export type SparseEngineWebSessionOptions = Omit<
+  EngineWebSessionCommonOptions,
+  "store" | "createPump" | "ingestDiagnostics"
+> & {
+  readonly store?: Pick<VerifiedSparsePcmStore, "openSession">;
+  readonly resolver?: SparsePcmSessionOptions["resolve"];
+  readonly maximumMetadataBytes?: number;
+  readonly createPump?: (options: {
+    readonly lease: SparsePcmSessionLease;
+    readonly sources: readonly SparsePcmPumpSource[];
+    readonly signal: AbortSignal;
+  }) => Promise<EnginePump>;
+};
 
 export interface EngineWebSession {
   readonly shape: SessionShape;

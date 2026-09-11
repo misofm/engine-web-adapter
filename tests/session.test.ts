@@ -9,12 +9,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { BrowserEngine } from "@misofm/engine/browser";
-import { EngineWebAdapterError, openEngineWebSession } from "../src/index.js";
+import { EngineWebAdapterError, openEngineWebSession, openSparseEngineWebSession } from "../src/index.js";
 import { assertEngineWebCapabilities } from "../src/capabilities.js";
 import { MSB1_CONTROL } from "../src/stems/ring.js";
 import type { EngineAudioContext, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
 import type { FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
 import type { DeclaredStemSource, StemResolver, StemSessionLease, StemStore } from "../src/stems/types.js";
+import type { SparsePcmSessionLease, SparsePcmSessionOptions } from "../src/stems/sparse-store.js";
+import type { SparsePcmPumpSource } from "../src/stems/pump.js";
 
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
 const IDENTITY_Z = `sha256:${"b".repeat(64)}` as const;
@@ -311,6 +313,93 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
     new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("close waited behind hung resume")), 50)),
   ]);
   await assert.rejects(hungPlay, (error: unknown) => error instanceof DOMException && error.name === "AbortError");
+});
+
+test("sparse session prepares complete authoritative sources through the shared controller", async () => {
+  const events: string[] = [];
+  const context = fakeContext(events);
+  const sources: DeclaredStemSource[] = [
+    { id: "source-z", spec: { channels: 2, bitDepth: 24, frames: 8, content: IDENTITY_Z } },
+    { id: "source-a", spec: { channels: 1, bitDepth: 16, frames: 8, content: IDENTITY } },
+    { id: "source-alias", spec: { channels: 1, bitDepth: 16, frames: 8, content: IDENTITY } },
+  ];
+  const compiled = [sources[1]!, sources[2]!, sources[0]!];
+  let request: SparsePcmSessionOptions | undefined;
+  let pumpSources: readonly SparsePcmPumpSource[] | undefined;
+  let leaseClosed = 0;
+  let storeClosed = 0;
+  const lease: SparsePcmSessionLease = {
+    leaseId: "sparse-lease",
+    sources: [],
+    async read() { throw new Error("custom pump does not read descriptors"); },
+    async close() { leaseClosed += 1; events.push("sparse.map.close"); },
+  };
+  const store = {
+    async openSession(options: SparsePcmSessionOptions) { request = options; events.push("sparse.open"); return lease; },
+    async close() { storeClosed += 1; },
+  };
+  const host = {
+    node: { connect() {}, disconnect() {} },
+    async dispose() { events.push("host.dispose"); },
+  } as unknown as BrowserEngine["host"];
+  const session = await openSparseEngineWebSession({
+    document: documentFor(sources), sources, leaseId: "sparse-lease", console: false,
+    capabilityScope: capabilities(), store,
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: compiled.map((source) => ({ id: source.id, channels: source.spec.channels, frames: BigInt(source.spec.frames) })) }),
+    createContext: () => context,
+    createHost: async () => host,
+    createAttachNode: () => {
+      const port = { onmessage: null as ((event: MessageEvent) => void) | null, postMessage(message: unknown) {
+        const value = message as { op: string; rings?: SharedArrayBuffer[] };
+        if (value.op === "attach") for (const ring of value.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+        else if (value.op === "prepare-seek") port.onmessage?.({ data: { ...value, op: "seek-prepared", kind: "confirmed" } } as MessageEvent);
+      } };
+      return { port, disconnect() {} };
+    },
+    createPump: async ({ lease: receivedLease, sources: receivedSources }) => {
+      assert.equal(receivedLease, lease);
+      pumpSources = receivedSources;
+      for (const source of receivedSources) fillRing(source.ring, source.frames);
+      return {
+        async seekFrames(frame) {
+          for (const source of receivedSources) {
+            const writer = new Msb1RingWriter(source.ring);
+            writer.seek(2n, BigInt(frame));
+            const control = new Int32Array(source.ring);
+            Atomics.store(control, MSB1_CONTROL.READ_INDEX, Atomics.load(control, MSB1_CONTROL.WRITE_INDEX));
+            writer.reserve(4);
+            writer.commit({ generation: 2n, startFrame: BigInt(frame), frames: 4, endOfRegion: false });
+            writer.reserve(2);
+            writer.commit({ generation: 2n, startFrame: BigInt(frame) + 4n, frames: 2, endOfRegion: true });
+          }
+          return 2n;
+        },
+        close() { events.push("pump.close"); },
+      };
+    },
+    createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+  });
+  assert.equal(request?.resolve, undefined, "omitted resolver remains preinstalled-only");
+  assert.deepEqual(request?.sources.map((source) => ({
+    sourceId: source.sourceId, identity: source.identity, sampleRateHz: source.sampleRateHz,
+    channels: source.channels, bitDepth: source.bitDepth, frames: source.frames, canonicalBytes: source.canonicalBytes,
+  })), [
+    { sourceId: "source-a", identity: IDENTITY, sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 8, canonicalBytes: 16 },
+    { sourceId: "source-alias", identity: IDENTITY, sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 8, canonicalBytes: 16 },
+    { sourceId: "source-z", identity: IDENTITY_Z, sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: 8, canonicalBytes: 48 },
+  ]);
+  assert.deepEqual(pumpSources?.map((source) => ({ sourceId: source.sourceId, sampleRateHz: source.sampleRateHz })), [
+    { sourceId: "source-a", sampleRateHz: 48_000 },
+    { sourceId: "source-alias", sampleRateHz: 48_000 },
+    { sourceId: "source-z", sampleRateHz: 48_000 },
+  ]);
+  await session.seekFrames(2);
+  await session.close();
+  await session.close();
+  assert.equal(leaseClosed, 1);
+  assert.equal(storeClosed, 0, "injected sparse stores remain caller-owned");
+  assert.ok(events.indexOf("pump.close") < events.indexOf("sparse.map.close"));
 });
 
 test("session snapshots document and source declarations before deferred scratch work", async () => {
