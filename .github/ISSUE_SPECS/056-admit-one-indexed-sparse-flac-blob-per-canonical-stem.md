@@ -58,3 +58,38 @@ No recording package compatibility parser, native-quilt reader, session bundler 
 ## Issue boundary and implementation handoff
 
 Root audited all 26 existing numbered adapter specs against GitHub: no missing issues or title mismatches; prior owned #54 is closed. This local #56 title/body is synchronized before implementation. Luna xhigh owns one coherent pure-format tranche and must pause when focused-green so root commits and pushes the exact paths before further changes. Astra medium supplies one adversarial verdict per attempt using the non-implementing planning thread; the session thread limit prevents a fresh-context reviewer, and evidence must disclose this. No network/publication or storage-pump work belongs in this issue.
+
+
+## Attempt 1 evidence (Luna, 2026-09-11)
+
+Implemented the first singular-stem tranche in src/stems/sparse-format.ts,
+src/stems/sparse-pcm.ts, src/stems/index.ts, tests/sparse-stems.test.ts and
+docs/sparse-stem-contract.md. The old MISOSPC1 recording shape and source-set
+binder were replaced directly by the MISOSTM1 one-stem manifest, bounded
+header/manifest admission seams, exact canonical JSON serializer, payload
+extent checks, one-source identity/shape binding and interval-derived PCM
+index. The accepted branded PCM reader remains bounded and chunk-agnostic.
+No HTTP, OPFS, worker, store, session, codec, native or package-version change
+was made.
+
+Focused command:
+
+    npm run build && node scripts/clean-test-dist.mjs && npm exec -- tsc -p tsconfig.test.json && node --test .test-dist/tests/sparse-stems.test.js
+
+Result: 16 tests passed, 0 failed.
+
+Proportional gates:
+
+- npm run typecheck passed.
+- npm run format:check passed.
+- npm run lint passed (source-policy: 40 files).
+- npm run check:decoder passed (56762 bytes, fixed 32/32 pages).
+- npm test passed: 207 tests, 0 failed.
+- npm run check:package passed (package-policy: 166 files, 168045 bytes).
+
+A fresh packed candidate was imported and round-tripped with the pure stems
+entrypoint in Node 22.23.2 and Bun 1.x, both without browser globals. The
+Node and Bun checks each reported packed-*-: import/roundtrip PASS with
+payload start 481 and payload bytes 8. No browser harness was run because this
+slice contains pure format/index helpers only. Parser admission verifies shape,
+canonical metadata and extents; it does not authenticate FLAC or decoded PCM.
