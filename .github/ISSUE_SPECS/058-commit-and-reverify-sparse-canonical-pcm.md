@@ -385,3 +385,23 @@ has no upfront index, so it exercises the reviewed post-acquisition race.
 Linux WebKit retains the documented missing-storage limitation. Acceptance still
 requires the exact-source macOS gate and one independent Astra medium attempt5
 verdict. No subsequent feature, release or deployment is claimed.
+
+## Attempt 5 independent verdict — PASS
+
+Astra medium independently reviewed80a980154b985953805d488b51546d580aefed57,
+ran the complete237-test package check and reran the earlier cancellation,
+physical settlement, lock and full-Cause reproducers. All passed. This was the
+existing independent non-implementing review context, not a fresh-context review.
+The single final verdict is PASS; no sixth attempt occurred.
+
+Exact-source packed OPFS qualification also passed in
+https://github.com/misofm/engine-web-adapter/actions/runs/34616120891:
+macOS15.7.9 arm64, Node22.23.2/npm10.9.8, Playwright1.62.1,
+Chromium151.0.7922.34 and WebKit26.5. Cold install, warm canonical verification,
+partial marker cleanup, cancellation after data acquisition and physical lock
+teardown passed. This is macOS browser evidence, not iOS Safari qualification.
+The reviewer report and exact-source browser/check/probe artifacts are retained
+under `/data/sparse-pcm-launch/tooling/adapter-58-reviews/` and
+`adapter-58-attempt5-review/`, with browser artifacts in
+`adapter-58-macos-80a9801/`. The accepted capability is sparse persistence and
+reverification; pump, acquisition, CLI and app delivery remain successor work.
