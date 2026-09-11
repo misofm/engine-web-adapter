@@ -1,4 +1,4 @@
-# Propagate terminal PCM worker failures through the open session
+# Propagate terminal PCM worker failures through open sessions
 
 Base: adapter feature branch after issue50 implementation `20705fdd8fc5d6fb07323dedbdbc72d75b88f101`, with local 0.3.5 release preparation. Exact registry engine 0.2.1 remains unchanged. Root explicitly extends the authorized scalable 64-track hardening to this lifecycle gap before publication. No engine/app source is copied.
 

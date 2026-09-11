@@ -1,4 +1,4 @@
-# Separate bounded FLAC downloads from adaptive processing
+# Separate bounded FLAC downloads from adaptive decode and hashing concurrency
 
 Base: adapter main `2c0d7928395db82744733d3dd5c045545eb366e9` (0.3.3), exact registry engine 0.2.1. App analysis: `/home/bl/misofm/app/docs/analysis/mixer-ingest-concurrency.md`, app source `8588fbdd68d21b1de9edbf2c5a940112df775081`. No copied engine/app source and no legacy engine inspection.
 

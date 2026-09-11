@@ -45,3 +45,38 @@ export type {
   StemSessionLease,
   StemStore,
 } from "./types.js";
+export {
+  SPARSE_STEM_FORMAT,
+  SPARSE_STEM_MAGIC,
+  SPARSE_STEM_HEADER_BYTES,
+  SPARSE_STEM_MAX_INDEX_BYTES,
+  SPARSE_STEM_MAX_SOURCES,
+  SPARSE_STEM_MAX_UNITS,
+  SPARSE_STEM_MAX_UNIT_BYTES,
+  SPARSE_STEM_MAX_OBJECT_BYTES,
+  validateSparseStemManifest,
+  serializeSparseStemIndex,
+  serializeSparseStemPackage,
+  parseSparseStemPackage,
+  assertSparseStemSessionBinding,
+} from "./sparse-format.js";
+export type {
+  SparseStemUnit,
+  SparseStemSource,
+  SparseStemManifest,
+  ParsedSparseStemPackage,
+  SparseSessionSourceShape,
+  SparseSessionDeclaredSource,
+  SparseSessionSourceExpectation,
+  SparsePayload,
+} from "./sparse-format.js";
+export {
+  SPARSE_PCM_FORMAT,
+  SPARSE_PCM_MAX_WINDOW_FRAMES,
+  SPARSE_PCM_MAX_INTERVALS,
+  SPARSE_PCM_MAX_INDEX_BYTES,
+  deriveSparsePcmIndex,
+  validateSparsePcmIndex,
+  readSparsePcmWindow,
+} from "./sparse-pcm.js";
+export type { SparsePcmInterval, SparsePcmIndex, SparsePcmIndexDraft, SparsePcmDerivation } from "./sparse-pcm.js";

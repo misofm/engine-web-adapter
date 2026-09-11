@@ -1,4 +1,4 @@
-# Publish `@misofm/engine-web-adapter` 0.1.0 via npm trusted publishing
+# Publish @misofm/engine-web-adapter 0.1.0 via npm trusted publishing
 
 GitHub: https://github.com/misofm/engine-web-adapter/issues/4
 

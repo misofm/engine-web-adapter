@@ -1,4 +1,4 @@
-# Scale verified PCM playback to 64 sources
+# Scale verified PCM playback to 64 sources with bounded read-ahead and complete prefill
 
 Base: adapter 0.3.4 `c05bb513e8336bae89dc22c25b26dca41fc281d8`, exact registry engine 0.2.1. App research: `docs/analysis/mixer-all-ready-poc-results.md` and `docs/design/mixer-large-session-architecture.md` at app `cd7782bc7057fc7ed64e8b1d9ef6bd64dae5aa4d` plus retained research artifacts. No copied engine/app source and no legacy engine inspection.
 
