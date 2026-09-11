@@ -1022,4 +1022,47 @@ describe("VerifiedSparsePcmStore", () => {
     await right.close();
     await store.close();
   });
+
+  it("charges one captured boundary snapshot despite accessor substitutions", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const expected = expectation(bytes, 1);
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "snapshot-boundary" });
+    let leaseIdReads = 0;
+    let sourcesReads = 0;
+    const declarations = Array.from({ length: 100 }, (_, index) => ({ ...expected, sourceId: `source-${index}` }));
+    const lease = await store.openSession({
+      get leaseId() { leaseIdReads += 1; return leaseIdReads === 1 ? "x" : "l".repeat(10_000); },
+      maximumMetadataBytes: 1_024,
+      get sources() { sourcesReads += 1; return sourcesReads === 1 ? [] : declarations; },
+      resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }),
+    });
+    assert.deepEqual(lease.sources, []);
+    assert.equal(leaseIdReads, 1);
+    assert.equal(sourcesReads, 1);
+    await lease.close();
+    await store.close();
+
+    const secondBackend = new MemoryStemStorageBackend();
+    const secondStore = new VerifiedSparsePcmStore({ backend: secondBackend, instanceId: "snapshot-source" });
+    let sourceIdReads = 0;
+    const source = { ...expected, sourceId: "x" };
+    Object.defineProperty(source, "sourceId", { enumerable: true, get: () => { sourceIdReads += 1; return sourceIdReads === 1 ? "x" : "z".repeat(10_000); } });
+    const secondLease = await secondStore.openSession({ leaseId: "x", maximumMetadataBytes: 1_024, sources: [source], resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+    assert.equal(secondLease.sources[0]!.sourceId, "x");
+    assert.equal(sourceIdReads, 1);
+    await secondLease.close();
+    await secondStore.close();
+  });
+
+  it("rejects an oversized ordinary array before touching a late element getter", async () => {
+    let elementReads = 0;
+    const sources = new Array(5) as unknown[];
+    Object.defineProperty(sources, "0", { enumerable: true, get: () => { elementReads += 1; throw new Error("late element getter accessed"); } });
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "snapshot-array-bound" });
+    await assert.rejects(store.openSession({ leaseId: "x", maximumMetadataBytes: 1_024, sources: sources as never[] }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    assert.equal(elementReads, 0);
+    await store.close();
+  });
 });

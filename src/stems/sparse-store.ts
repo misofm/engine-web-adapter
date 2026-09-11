@@ -589,101 +589,142 @@ interface CheckedSparsePcmSession {
   readonly signal: AbortSignal | undefined;
 }
 
-function decodeSessionOptions(input: unknown): Effect.Effect<CheckedSparsePcmSession, SparseBoundaryError> {
-  return Effect.gen(function*() {
-    const budget = yield* preflightSessionOptions(input);
-    const value = yield* Schema.decodeUnknownEffect(SessionOptionsSchema, { onExcessProperty: "error" })(input).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse PCM session options schema is invalid", cause })));
-    if (value.resolve !== undefined && typeof value.resolve !== "function") return yield* new SparseBoundaryError({ message: "Sparse PCM session resolver is invalid" });
-    if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) return yield* new SparseBoundaryError({ message: "Sparse PCM session signal is invalid" });
-    const declarations: SparsePcmSessionSource[] = [];
-    const unique: SparsePcmExpectation[] = [];
-    const identities = new Map<StemIdentity, SparsePcmExpectation>();
-    const sourceIds = new Set<string>();
-    for (const raw of value.sources) {
-      const expected = yield* decodeExpected({
-        identity: raw.identity,
-        sampleRateHz: raw.sampleRateHz,
-        channels: raw.channels,
-        bitDepth: raw.bitDepth,
-        frames: raw.frames,
-        canonicalBytes: raw.canonicalBytes,
-      });
-      if (sourceIds.has(raw.sourceId)) return yield* new SparseBoundaryError({ message: "Sparse PCM session source IDs must be unique" });
-      sourceIds.add(raw.sourceId);
-      const prior = identities.get(expected.identity);
-      if (prior !== undefined && !sameExpectationShape(prior, expected)) return yield* new SparseBoundaryError({ message: "Sparse PCM session aliases disagree about an identity" });
-      if (prior === undefined) {
-        identities.set(expected.identity, expected);
-        unique.push(expected);
-      }
-      declarations.push(Object.freeze({ ...expected, sourceId: raw.sourceId }));
+const decodeSessionOptions = Effect.fn("SparseProgram.decodeSessionOptions")(function*(input: unknown) {
+  const captured = yield* captureSessionOptions(input);
+  const value = yield* Schema.decodeUnknownEffect(SessionOptionsSchema, { onExcessProperty: "error" })(captured.snapshot).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse PCM session options schema is invalid", cause })));
+  if (value.resolve !== undefined && typeof value.resolve !== "function") return yield* new SparseBoundaryError({ message: "Sparse PCM session resolver is invalid" });
+  if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) return yield* new SparseBoundaryError({ message: "Sparse PCM session signal is invalid" });
+  const declarations: SparsePcmSessionSource[] = [];
+  const unique: SparsePcmExpectation[] = [];
+  const identities = new Map<StemIdentity, SparsePcmExpectation>();
+  const sourceIds = new Set<string>();
+  for (const raw of value.sources) {
+    const expected = yield* decodeExpected({
+      identity: raw.identity,
+      sampleRateHz: raw.sampleRateHz,
+      channels: raw.channels,
+      bitDepth: raw.bitDepth,
+      frames: raw.frames,
+      canonicalBytes: raw.canonicalBytes,
+    });
+    if (sourceIds.has(raw.sourceId)) return yield* new SparseBoundaryError({ message: "Sparse PCM session source IDs must be unique" });
+    sourceIds.add(raw.sourceId);
+    const prior = identities.get(expected.identity);
+    if (prior !== undefined && !sameExpectationShape(prior, expected)) return yield* new SparseBoundaryError({ message: "Sparse PCM session aliases disagree about an identity" });
+    if (prior === undefined) {
+      identities.set(expected.identity, expected);
+      unique.push(expected);
     }
-    return {
-      leaseId: value.leaseId,
-      sources: Object.freeze(declarations),
-      unique: Object.freeze(unique),
-      maximumMetadataBytes: budget.maximumMetadataBytes,
-      declarationMetadataBytes: budget.declarationMetadataBytes,
-      resolve: value.resolve as SparsePcmSessionOptions["resolve"],
-      signal: value.signal as AbortSignal | undefined,
-    };
-  });
-}
+    declarations.push(Object.freeze({ ...expected, sourceId: raw.sourceId }));
+  }
+  return {
+    leaseId: value.leaseId,
+    sources: Object.freeze(declarations),
+    unique: Object.freeze(unique),
+    maximumMetadataBytes: captured.maximumMetadataBytes,
+    declarationMetadataBytes: captured.declarationMetadataBytes,
+    resolve: value.resolve as SparsePcmSessionOptions["resolve"],
+    signal: value.signal as AbortSignal | undefined,
+  };
+});
 
-interface SessionPreflight {
+interface CapturedSparsePcmSession {
+  readonly snapshot: Readonly<Record<string, unknown>>;
   readonly maximumMetadataBytes: number;
   readonly declarationMetadataBytes: number;
 }
 
-function preflightSessionOptions(input: unknown): Effect.Effect<SessionPreflight, SparseBoundaryError> {
-  return Effect.try({
-    try: () => {
-      if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0) throw new Error("session options must be a plain object");
-      const keys = Object.keys(input).sort();
-      const allowed = ["leaseId", "maximumMetadataBytes", "resolve", "signal", "sources"];
-      if (keys.some((key) => !allowed.includes(key)) || keys.length < 2 || keys.length > allowed.length) throw new Error("session options contain unknown keys");
-      const candidate = input as Record<string, unknown>;
-      const maximumMetadataBytes = candidate.maximumMetadataBytes === undefined ? DEFAULT_SESSION_METADATA_BYTES : candidate.maximumMetadataBytes;
-      if (typeof maximumMetadataBytes !== "number" || !Number.isSafeInteger(maximumMetadataBytes) || maximumMetadataBytes <= 0) throw new Error("maximumMetadataBytes must be a positive safe integer");
-      if (typeof candidate.leaseId !== "string" || candidate.leaseId.length === 0) throw new Error("leaseId must be a non-empty string");
-      const labelBytes = safeMultiply(2, candidate.leaseId.length);
-      if (labelBytes === undefined || labelBytes > maximumMetadataBytes) throw new Error("leaseId exceeds the metadata budget");
-      if (!Array.isArray(candidate.sources)) throw new Error("sources must be an array");
-      const sourceCount = candidate.sources.length;
-      if (!Number.isSafeInteger(sourceCount) || sourceCount > Math.floor(maximumMetadataBytes / SESSION_SOURCE_DECLARATION_BYTES)) throw new Error("source count exceeds the metadata budget");
-      let declarationMetadataBytes = labelBytes;
-      for (let index = 0; index < sourceCount; index += 1) {
-        const source = candidate.sources[index];
-        preflightSessionSource(source);
-        const sourceId = (source as Record<string, unknown>).sourceId as string;
-        const sourceIdBytes = safeMultiply(2, sourceId.length);
-        if (sourceIdBytes === undefined) throw new Error("sourceId length is outside its bound");
-        const next = safeAdd(declarationMetadataBytes, SESSION_SOURCE_DECLARATION_BYTES + sourceIdBytes);
-        if (next === undefined || next > maximumMetadataBytes) throw new Error("source declarations exceed the metadata budget");
-        declarationMetadataBytes = next;
-      }
-      const resolve = candidate.resolve;
-      if (resolve !== undefined && typeof resolve !== "function") throw new Error("session resolver must be a function");
-      if (candidate.signal !== undefined && !(candidate.signal instanceof AbortSignal)) throw new Error("session signal is invalid");
-      return { maximumMetadataBytes, declarationMetadataBytes };
-    },
+const captureSessionOptions = Effect.fn("SparseProgram.captureSessionOptions")(function*(input: unknown) {
+  return yield* Effect.try({
+    try: () => captureSessionOptionsSnapshot(input),
     catch: (cause) => new SparseBoundaryError({ message: "Sparse PCM session options failed bounded preflight", cause }),
   });
+});
+
+function captureSessionOptionsSnapshot(input: unknown): CapturedSparsePcmSession {
+  if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0) throw new Error("session options must be a plain object");
+  const keys = Object.keys(input).sort();
+  const allowed = ["leaseId", "maximumMetadataBytes", "resolve", "signal", "sources"];
+  if (keys.some((key) => !allowed.includes(key)) || keys.length < 2 || keys.length > allowed.length) throw new Error("session options contain unknown keys");
+  const candidate = input as Record<string, unknown>;
+  const maximumMetadataValue = ownValue(candidate, "maximumMetadataBytes");
+  const maximumMetadataBytes = maximumMetadataValue === undefined ? DEFAULT_SESSION_METADATA_BYTES : maximumMetadataValue;
+  if (typeof maximumMetadataBytes !== "number" || !Number.isSafeInteger(maximumMetadataBytes) || maximumMetadataBytes <= 0) throw new Error("maximumMetadataBytes must be a positive safe integer");
+  const leaseId = ownValue(candidate, "leaseId");
+  if (typeof leaseId !== "string" || leaseId.length === 0) throw new Error("leaseId must be a non-empty string");
+  const labelBytes = safeMultiply(2, leaseId.length);
+  if (labelBytes === undefined || labelBytes > maximumMetadataBytes) throw new Error("leaseId exceeds the metadata budget");
+  const sources = ownValue(candidate, "sources");
+  if (!Array.isArray(sources)) throw new Error("sources must be an array");
+  const sourceCount = sources.length;
+  if (!Number.isSafeInteger(sourceCount) || sourceCount > Math.floor(maximumMetadataBytes / SESSION_SOURCE_DECLARATION_BYTES)) throw new Error("source count exceeds the metadata budget");
+  let declarationMetadataBytes = labelBytes;
+  const detachedSources: Record<string, unknown>[] = [];
+  for (let index = 0; index < sourceCount; index += 1) {
+    const source = sources[index];
+    const admitted = captureSessionSource(source, declarationMetadataBytes, maximumMetadataBytes);
+    declarationMetadataBytes = admitted.declarationMetadataBytes;
+    detachedSources.push(admitted.source);
+  }
+  const resolve = ownValue(candidate, "resolve");
+  if (resolve !== undefined && typeof resolve !== "function") throw new Error("session resolver must be a function");
+  const signal = ownValue(candidate, "signal");
+  if (signal !== undefined && !(signal instanceof AbortSignal)) throw new Error("session signal is invalid");
+  const snapshot: Record<string, unknown> = {
+    leaseId,
+    maximumMetadataBytes,
+    sources: Object.freeze(detachedSources),
+  };
+  if (resolve !== undefined) snapshot.resolve = resolve;
+  if (signal !== undefined) snapshot.signal = signal;
+  return { snapshot: Object.freeze(snapshot), maximumMetadataBytes, declarationMetadataBytes };
 }
 
-function preflightSessionSource(input: unknown): void {
+function captureSessionSource(
+  input: unknown,
+  declarationMetadataBytes: number,
+  maximumMetadataBytes: number,
+): {
+  readonly source: Readonly<Record<string, unknown>>;
+  readonly declarationMetadataBytes: number;
+} {
   if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0) throw new Error("session source must be a plain object");
   const keys = Object.keys(input).sort();
   const expected = ["bitDepth", "canonicalBytes", "channels", "frames", "identity", "sampleRateHz", "sourceId"];
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) throw new Error("session source keys are not exact");
   const candidate = input as Record<string, unknown>;
-  if (typeof candidate.sourceId !== "string" || candidate.sourceId.length === 0) throw new Error("sourceId must be non-empty");
-  if (typeof candidate.identity !== "string" || candidate.identity.length > 71) throw new Error("identity is outside its bound");
+  const sourceId = ownValue(candidate, "sourceId");
+  const identity = ownValue(candidate, "identity");
+  const sampleRateHz = ownValue(candidate, "sampleRateHz");
+  const channels = ownValue(candidate, "channels");
+  const bitDepth = ownValue(candidate, "bitDepth");
+  const frames = ownValue(candidate, "frames");
+  const canonicalBytes = ownValue(candidate, "canonicalBytes");
+  if (typeof sourceId !== "string" || sourceId.length === 0) throw new Error("sourceId must be non-empty");
+  if (typeof identity !== "string" || identity.length > 71) throw new Error("identity is outside its bound");
   for (const key of ["sampleRateHz", "channels", "bitDepth", "frames", "canonicalBytes"]) {
-    if (typeof candidate[key] !== "number" || !Number.isSafeInteger(candidate[key])) throw new Error(`${key} is not a safe integer`);
+    const value = { sampleRateHz, channels, bitDepth, frames, canonicalBytes }[key];
+    if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${key} is not a safe integer`);
   }
-  const product = (candidate.frames as number) * (candidate.channels as number) * ((candidate.bitDepth as number) / 8);
+  const checkedSampleRateHz = sampleRateHz as number;
+  const checkedChannels = channels as 1 | 2;
+  const checkedBitDepth = bitDepth as 16 | 24;
+  const checkedFrames = frames as number;
+  const checkedCanonicalBytes = canonicalBytes as number;
+  const product = checkedFrames * checkedChannels * (checkedBitDepth / 8);
   if (!Number.isSafeInteger(product) || product < 1) throw new Error("canonical PCM product is outside its bound");
+  const sourceIdBytes = safeMultiply(2, sourceId.length);
+  if (sourceIdBytes === undefined) throw new Error("sourceId length is outside its bound");
+  const next = safeAdd(declarationMetadataBytes, SESSION_SOURCE_DECLARATION_BYTES + sourceIdBytes);
+  if (next === undefined || next > maximumMetadataBytes) throw new Error("source declarations exceed the metadata budget");
+  return {
+    source: Object.freeze({ sourceId, identity, sampleRateHz: checkedSampleRateHz, channels: checkedChannels, bitDepth: checkedBitDepth, frames: checkedFrames, canonicalBytes: checkedCanonicalBytes }),
+    declarationMetadataBytes: next,
+  };
+}
+
+function ownValue(candidate: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(candidate, key) ? candidate[key] : undefined;
 }
 
 function sameExpectationShape(left: SparsePcmExpectation, right: SparsePcmExpectation): boolean {
