@@ -144,3 +144,10 @@ Root independently found a remaining ordinary BYOB EOF failure using an all-sile
 
 
 The ordinary BYOB EOF correction now passes the retained root reproduction (oneGET, zero active bytes, no decoder) and an added real byte-Response test. Carry is consumed before terminal EOF, empty final BYOB views succeed, nonempty final views remain consumable, undefined BYOB termination refuses, and default-reader undefined EOF remains supported. Producer3focused tests/build/test compilation/typecheck/format/lint pass; logs are `installation/byob-correction/` under the retained71 evidence. This narrow correction is checkpointed before the actual multi-block packaged decoder/browser/OPFS integration and remaining frozen corpus; it is not the final71verdict.
+
+
+## Attempt 1 first real packaged decoder installation probe
+
+The existing packed Chromium harness now runs an indexed fixture through actual packaged libFLAC workers and OPFS. Retained log `installation/real-vertical/browser-indexed.log` reports one fullGET, two36000-frame FLAC chunks,432000 activePCM bytes,17 mapped spans across chunk/interval boundaries,600000 canonical timeline bytes with full identity verification, and warm verification with zero additional locator/network/decoder calls. Worker errors are empty. Root formatcheck passes; npm pack's build and the harness's fresh consumer typecheck/Vite build passed inside that run.
+
+This is a recoverable real-decoder probe, not final packaging/installer acceptance. The first instrumentation overrides worker construction and the test server serves package-relative module dependencies outside the Vite output; restore default package Worker construction with observer-only counting and remove that test-only serving workaround before claiming ordinary consumer deployment. Both current chunks decode only216000 bytes, so the supplied72000-frame/432000-byte single-chunk fixture must be used to exercise the intended output/input-credit crossings. Keep this same harness and one synthetic fixture, not a new framework. Remaining integrity/ownership corpus, full package gates and fresh independent verdict are still required.

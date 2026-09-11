@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rename, writeFile, cp } from "node:fs/promises";
@@ -9,6 +10,7 @@ import { spawnSync } from "node:child_process";
 
 const supportModules = join(process.cwd(), "node_modules");
 const live = process.argv.includes("--live");
+const indexedSparse = process.argv.includes("--indexed-sparse");
 const profile = live ? {
   name: "live",
   url: "https://stems.miso.fm/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.flac",
@@ -32,6 +34,7 @@ const profile = live ? {
   remoteBytes: 206,
   etag: '"native-silence-v1"',
 };
+const indexedFixture = indexedSparse ? await prepareIndexedFixture() : undefined;
 const chrome = resolveChromeExecutable();
 const root = await mkdtemp(join(tmpdir(), "engine-web-adapter-browser-"));
 process.env.npm_config_cache = join(root, "npm-cache");
@@ -82,7 +85,9 @@ self.onmessage = (event) => {
 await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
 await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><script type="module" src="/src/main.ts"></script>\n');
 await mkdir(join(consumer, "src"));
-await writeFile(join(consumer, "src", "main.ts"), browserSource(profile));
+await writeFile(join(consumer, "src", "main.ts"), indexedSparse
+  ? indexedBrowserSource(indexedFixture.profile)
+  : browserSource(profile));
 await writeFile(join(consumer, "consumer-check.ts"), `
 import { EngineWebAdapterError, openEngineWebSession, openSparseEngineWebSession } from "@misofm/engine-web-adapter";
 import type {
@@ -137,6 +142,18 @@ const server = createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url ?? "/", "http://local").pathname;
     if (pathname === "/favicon.ico") { response.statusCode = 204; response.end(); return; }
+    if (indexedSparse && pathname === indexedFixture.profile.url) {
+      if (request.method !== "GET" || request.headers.range !== undefined) { response.statusCode = 400; response.end("indexed delivery requires one full GET"); return; }
+      requests.set(pathname, "application/octet-stream");
+      response.statusCode = 200;
+      response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+      response.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+      response.setHeader("Content-Type", "application/octet-stream");
+      response.setHeader("Content-Length", String(indexedFixture.body.byteLength));
+      response.setHeader("ETag", indexedFixture.profile.etag);
+      response.end(indexedFixture.body);
+      return;
+    }
     if (pathname === "/native-silence.flac") {
       const bytes = await readFile(join(dist, "native-silence.flac"));
       const match = /^bytes=(\d+)-(\d+)$/u.exec(String(request.headers.range ?? ""));
@@ -154,6 +171,20 @@ const server = createServer(async (request, response) => {
       response.setHeader("Content-Length", String(end - start + 1));
       response.setHeader("ETag", '"native-silence-v1"');
       response.end(bytes.subarray(start, end + 1));
+      return;
+    }
+    // Vite copies the package's module Worker entrypoints as assets while
+    // retaining their relative source imports. Serve those package modules
+    // at the paths their copied Worker URLs resolve, so the packed browser
+    // probe exercises the shipped Worker rather than a missing dependency.
+    if (pathname === "/errors.js" || pathname.startsWith("/stems/")) {
+      const modulePath = join(consumer, "node_modules", "@misofm", "engine-web-adapter", "dist", pathname.slice(1));
+      requests.set(pathname, "text/javascript; charset=utf-8");
+      response.statusCode = 200;
+      response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+      response.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+      response.setHeader("Content-Type", "text/javascript; charset=utf-8");
+      response.end(await readFile(modulePath));
       return;
     }
     const relative = pathname === "/" ? "index.html" : pathname.slice(1);
@@ -174,8 +205,10 @@ const browser = await chromium.launch({ executablePath: chrome, headless: true, 
 try {
   const page = await browser.newPage();
   const consoleErrors = [];
+  const requestFailures = [];
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   page.on("pageerror", (error) => consoleErrors.push(error.stack ?? error.message));
+  page.on("requestfailed", (request) => requestFailures.push({ url: request.url(), failure: request.failure()?.errorText ?? "unknown" }));
   await page.goto(`http://127.0.0.1:${address.port}/`);
   await page.waitForFunction(
     () => globalThis.__result !== undefined || globalThis.__error !== undefined,
@@ -183,9 +216,13 @@ try {
     { timeout: live ? 180_000 : 30_000 },
   ).catch(async (error) => {
     throw new Error(JSON.stringify({ message: error.message, seekStage: await page.evaluate(() => globalThis.__seekStage),
-      consoleErrors, requests: [...requests.entries()] }));
+      consoleErrors, requestFailures, requests: [...requests.entries()] }));
   });
   const result = await page.evaluate(() => ({ result: globalThis.__result, error: globalThis.__error }));
+  if (indexedSparse) {
+    assert.equal(result.error, undefined, JSON.stringify({ error: result.error, consoleErrors, requestFailures, requests: [...requests.entries()] }));
+    assertIndexedResult(result.result, indexedFixture.profile, requests, consoleErrors, address.port);
+  } else {
   assert.equal(result.error, undefined, JSON.stringify({ error: result.error, consoleErrors, requests: [...requests.entries()] }));
   assert.ok(result.result?.coldLocatorCalls > 0, "cold FLAC open must locate exact ranges");
   assert.equal(result.result?.warmLocatorCalls, result.result?.coldLocatorCalls, "warm open must make zero locator calls");
@@ -267,9 +304,97 @@ try {
   assert.ok(requested.some(([path, mime]) => path.includes("audio-worklet-") && !path.includes("host") && mime.includes("javascript")), "Engine worklet asset not observed");
   console.log(JSON.stringify({ profile: profile.name, origin: `http://127.0.0.1:${address.port}`, ...result.result,
     assets: requested.filter(([path]) => /\.(?:js|wasm)$/u.test(path)).length, root }));
+  }
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
+}
+
+async function prepareIndexedFixture() {
+  const fixtureDirectory = process.env.ADAPTER_71_MULTIBLOCK_DIR;
+  if (fixtureDirectory === undefined) throw new Error("ADAPTER_71_MULTIBLOCK_DIR is required with --indexed-sparse");
+  const outputDirectory = join(process.env.ADAPTER_71_EVIDENCE_DIR ?? join(process.cwd(), ".adapter-71-evidence"), "multiblock");
+  await mkdir(outputDirectory, { recursive: true });
+  const firstFlac = new Uint8Array(await readFile(join(fixtureDirectory, "part-a.flac")));
+  const secondFlac = new Uint8Array(await readFile(join(fixtureDirectory, "part-b.flac")));
+  const firstPcm = new Uint8Array(await readFile(join(fixtureDirectory, "part-a.pcm")));
+  const secondPcm = new Uint8Array(await readFile(join(fixtureDirectory, "part-b.pcm")));
+  const frameBytes = 2 * (24 / 8);
+  const chunkFrames = firstPcm.byteLength / frameBytes;
+  if (chunkFrames !== 36_000 || secondPcm.byteLength !== chunkFrames * frameBytes) throw new Error("indexed fixture chunks are not two 36000-frame stereo24 payloads");
+  const intervals = [
+    { startFrame: 0, frames: 50_000, packedFrameOffset: 0 },
+    { startFrame: 60_000, frames: 22_000, packedFrameOffset: 50_000 },
+  ];
+  const frames = 100_000;
+  const canonical = new Uint8Array(frames * frameBytes);
+  canonical.set(firstPcm, 0);
+  canonical.set(secondPcm.subarray(0, 14_000 * frameBytes), 36_000 * frameBytes);
+  canonical.set(secondPcm.subarray(14_000 * frameBytes), 60_000 * frameBytes);
+  const identity = `sha256:${sha256Hex(canonical)}`;
+  const manifest = {
+    format: "miso_sparse_stem_v1",
+    identity,
+    sampleRateHz: 48_000,
+    channels: 2,
+    bitDepth: 24,
+    frames,
+    intervals,
+    chunks: [
+      { offset: 0, bytes: firstFlac.byteLength, frames: chunkFrames, packedStartFrame: 0, flacSha256: sha256Hex(firstFlac), pcmSha256: sha256Hex(firstPcm) },
+      { offset: firstFlac.byteLength, bytes: secondFlac.byteLength, frames: chunkFrames, packedStartFrame: chunkFrames, flacSha256: sha256Hex(secondFlac), pcmSha256: sha256Hex(secondPcm) },
+    ],
+  };
+  const encodedManifest = Buffer.from(canonicalJson(manifest));
+  const header = Buffer.alloc(16);
+  Buffer.from("MISOSTM1").copy(header, 0);
+  header.writeUInt32LE(encodedManifest.byteLength, 8);
+  const body = Buffer.concat([header, encodedManifest, Buffer.from(firstFlac), Buffer.from(secondFlac)]);
+  await writeFile(join(outputDirectory, "sparse-package.bin"), body);
+  return {
+    body,
+    profile: {
+      name: "indexed-multiblock",
+      url: "/native-multiblock.sparse",
+      etag: '"adapter-71-multiblock-v1"',
+      expected: { identity, sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames, canonicalBytes: canonical.byteLength },
+      activeBytes: 72_000 * frameBytes,
+      canonicalPcmSha256: identity.slice(7),
+      intervals: intervals.map((interval) => ({ startFrame: interval.startFrame, frames: interval.frames, byteOffset: interval.packedFrameOffset * frameBytes })),
+      chunks: manifest.chunks.map((chunk) => ({ frames: chunk.frames, bytes: chunk.bytes, packedStartFrame: chunk.packedStartFrame })),
+    },
+  };
+}
+
+function sha256Hex(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
+function canonicalJson(value) {
+  if (value === null) return "null";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
+  if (typeof value === "object") return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + canonicalJson(value[key])).join(",") + "}";
+  throw new Error("unsupported canonical JSON value");
+}
+
+function assertIndexedResult(raw, profile, requests, consoleErrors, port) {
+  assert.equal(raw?.locateCalls, 1, "indexed cold install must locate once");
+  assert.equal(raw?.networkRequests, 1, "indexed cold install must make one full GET");
+  assert.equal(raw?.flacWorkers, profile.chunks.length, "indexed install must decode both FLAC chunks");
+  assert.ok((raw?.spanCount ?? 0) > 4, "indexed mapper did not emit multiple bounded spans");
+  assert.equal(raw?.coldDataBytes, profile.activeBytes, "indexed cold payload size changed");
+  assert.deepEqual(raw?.coldIntervals, profile.intervals, "indexed cold interval mapping changed");
+  assert.equal(raw?.coldIdentity, profile.expected.identity, "indexed cold canonical identity changed");
+  assert.equal(raw?.coldCanonicalBytes, profile.expected.canonicalBytes, "indexed cold canonical extent changed");
+  assert.equal(raw?.warmDataBytes, profile.activeBytes, "indexed warm payload size changed");
+  assert.equal(raw?.warmLocateCalls, 1, "indexed warm install reacquired the locator");
+  assert.equal(raw?.warmNetworkRequests, 1, "indexed warm install made a network request");
+  assert.equal(raw?.warmFlacWorkers, profile.chunks.length, "indexed warm install created a decoder worker");
+  assert.deepEqual(consoleErrors, []);
+  assert.deepEqual([...requests.entries()].filter(([path]) => path === profile.url), [[profile.url, "application/octet-stream"]]);
+  console.log(JSON.stringify({ profile: profile.name, origin: `http://127.0.0.1:${port}`,
+    mapping: { chunks: profile.chunks, intervals: profile.intervals, spans: raw?.spanCount },
+    canonical: { identity: profile.expected.identity, frames: profile.expected.frames, bytes: profile.expected.canonicalBytes },
+    ...raw, requests: [...requests.entries()] }));
 }
 
 function run(command, args, cwd = process.cwd()) {
@@ -293,6 +418,110 @@ function resolveChromeExecutable() {
   if (executable === undefined) throw new Error("Chrome/Chromium not found; set CHROME_EXECUTABLE");
   return executable;
 }
+
+function indexedBrowserSource(profile) { return String.raw`
+import { createSparseStemResolver, OpfsStorageBackend, VerifiedSparsePcmStore } from "@misofm/engine-web-adapter/stems";
+import { ADAPTER_ASSETS } from "@misofm/engine-web-adapter/assets";
+
+declare global { var __result: unknown; var __error: unknown }
+const profile = ${JSON.stringify(profile)} as const;
+const assetUrl = new URL(profile.url, location.href).href;
+const NativeFetch = globalThis.fetch;
+let locateCalls = 0;
+let networkRequests = 0;
+let flacWorkers = 0;
+let opfsWorkers = 0;
+let spanCount = 0;
+const workerErrors: Array<{ readonly worker: string; readonly message: string | undefined; readonly filename?: string; readonly line?: number; readonly column?: number; readonly error?: string }> = [];
+const workerStarts: Array<{ readonly worker: string; readonly decoderWasmUrl?: string }> = [];
+const assets = {
+  flacWorkerUrl: ADAPTER_ASSETS.flacWorker,
+  flacDecoderWasmUrl: ADAPTER_ASSETS.flacDecoderWasm,
+  opfsWorkerUrl: ADAPTER_ASSETS.opfsWorker,
+  createWorker(url: string | URL, options: WorkerOptions & { readonly type: "module" }) {
+    const label = String(url);
+    if (label.includes("flac-worker")) flacWorkers += 1;
+    if (label.includes("opfs-worker")) opfsWorkers += 1;
+    const worker = new Worker(url, options);
+    const postMessage = worker.postMessage.bind(worker);
+    worker.postMessage = ((message: unknown, transfer?: Transferable[]) => {
+      if (typeof message === "object" && message !== null && "type" in message && message.type === "start") {
+        workerStarts.push({ worker: label, decoderWasmUrl: "decoderWasmUrl" in message ? String(message.decoderWasmUrl) : undefined });
+      }
+      return postMessage(message, transfer);
+    }) as typeof worker.postMessage;
+    worker.addEventListener("error", (event) => workerErrors.push({ worker: label, message: event.message,
+      filename: event.filename, line: event.lineno, column: event.colno, error: event.error?.message }));
+    return worker;
+  },
+};
+const fetchPackage: typeof fetch = async (input, init) => {
+  const url = input instanceof Request ? input.url : new URL(input, location.href).href;
+  if (url === assetUrl) networkRequests += 1;
+  return NativeFetch(input, init);
+};
+const resolver = createSparseStemResolver({
+  locate(identity) {
+    if (identity !== profile.expected.identity) throw new Error("indexed locator received an unexpected identity");
+    locateCalls += 1;
+    return assetUrl;
+  },
+  fetch: fetchPackage,
+  assets,
+  readDeadlineMs: 30_000,
+  maximumWorkers: 1,
+});
+const backend = new OpfsStorageBackend({
+  folderName: "adapter71-indexed-multiblock-" + Date.now(),
+  assets,
+});
+const store = new VerifiedSparsePcmStore({ backend, instanceId: "indexed-multiblock" });
+const expected = profile.expected;
+try {
+  const cold = await store.installSource(expected, {
+    resolve: async (signal) => {
+      const resolved = await resolver(expected, signal);
+      return { ...resolved, spans: (async function*() {
+        for await (const span of resolved.spans) { spanCount += 1; yield span; }
+      })() };
+    },
+  });
+  const coldLocateCalls = locateCalls;
+  const coldNetworkRequests = networkRequests;
+  const coldFlacWorkers = flacWorkers;
+  const warm = await store.installSource(expected, {
+    resolve: async () => { throw new Error("indexed warm install must not resolve"); },
+  });
+  globalThis.__result = {
+    coldDataBytes: cold.data.size,
+    coldIntervals: cold.index.intervals,
+    coldIdentity: cold.index.identity,
+    coldCanonicalBytes: cold.index.canonicalBytes,
+    warmDataBytes: warm.data.size,
+    warmLocateCalls: locateCalls,
+    warmNetworkRequests: networkRequests,
+    warmFlacWorkers: flacWorkers,
+    locateCalls: coldLocateCalls,
+    networkRequests: coldNetworkRequests,
+    flacWorkers: coldFlacWorkers,
+    opfsWorkers,
+    spanCount,
+    workerErrors,
+    workerStarts,
+  };
+} catch (error) {
+  globalThis.__error = { error: describe(error), workerErrors, workerStarts };
+} finally {
+  await store.close();
+  backend.close();
+}
+function describe(error: unknown): unknown {
+  if (!(error instanceof Error)) return String(error);
+  const value = error as Error & { code?: unknown; details?: unknown; cause?: unknown };
+  return { name: value.name, message: value.message, code: value.code, details: value.details, stack: value.stack,
+    cause: value.cause === undefined ? undefined : describe(value.cause) };
+}
+`; }
 
 function browserSource(profile) { return String.raw`
 import { session } from "@misofm/engine";
