@@ -9,6 +9,30 @@ import type { SparsePcmExpectation } from "../src/stems/sparse-store.js";
 
 const ZERO_IDENTITY = `sha256:${createHash("sha256").update(new Uint8Array(4096)).digest("hex")}` as const;
 
+function responseBytes(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function responseWithByobTerminal(
+  result: ReadableStreamReadResult<Uint8Array>,
+): Response {
+  const response = new Response(null, { status: 200 });
+  let reads = 0;
+  const body = {
+    locked: false,
+    getReader(options?: { readonly mode?: "byob" }) {
+      if (options?.mode !== "byob") throw new TypeError("BYOB reader required");
+      return {
+        async read(_view: Uint8Array) { reads += 1; return reads === 1 ? result : { done: true, value: new Uint8Array() }; },
+        async cancel() {},
+        releaseLock() {},
+      };
+    },
+  };
+  Object.defineProperty(response, "body", { value: body });
+  return response;
+}
+
 class DecodeWorker implements FlacWorkerLike {
   readonly posted: FlacWorkerRequest[] = [];
   terminated = false;
@@ -111,6 +135,131 @@ function emptySilentPackage(): { readonly body: Uint8Array; readonly expected: S
   new DataView(header.buffer).setUint32(8, encoded.byteLength, true);
   return { body: new Uint8Array([...header, ...encoded]), expected };
 }
+
+async function expectFullResponseFailure(
+  packed: { readonly body: Uint8Array; readonly expected: SparsePcmExpectation },
+  response: () => Response,
+  code: string,
+  createWorker: () => FlacWorkerLike = () => { throw new Error("malformed all-silent source must not create a decoder worker"); },
+): Promise<void> {
+  let fetches = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/indexed",
+    fetch: async () => { fetches += 1; return response(); },
+    createWorker,
+  });
+  const resolved = await resolver(packed.expected, new AbortController().signal);
+  const iterator = resolved.spans[Symbol.asyncIterator]();
+  await assert.rejects(iterator.next(), (error: unknown) => error instanceof Error && "code" in error &&
+    (error as { readonly code?: unknown }).code === code);
+  assert.equal(fetches, 1);
+}
+
+test("full-response admission rejects malformed sections, headers, status and trailing bytes", async () => {
+  const packed = emptySilentPackage();
+  const manifestBytes = new DataView(packed.body.buffer, packed.body.byteOffset, packed.body.byteLength).getUint32(8, true);
+  const cases: readonly { readonly response: () => Response; readonly code: string }[] = [
+    { response: () => new Response(responseBytes(packed.body.slice(0, 8)), { status: 200 }), code: "stem.delivery.range" },
+    { response: () => new Response(responseBytes(packed.body.slice(0, 16 + Math.floor(manifestBytes / 2))), { status: 200 }), code: "stem.delivery.range" },
+    { response: () => new Response(responseBytes(packed.body), { status: 200, headers: { "Content-Length": "1" } }), code: "stem.delivery.http" },
+    { response: () => new Response(responseBytes(packed.body), { status: 200, headers: { "Content-Length": "invalid" } }), code: "stem.delivery.http" },
+    { response: () => new Response(responseBytes(packed.body), { status: 206 }), code: "stem.delivery.http" },
+    { response: () => new Response(responseBytes(packed.body), { status: 200, headers: { "Content-Encoding": "gzip" } }), code: "stem.delivery.http" },
+    { response: () => new Response(responseBytes(new Uint8Array([...packed.body, 0])), { status: 200 }), code: "stem.delivery.range" },
+  ];
+  for (const item of cases) await expectFullResponseFailure(packed, item.response, item.code);
+});
+
+test("finite FLAC metadata truncation refuses before the private chunk completes", async () => {
+  const flac = new Uint8Array(readFileSync("tests/fixtures/native-silence.flac"));
+  const packed = packageBody(flac);
+  const manifestBytes = new DataView(packed.body.buffer, packed.body.byteOffset, packed.body.byteLength).getUint32(8, true);
+  const metadataOnly = packed.body.slice(0, 16 + manifestBytes + 42);
+  await expectFullResponseFailure(packed, () => new Response(metadataOnly, { status: 200 }), "stem.delivery.range", () => new DecodeWorker());
+});
+
+test("finite encoded extent and host digest remain mandatory after PCM output", async () => {
+  const flac = new Uint8Array(readFileSync("tests/fixtures/native-silence.flac"));
+  const packed = packageBody(flac);
+  const mutated = packed.body.slice();
+  mutated[mutated.length - 1]! ^= 1;
+  let fetches = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/indexed",
+    fetch: async () => { fetches += 1; return new Response(responseBytes(mutated), { status: 200 }); },
+    createWorker: () => new DecodeWorker(),
+  });
+  const resolved = await resolver(packed.expected, new AbortController().signal);
+  const iterator = resolved.spans[Symbol.asyncIterator]();
+  assert.equal((await iterator.next()).done, false);
+  await assert.rejects(iterator.next(), (error: unknown) => error instanceof Error && "code" in error &&
+    (error as { readonly code?: unknown }).code === "stem.decode.worker");
+  assert.equal(fetches, 1);
+});
+
+test("a missing Content-Length and a default reader with a large backing remain valid", async () => {
+  const packed = emptySilentPackage();
+  let fetches = 0;
+  const backing = new Uint8Array(2 * 1024 * 1024);
+  backing.set(packed.body);
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/indexed",
+    fetch: async () => {
+      fetches += 1;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(backing.buffer, 0, packed.body.byteLength));
+          controller.close();
+        },
+      }), { status: 200 });
+    },
+    createWorker: () => { throw new Error("all-silent source must not create a decoder worker"); },
+  });
+  const resolved = await resolver(packed.expected, new AbortController().signal);
+  const result = await resolved.spans[Symbol.asyncIterator]().next();
+  assert.equal(result.done, true);
+  assert.equal(fetches, 1);
+});
+
+test("a later BYOB read failure is terminal and never retries with a default reader", async () => {
+  const packed = emptySilentPackage();
+  let pulls = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/indexed",
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      type: "bytes",
+      pull(controller) {
+        pulls += 1;
+        controller.error(new Error("BYOB read sentinel"));
+      },
+    }), { status: 200 }),
+    createWorker: () => { throw new Error("failed source must not create a decoder worker"); },
+  });
+  const resolved = await resolver(packed.expected, new AbortController().signal);
+  await assert.rejects(resolved.spans[Symbol.asyncIterator]().next(), (error: unknown) => error instanceof Error && "code" in error &&
+    (error as { readonly code?: unknown }).code === "stem.delivery.http");
+  assert.equal(pulls, 1);
+});
+
+test("BYOB terminal nonempty views are consumed, while undefined termination refuses", async () => {
+  const packed = emptySilentPackage();
+  const nonemptyResolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/indexed",
+    fetch: async () => responseWithByobTerminal({ done: true, value: new Uint8Array(packed.body) }),
+    createWorker: () => { throw new Error("all-silent source must not create a decoder worker"); },
+  });
+  const resolved = await nonemptyResolver(packed.expected, new AbortController().signal);
+  assert.equal((await resolved.spans[Symbol.asyncIterator]().next()).done, true);
+
+  const undefinedResolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/indexed",
+    fetch: async () => responseWithByobTerminal({ done: true, value: undefined }),
+    createWorker: () => { throw new Error("undefined BYOB termination must not create a decoder worker"); },
+  });
+  const undefinedResolved = await undefinedResolver(packed.expected, new AbortController().signal);
+  await assert.rejects(undefinedResolved.spans[Symbol.asyncIterator]().next(), (error: unknown) => error instanceof Error && "code" in error &&
+    (error as { readonly code?: unknown }).code === "stem.delivery.range");
+});
 
 test("a real byte response can install an all-silent sparse source without a decoder worker", async () => {
   const packed = emptySilentPackage();

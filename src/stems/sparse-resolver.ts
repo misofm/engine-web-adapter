@@ -69,7 +69,7 @@ function sourceFactory(
   let consumed = 0;
   return (options) => makeFiniteDecoderByteSource(
     options,
-    (maximumBytes) => Effect.gen(function*() {
+    Effect.fn("SparseFiniteSource.read")(function*(maximumBytes: number) {
       const remaining = chunk.bytes - consumed;
       if (remaining < 1) return yield* new DecoderByteSourceError({ operation: "read", message: "Sparse finite source was read beyond its declared chunk" });
       const result = yield* cursor.readChunk(Math.min(maximumBytes, remaining), options.borrow?.adopt).pipe(
@@ -168,8 +168,7 @@ function wrapPrivateRead(
   });
 }
 
-function nextSparseSpan(state: SparsePullState): Pull.Pull<readonly [SparsePcmSpan], EngineWebAdapterError> {
-  return Effect.gen(function*() {
+const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: SparsePullState) {
     if (state.done) return yield* Cause.done();
     for (;;) {
       const previous = state.currentBlock;
@@ -243,8 +242,7 @@ function nextSparseSpan(state: SparsePullState): Pull.Pull<readonly [SparsePcmSp
       state.chunkFrames = 0;
       state.currentReader = result.output.getReader();
     }
-  });
-}
+});
 
 function closeFailure(identity: StemIdentity, operation: string, errors: readonly unknown[]): EngineWebAdapterError {
   return new EngineWebAdapterError("stem.delivery.http", `Sparse ${operation} cleanup failed`, { identity, operation }, new AggregateError([...errors], `Sparse ${operation} cleanup failed`));

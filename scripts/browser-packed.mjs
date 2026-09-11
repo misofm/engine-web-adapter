@@ -458,6 +458,9 @@ const backend = new OpfsStorageBackend({
 });
 const store = new VerifiedSparsePcmStore({ backend, instanceId: "indexed-multiblock" });
 const expected = profile.expected;
+let result: unknown;
+let failure: unknown;
+let failed = false;
 try {
   const cold = await store.installSource(expected, {
     resolve: async (signal) => {
@@ -473,7 +476,7 @@ try {
   const warm = await store.installSource(expected, {
     resolve: async () => { throw new Error("indexed warm install must not resolve"); },
   });
-  globalThis.__result = {
+  result = {
     coldDataBytes: cold.data.size,
     coldIntervals: cold.index.intervals,
     coldIdentity: cold.index.identity,
@@ -490,10 +493,25 @@ try {
     workerErrors,
   };
 } catch (error) {
-  globalThis.__error = { error: describe(error), workerErrors };
-} finally {
+  failed = true;
+  failure = error;
+}
+try {
   await store.close();
+} catch (error) {
+  failed = true;
+  failure ??= error;
+}
+try {
   backend.close();
+} catch (error) {
+  failed = true;
+  failure ??= error;
+}
+if (failed) {
+  globalThis.__error = { error: describe(failure), workerErrors };
+} else {
+  globalThis.__result = result;
 }
 function describe(error: unknown): unknown {
   if (!(error instanceof Error)) return String(error);

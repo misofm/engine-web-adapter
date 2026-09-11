@@ -161,3 +161,10 @@ Root identified the unresolved-resolution interruption gap; source ownership now
 
 
 Root's complete `npm run check` passes at62c4282: format, typecheck/source policy, decoder binary policy, all287 tests, and packed package policy (190files,230645bytes). Log `attempt1/final-qualification/root-check.log` is retained. The ordinary packed browser result above covers the same source. The remaining frozen integration failure/ownership discriminators still need to be added; this full green observation is not an independent acceptance verdict or permission to omit them.
+
+
+## Attempt 1 candidate submitted for independent review
+
+The new integration table now covers header/manifest/metadata truncation, malformed or wrong visible Content-Length,206/nonidentity encoding, trailing bytes, absent length with a2MiB default backing, BYOB terminal nonempty/undefined cases, terminal BYOB failure without reader retry, and changed final encoded bytes after PCM output. New orchestration functions use named Effect.fn; the ordinary browser harness publishes its success only after store/backend cleanup. Producer has stopped the source tree for root checkpoint and fresh Astra medium review.
+
+Full `npm run check` passes293tests plus format/lint/typecheck/source/decoder/package guards (190files,230754bytes). Log `attempt1/final-qualification/check-final.log`; ordinary packaged browser `browser-final.log` repeats oneGET/two72000-frame chunks/864000 active bytes/33spans/984000 canonical bytes and warm zeroadditionalacquisition with no worker errors. The reviewer must independently map the complete frozen failure/ownership/resource gates to evidence; this submission is not itself a claim that every such gate is discharged. In particular integrated store failure/cancellation, delayedEOF, bounded borrowed credit and complete causal retention require adversarial assessment beyond the happy path. Maxfive attempts remains.

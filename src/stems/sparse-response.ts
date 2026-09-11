@@ -108,8 +108,7 @@ function parseContentLength(value: string | undefined, identity: StemIdentity): 
 }
 
 /** Acquire one real response and own its actual body reader in the current Scope. */
-export function openSparseResponse(options: SparseResponseOptions): Effect.Effect<SparseResponseCursor, EngineWebAdapterError, HttpClient.HttpClient | import("effect").Scope.Scope> {
-  return Effect.gen(function*() {
+export const openSparseResponse = Effect.fn("SparseResponse.open")(function*(options: SparseResponseOptions) {
     if (options.signal.aborted) return yield* Effect.fail(failure("stem.cancelled", "Sparse full response was cancelled before acquisition", { identity: options.identity }, options.signal.reason));
     const lease = yield* Effect.acquireRelease(
       Effect.tryPromise({ try: () => options.admission.acquire(options.signal), catch: cause => preserveEffectFailure(options.identity, "download admission", cause) }),
@@ -218,7 +217,7 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
       carry = value;
       return { done: false as const, value };
     });
-    const readExact = (length: number): Effect.Effect<Uint8Array, EngineWebAdapterError> => Effect.gen(function*() {
+    const readExact = Effect.fn("SparseResponse.readExact")(function*(length: number) {
       if (!Number.isSafeInteger(length) || length < 0) return yield* Effect.fail(failure("stem.delivery.range", "Sparse full-response read length is invalid", { identity: options.identity, length }));
       const output = new Uint8Array(length);
       let written = 0;
@@ -235,7 +234,7 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
       }
       return output;
     });
-    const readChunk = (length: number, adopt?: (release: () => void) => void): Effect.Effect<Readonly<{ bytes: Uint8Array; end: boolean; release: () => void }>, EngineWebAdapterError> => Effect.gen(function*() {
+    const readChunk = Effect.fn("SparseResponse.readChunk")(function*(length: number, adopt?: (release: () => void) => void) {
       if (!Number.isSafeInteger(length) || length < 1 || length > SPARSE_RESPONSE_MAX_INPUT_BYTES) return yield* Effect.fail(failure("stem.delivery.range", "Sparse finite chunk read is outside its bounded input", { identity: options.identity, length }));
       if (scratchLive) return yield* Effect.fail(failure("stem.delivery.range", "Sparse finite decoder scratch is still borrowed", { identity: options.identity }));
       const bytes = yield* readExact(length);
@@ -245,7 +244,7 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
       adopt?.(release);
       return { bytes, end: false, release };
     });
-    const assertContentLength = (expected: number): Effect.Effect<void, EngineWebAdapterError> => Effect.gen(function*() {
+    const assertContentLength = Effect.fn("SparseResponse.assertContentLength")(function*(expected: number) {
       if (contentLength !== undefined && contentLength !== expected) return yield* Effect.fail(failure("stem.delivery.http", "Sparse full response Content-Length disagrees with its admitted manifest", { identity: options.identity, contentLength, expectedLength: expected }));
     });
     const assertEof = Effect.gen(function*() {
@@ -253,5 +252,4 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
       if (!chunk.done) return yield* Effect.fail(failure("stem.delivery.range", "Sparse full response contains bytes after its admitted payload", { identity: options.identity, offset: position }));
     });
     return { get position() { return position; }, contentLength, readExact, readChunk, assertContentLength, assertEof };
-  });
-}
+});
