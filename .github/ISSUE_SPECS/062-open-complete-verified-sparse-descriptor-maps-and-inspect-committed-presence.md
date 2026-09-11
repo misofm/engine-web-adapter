@@ -1,6 +1,6 @@
 # Open complete verified sparse descriptor maps and inspect committed presence
 
-Scope approved by independent non-implementing Astra medium planning review. Implementation baseline: merged adapter #60 ea19c2b381b2d2e82f50b53589df4b5349ea4392, with accepted #58 sparse store implementation and #60 pump (reviewed source fdcef5b). Root will authorize implementation after the active CLI #27 preparation slice; this synchronized brief is not concurrent implementation authorization. Smallest capability: prepare a complete verified source map, retain it for bounded reads, and expose truthful metadata-only presence. Session-controller wiring is explicitly the next closable issue.
+Scope approved by independent non-implementing Astra medium planning review. Implementation baseline: merged adapter #60 ea19c2b381b2d2e82f50b53589df4b5349ea4392, with accepted #58 sparse store implementation and #60 pump (reviewed source fdcef5b). Root authorized attempt1 after CLI checkpoint4632ec4 and a clean/upstream/GitHub audit of0951146. A separate Luna xhigh works only in this adapter worktree; CLI consumes a fixed accepted56 candidate and app lifetime work consumes the published dense package, so their files and gates do not overlap. Astra medium independently reviews the completed slice. Root owns exact-path checkpoints before another tranche. Smallest capability: prepare a complete verified source map, retain it for bounded reads, and expose truthful metadata-only presence. Session-controller wiring is explicitly the next closable issue.
 
 ## Public surface
 
