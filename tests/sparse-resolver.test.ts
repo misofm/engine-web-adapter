@@ -20,9 +20,10 @@ class DecodeWorker implements FlacWorkerLike {
     this.posted.push(message);
     if (message.type === "start") {
       this.#slot = message.inputSlot;
-      queueMicrotask(() => this.emit({ type: "ready", requestId: message.requestId }));
+      setTimeout(() => this.emit({ type: "ready", requestId: message.requestId }), 0);
     } else if (message.type === "initialize") {
-      queueMicrotask(() => this.poll(message.requestId, message.expectedFrames, message.totalPcmBytes));
+      setTimeout(() => this.emit({ type: "input-credit", requestId: message.requestId, maximumBytes: 256 * 1024, phase: "audio", phaseBytesRemaining: 0 }), 0);
+      setTimeout(() => this.poll(message.requestId, message.expectedFrames, message.totalPcmBytes), 0);
     }
   }
 
@@ -38,14 +39,14 @@ class DecodeWorker implements FlacWorkerLike {
     if (this.terminated || this.#slot === undefined) return;
     const control = new Int32Array(this.#slot.control);
     if (Atomics.load(control, 0) !== 1) {
-      queueMicrotask(() => this.poll(requestId, frames, pcmBytes));
+      setTimeout(() => this.poll(requestId, frames, pcmBytes), 0);
       return;
     }
     const final = Atomics.load(control, 3) === 1;
     Atomics.store(control, 0, 0);
     if (!final) {
-      queueMicrotask(() => this.emit({ type: "input-credit", requestId, maximumBytes: 256 * 1024, phase: "audio", phaseBytesRemaining: 0 }));
-      queueMicrotask(() => this.poll(requestId, frames, pcmBytes));
+      setTimeout(() => this.emit({ type: "input-credit", requestId, maximumBytes: 256 * 1024, phase: "audio", phaseBytesRemaining: 0 }), 0);
+      setTimeout(() => this.poll(requestId, frames, pcmBytes), 0);
       return;
     }
     this.emit({ type: "pcm", requestId, bytes: new ArrayBuffer(pcmBytes), frames, totalPcmBytes: pcmBytes });
@@ -118,10 +119,7 @@ test("sparse full GET installs an actual FLAC payload cold and resolves warm wit
     createWorker: () => { workers += 1; return new DecodeWorker(); },
     hardwareConcurrency: 2,
   });
-  const cold = await store.installSource(packed.expected, { resolve: signal => resolver(packed.expected, signal) }).catch(error => {
-    console.error("sparse debug", error, error?.details);
-    throw error;
-  });
+  const cold = await store.installSource(packed.expected, { resolve: signal => resolver(packed.expected, signal) });
   assert.equal(cold.data.size, packed.expected.canonicalBytes);
   assert.equal(cold.index.activeBytes, packed.expected.canonicalBytes);
   assert.equal(fetches, 1);
@@ -138,4 +136,38 @@ test("sparse full GET installs an actual FLAC payload cold and resolves warm wit
   assert.equal(locates, 1);
   assert.equal(workers, 1);
   await store.close();
+});
+
+test("a locator Request abort composes with the resolver signal during the one full response", async () => {
+  const flac = new Uint8Array(readFileSync("tests/fixtures/native-silence.flac"));
+  const packed = packageBody(flac);
+  const requestAbort = new AbortController();
+  let fetchSignal: AbortSignal | undefined;
+  let workers = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => new Request("https://caller.invalid/full-stem", { signal: requestAbort.signal }),
+    fetch: async (_input, init) => {
+      fetchSignal = init?.signal ?? undefined;
+      let cancelled = false;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          return new Promise<void>((resolve) => {
+            setTimeout(() => {
+              if (!cancelled) { controller.enqueue(packed.body); controller.close(); }
+              resolve();
+            }, 100);
+          });
+        },
+        cancel() { cancelled = true; },
+      }), { status: 200 });
+    },
+    createWorker: () => { workers += 1; return new DecodeWorker(); },
+    hardwareConcurrency: 2,
+  });
+  const resolved = await resolver(packed.expected, new AbortController().signal);
+  const next = resolved.spans[Symbol.asyncIterator]().next();
+  setTimeout(() => requestAbort.abort(new Error("caller stopped")), 5);
+  await assert.rejects(next, (error: unknown) => error instanceof Error && "code" in error && (error as { readonly code?: unknown }).code === "stem.cancelled");
+  assert.equal(workers, 0);
+  assert.equal(fetchSignal?.aborted, true);
 });

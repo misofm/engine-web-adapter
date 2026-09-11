@@ -72,7 +72,7 @@ function sourceFactory(
     (maximumBytes) => Effect.gen(function*() {
       const remaining = chunk.bytes - consumed;
       if (remaining < 1) return yield* new DecoderByteSourceError({ operation: "read", message: "Sparse finite source was read beyond its declared chunk" });
-      const result = yield* cursor.readChunk(Math.min(maximumBytes, remaining)).pipe(
+      const result = yield* cursor.readChunk(Math.min(maximumBytes, remaining), options.borrow?.adopt).pipe(
         Effect.mapError((cause) => cause instanceof DecoderByteSourceError
           ? cause
           : new DecoderByteSourceError({ operation: "read", message: cause.message, cause })),
@@ -104,6 +104,7 @@ interface SparsePullState {
   readonly pool: FlacWorkerPool;
   readonly options: Omit<SparseStemDeliveryOptions, "locate"> & { readonly locate: SparseStemLocator };
   readonly signal: AbortSignal;
+  readonly abort: () => void;
   readonly payloadStart: number;
   chunkIndex: number;
   currentChunk: SparseStemChunk | undefined;
@@ -113,6 +114,7 @@ interface SparsePullState {
   packedFrame: number;
   intervalIndex: number;
   done: boolean;
+  activeResolve: Promise<import("./flac-resolver.js").ResolvedFlacChunk> | undefined;
 }
 
 function intervalEnd(interval: SparseStemInterval): number {
@@ -148,6 +150,7 @@ function mapNextBlock(state: SparsePullState): SparsePcmSpan {
     bytes,
   } satisfies SparsePcmSpan;
   state.packedFrame = end;
+  state.chunkFrames += frames;
   block.offsetFrames = end - block.startPackedFrame;
   return span;
 }
@@ -220,12 +223,16 @@ function nextSparseSpan(state: SparsePullState): Pull.Pull<readonly [SparsePcmSp
         chunk: { expected: chunkExpected(state.manifest, chunk), pcmSha256: chunk.pcmSha256 },
         sourceFactory: sourceFactory(state.cursor, chunk),
       });
+      const resolving = resolver.resolve(state.signal);
+      state.activeResolve = resolving;
       const result = yield* Effect.tryPromise({
-        try: () => resolver.resolve(state.signal),
+        try: () => resolving,
         catch: (cause) => cause instanceof EngineWebAdapterError
           ? cause
           : new EngineWebAdapterError("stem.decode.worker", "Sparse FLAC chunk resolution failed", { identity: state.expected.identity }, cause),
-      });
+      }).pipe(Effect.ensuring(Effect.sync(() => {
+        if (state.activeResolve === resolving) state.activeResolve = undefined;
+      })));
       state.currentChunk = chunk;
       state.chunkFrames = 0;
       state.currentReader = result.output.getReader();
@@ -235,6 +242,17 @@ function nextSparseSpan(state: SparsePullState): Pull.Pull<readonly [SparsePcmSp
 
 function closeFailure(identity: StemIdentity, operation: string, errors: readonly unknown[]): EngineWebAdapterError {
   return new EngineWebAdapterError("stem.delivery.http", `Sparse ${operation} cleanup failed`, { identity, operation }, new AggregateError([...errors], `Sparse ${operation} cleanup failed`));
+}
+
+function operationFailure(identity: StemIdentity, cause: Cause.Cause<unknown>, cleanup?: unknown): EngineWebAdapterError {
+  const primary = Cause.squash(cause);
+  const details = primary instanceof EngineWebAdapterError ? primary.details : { identity };
+  const code = primary instanceof EngineWebAdapterError ? primary.code : "stem.delivery.http";
+  const message = primary instanceof Error ? primary.message : "Sparse stream operation failed";
+  const preserved = cleanup === undefined
+    ? new AggregateError([primary, cause], "Sparse stream operation failed")
+    : new AggregateError([cleanup, primary, cause], "Sparse stream operation and cleanup failed");
+  return new EngineWebAdapterError(code, message, details, preserved);
 }
 
 /** Keep one explicit Effect Scope for the lazy stream and physical resources. */
@@ -270,15 +288,18 @@ function scopedAsyncIterable(stream: Stream.Stream<SparsePcmSpan, EngineWebAdapt
       const reportFailure = async (exit: Exit.Exit<unknown, unknown>): Promise<never> => {
         try { await close(exit); }
         catch (cleanup) {
-          if (Exit.isFailure(exit)) throw new AggregateError([Cause.squash(exit.cause), cleanup], "Sparse stream operation and cleanup failed");
+          if (Exit.isFailure(exit)) throw operationFailure(identity, exit.cause, cleanup);
           throw cleanup;
         }
-        if (Exit.isFailure(exit)) throw Cause.squash(exit.cause);
+        if (Exit.isFailure(exit)) throw operationFailure(identity, exit.cause);
         throw new Error("Sparse stream failed without an operation cause");
       };
       return {
         async next(): Promise<IteratorResult<SparsePcmSpan>> {
           if (closePromise !== undefined) return closePromise;
+          if (currentFiber !== undefined) {
+            return Promise.reject(new EngineWebAdapterError("stem.delivery.range", "Sparse stream iterator has a pending pull", { identity }));
+          }
           if (currentIter !== undefined) {
             const next = currentIter.next();
             if (!next.done) return next;
@@ -352,6 +373,7 @@ export function createSparseStemResolver(
         readDeadlineMs: snapshot.readDeadlineMs ?? 30_000,
         admission: downloadAdmission,
         signal: operation.signal,
+        abortOperation: operation.abort.bind(operation),
       });
       const header = yield* cursor.readExact(SPARSE_STEM_HEADER_BYTES);
       const headerAdmission = yield* Effect.try({ try: () => admitSparseStemHeader(header), catch: cause => cause instanceof EngineWebAdapterError ? cause : new EngineWebAdapterError("stem.corrupt", "Sparse header admission failed", { identity: expected.identity }, cause) });
@@ -368,6 +390,7 @@ export function createSparseStemResolver(
         pool,
         options: snapshot,
         signal: operation.signal,
+        abort: () => operation.abort(new DOMException("Sparse stream scope closed", "AbortError")),
         payloadStart: headerAdmission.payloadStart,
         chunkIndex: 0,
         currentChunk: undefined,
@@ -377,9 +400,15 @@ export function createSparseStemResolver(
         packedFrame: 0,
         intervalIndex: 0,
         done: false,
+        activeResolve: undefined,
       };
       yield* Effect.addFinalizer(() => Effect.promise(async () => {
         const failures: unknown[] = [];
+        state.abort();
+        const resolving = state.activeResolve;
+        if (resolving !== undefined) {
+          try { await resolving; } catch (cause) { failures.push(cause); }
+        }
         const block = state.currentBlock;
         state.currentBlock = undefined;
         if (block !== undefined) {

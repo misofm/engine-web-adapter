@@ -199,14 +199,17 @@ export function makeFiniteDecoderByteSource(
         Effect.mapError(cause => cause instanceof DecoderByteSourceError ? cause : new DecoderByteSourceError({ operation: "read", message: cause.message, cause })),
       );
       if (!(result.bytes instanceof Uint8Array) || result.bytes.byteLength < 1 || result.bytes.byteLength > maximumBytes || result.bytes.byteLength > remaining) {
+        result.release();
         return yield* new DecoderByteSourceError({ operation: "read", message: "Finite FLAC delivery returned bytes outside its input credit" });
       }
-      options.borrow?.adopt(result.release);
       hash.update(result.bytes);
       offset += result.bytes.byteLength;
       seenBytes += result.bytes.byteLength;
       sourceDone = result.end || offset === totalBytes;
-      if (sourceDone && offset !== totalBytes) return yield* new DecoderByteSourceError({ operation: "read", message: "Finite FLAC source ended before its declared extent" });
+      if (sourceDone && offset !== totalBytes) {
+        result.release();
+        return yield* new DecoderByteSourceError({ operation: "read", message: "Finite FLAC source ended before its declared extent" });
+      }
       return { bytes: result.bytes, end: sourceDone, release: result.release };
     });
 

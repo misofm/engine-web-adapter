@@ -15,22 +15,31 @@ export interface SparseResponseOptions {
   readonly readDeadlineMs: number;
   readonly admission: BoundedStemAdmission;
   readonly signal: AbortSignal;
+  /** The owner of `signal` can abort the complete resolver operation. */
+  readonly abortOperation?: (reason: unknown) => void;
 }
 
 export interface SparseResponseCursor {
   readonly position: number;
   readonly contentLength: number | undefined;
   readonly readExact: (length: number) => Effect.Effect<Uint8Array, EngineWebAdapterError>;
-  readonly readChunk: (length: number) => Effect.Effect<Readonly<{ bytes: Uint8Array; end: boolean; release: () => void }>, EngineWebAdapterError>;
+  /** Publish the body borrow before the successful effect value is yielded. */
+  readonly readChunk: (length: number, adopt?: (release: () => void) => void) => Effect.Effect<Readonly<{ bytes: Uint8Array; end: boolean; release: () => void }>, EngineWebAdapterError>;
   readonly assertContentLength: (expected: number) => Effect.Effect<void, EngineWebAdapterError>;
   readonly assertEof: Effect.Effect<void, EngineWebAdapterError>;
+}
+
+interface NormalizedRequest {
+  readonly request: HttpClientRequest.HttpClientRequest;
+  readonly fetchInit: RequestInit;
+  readonly dispose: () => void;
 }
 
 function failure(code: EngineWebAdapterError["code"], message: string, details: Readonly<Record<string, unknown>> = {}, cause?: unknown): EngineWebAdapterError {
   return new EngineWebAdapterError(code, message, details, cause);
 }
 
-function requestPolicy(location: string | URL | Request, signal: AbortSignal, identity: StemIdentity): Readonly<{ request: HttpClientRequest.HttpClientRequest; fetchInit: RequestInit }> {
+function requestPolicy(location: string | URL | Request, operationController: AbortController, abortOperation: ((reason: unknown) => void) | undefined, identity: StemIdentity): NormalizedRequest {
   let base: Request;
   try { base = location instanceof Request ? location : new Request(location); }
   catch (cause) { throw failure("stem.delivery.address", "Sparse locator returned an invalid delivery address", { identity }, cause); }
@@ -38,9 +47,20 @@ function requestPolicy(location: string | URL | Request, signal: AbortSignal, id
   const headers = new Headers(base.headers);
   headers.delete("range");
   headers.delete("if-range");
+  const requestController = new AbortController();
+  const onOperationAbort = () => requestController.abort(operationController.signal.reason);
+  const onLocationAbort = () => {
+    requestController.abort(base.signal.reason);
+    operationController.abort(base.signal.reason);
+    abortOperation?.(base.signal.reason);
+  };
+  operationController.signal.addEventListener("abort", onOperationAbort, { once: true });
+  base.signal.addEventListener("abort", onLocationAbort, { once: true });
+  if (operationController.signal.aborted) onOperationAbort();
+  if (base.signal.aborted) onLocationAbort();
   try {
     return {
-      request: HttpClientRequest.fromWeb(new Request(base, { headers, signal })),
+      request: HttpClientRequest.fromWeb(new Request(base, { headers, signal: requestController.signal })),
       fetchInit: {
         credentials: base.credentials,
         mode: base.mode,
@@ -51,8 +71,16 @@ function requestPolicy(location: string | URL | Request, signal: AbortSignal, id
         referrerPolicy: base.referrerPolicy,
         keepalive: base.keepalive,
       },
+      dispose: () => {
+        operationController.signal.removeEventListener("abort", onOperationAbort);
+        base.signal.removeEventListener("abort", onLocationAbort);
+      },
     };
-  } catch (cause) { throw failure("stem.delivery.address", "Sparse full-response Request could not be constructed", { identity }, cause); }
+  } catch (cause) {
+    operationController.signal.removeEventListener("abort", onOperationAbort);
+    base.signal.removeEventListener("abort", onLocationAbort);
+    throw failure("stem.delivery.address", "Sparse full-response Request could not be constructed", { identity }, cause);
+  }
 }
 
 function preserveEffectFailure(identity: StemIdentity, operation: string, cause: unknown): EngineWebAdapterError {
@@ -100,7 +128,8 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
       try: () => Promise.resolve(options.locate(options.identity, { signal: requestController.signal })),
       catch: cause => preserveEffectFailure(options.identity, "locator", cause),
     }).pipe(Effect.timeoutOrElse({ duration: options.readDeadlineMs, orElse: () => Effect.fail(failure("stem.delivery.address", "Sparse locator exceeded its deadline", { identity: options.identity })) }));
-    const normalized = yield* Effect.try({ try: () => requestPolicy(location, requestController.signal, options.identity), catch: cause => preserveEffectFailure(options.identity, "request normalization", cause) });
+    const normalized = yield* Effect.try({ try: () => requestPolicy(location, requestController, options.abortOperation, options.identity), catch: cause => preserveEffectFailure(options.identity, "request normalization", cause) });
+    yield* Effect.addFinalizer(() => Effect.sync(normalized.dispose));
     const http = yield* HttpClient.HttpClient;
     let physicalResponse: Response | undefined;
     const physicalFetch: typeof globalThis.fetch = (input, init) => Promise.resolve((options.fetch ?? globalThis.fetch)(input, init)).then(response => {
@@ -119,20 +148,32 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
     const contentLength = parseContentLength(response.headers["content-length"], options.identity);
     const body = physicalResponse?.body;
     if (body === null || body === undefined) return yield* Effect.fail(failure("stem.delivery.http", "Sparse full response has no body", { identity: options.identity }));
-    const reader = body.getReader();
+    let byob = false;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader;
+    try {
+      reader = body.getReader({ mode: "byob" });
+      byob = true;
+    } catch (cause) {
+      if (!(cause instanceof TypeError) || body.locked) return yield* Effect.fail(failure("stem.delivery.http", "Sparse response body reader could not be acquired", { identity: options.identity }, cause));
+      reader = body.getReader();
+    }
     let pending: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
     let carry: Uint8Array | undefined;
     let carryOffset = 0;
     let position = 0;
     let eof = false;
     let scratchLive = false;
+    let byobBuffer: Uint8Array<ArrayBuffer> | undefined;
     yield* Effect.addFinalizer(() => Effect.promise(async () => {
       const failures: unknown[] = [];
       const inFlight = pending;
-      if (inFlight !== undefined) {
-        try { await inFlight; } catch (cause) { failures.push(cause); }
-      }
-      try { await reader.cancel(); } catch (cause) { failures.push(cause); }
+      // Abort the physical request before waiting for a read which may still
+      // be waiting on transport. Start reader cancellation first, then await
+      // both obligations so neither cleanup cause is discarded.
+      requestController.abort(new DOMException("Sparse response reader closed", "AbortError"));
+      const cancellation = Promise.resolve().then(() => reader.cancel());
+      const settled = await Promise.allSettled(inFlight === undefined ? [cancellation] : [cancellation, inFlight]);
+      for (const result of settled) if (result.status === "rejected") failures.push(result.reason);
       try { reader.releaseLock(); } catch (cause) { failures.push(cause); }
       if (failures.length > 0) throw new AggregateError(failures, "Sparse full response cleanup failed");
     }));
@@ -141,20 +182,33 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
       if (carry !== undefined && carryOffset < carry.byteLength) return { done: false as const, value: carry };
       carry = undefined;
       carryOffset = 0;
-      const readPromise = reader.read();
+      const readPromise = byob
+        ? (reader as ReadableStreamBYOBReader).read(byobBuffer ?? new Uint8Array(new ArrayBuffer(SPARSE_RESPONSE_MAX_INPUT_BYTES)))
+        : (reader as ReadableStreamDefaultReader<Uint8Array>).read();
+      byobBuffer = undefined;
       pending = readPromise;
-      const settled = readPromise.finally(() => { if (pending === settled) pending = undefined; });
-      const read = Effect.tryPromise({ try: () => settled, catch: cause => cause }).pipe(
+      void readPromise.then(
+        () => { if (pending === readPromise) pending = undefined; },
+        () => { if (pending === readPromise) pending = undefined; },
+      );
+      const read = Effect.tryPromise({ try: () => readPromise, catch: cause => cause }).pipe(
         Effect.timeoutOrElse({ duration: options.readDeadlineMs, orElse: () => Effect.fail(failure("stem.delivery.stall", "Sparse full response body made no progress", { identity: options.identity })) }),
         Effect.raceFirst(abortEffect(options.signal, options.identity)),
       );
       const exit = yield* Effect.exit(read);
       if (Exit.isFailure(exit)) return yield* Effect.fail(preserveEffectFailure(options.identity, "body read", Cause.squash(exit.cause)));
-      if (exit.value.done) { eof = true; return { done: true as const, value: new Uint8Array() }; }
       const value = exit.value.value;
-      if (!(value instanceof Uint8Array) || value.byteLength < 1 || value.byteLength > SPARSE_RESPONSE_MAX_CHUNK_BYTES || value.buffer.byteLength > SPARSE_RESPONSE_MAX_CHUNK_BYTES) {
+      if (exit.value.done && (options.signal.aborted || requestController.signal.aborted)) {
+        return yield* Effect.fail(failure("stem.cancelled", "Sparse full response was cancelled", { identity: options.identity }, options.signal.reason ?? requestController.signal.reason));
+      }
+      if (exit.value.done && value === undefined) {
+        eof = true;
+        return { done: true as const, value: new Uint8Array() };
+      }
+      if (!(value instanceof Uint8Array) || value.byteLength < 1 || (byob && (value.byteLength > SPARSE_RESPONSE_MAX_INPUT_BYTES || value.buffer.byteLength > SPARSE_RESPONSE_MAX_INPUT_BYTES))) {
         return yield* Effect.fail(failure("stem.delivery.range", "Sparse full response body chunk exceeds its bounded transport view", { identity: options.identity, limit: SPARSE_RESPONSE_MAX_CHUNK_BYTES }));
       }
+      if (byob && value.buffer instanceof ArrayBuffer) byobBuffer = new Uint8Array(value.buffer);
       carry = value;
       return { done: false as const, value };
     });
@@ -175,13 +229,14 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
       }
       return output;
     });
-    const readChunk = (length: number): Effect.Effect<Readonly<{ bytes: Uint8Array; end: boolean; release: () => void }>, EngineWebAdapterError> => Effect.gen(function*() {
+    const readChunk = (length: number, adopt?: (release: () => void) => void): Effect.Effect<Readonly<{ bytes: Uint8Array; end: boolean; release: () => void }>, EngineWebAdapterError> => Effect.gen(function*() {
       if (!Number.isSafeInteger(length) || length < 1 || length > SPARSE_RESPONSE_MAX_INPUT_BYTES) return yield* Effect.fail(failure("stem.delivery.range", "Sparse finite chunk read is outside its bounded input", { identity: options.identity, length }));
       if (scratchLive) return yield* Effect.fail(failure("stem.delivery.range", "Sparse finite decoder scratch is still borrowed", { identity: options.identity }));
       const bytes = yield* readExact(length);
       scratchLive = true;
       let released = false;
       const release = () => { if (!released) { released = true; scratchLive = false; } };
+      adopt?.(release);
       return { bytes, end: false, release };
     });
     const assertContentLength = (expected: number): Effect.Effect<void, EngineWebAdapterError> => Effect.gen(function*() {
