@@ -298,3 +298,34 @@ and Luna reports the full233-test package check passing. The independent reviewe
 must assess the completed error policy and final physical ordering before a
 verdict; this checkpoint is not acceptance. The existing macOS workflow will
 recheck the same packed storage fixture against this corrected source.
+
+## Attempt 3 independent verdict — FAIL; corrected macOS gate passed
+
+Astra medium independently built f617396 and passed25 focused tests, then
+confirmed three related error-policy failures: undefined return rejection is
+treated as absence; a primary span-getter defect loses cleanup failure when the
+combined Cause is squashed by runPromise; and an existing capability.opfs error
+changes to stem.corrupt after local error mutation. One consolidated FAIL is
+recorded. Full checks were not repeated around those confirmed blockers.
+The exact-source macOS gate separately passed in run34611079201; retained browser
+artifacts still prove the unchanged physical storage fixtures, not error-policy
+acceptance.
+
+Attempt4 must carry the complete Effect Exit/Cause to ONE public Promise boundary
+using the installed ManagedRuntime.runPromiseExit or equivalent full-Cause edge.
+Preserve every failure/defect/interruption reason, including undefined values,
+without mutating a primary error or losing an existing adapter classification,
+message or details. Use the existing public error/cause surface; AggregateError
+may retain multiple underlying reasons. A presence discriminant, rather than
+undefined as an absence sentinel, is required wherever cleanup state is necessary.
+Prefer removing the attempt3 per-source error bookkeeping and local primary-error
+mutation in favor of Effect's existing Cause ownership. Keep one scoped iterator
+ownership path and physical writer/source/lock ordering. No nested runtime, new
+error ABI or general error framework is authorized.
+
+Gates add the review's three public-API reproducers and preserve the prior async/
+sync cleanup, normal EOF, cancellation and existing capability-error cases.
+Checkpoint the smallest coherent correction, then run proportional final package
+and macOS gates and one independent attempt4 review. Three attempts have received
+FAIL; the maximum remains five. Global simplification remains a later user-requested
+pass once the complete delivery flow works.
