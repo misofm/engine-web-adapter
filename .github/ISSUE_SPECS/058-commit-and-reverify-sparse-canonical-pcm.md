@@ -36,7 +36,7 @@ Expected declaration includes canonical identity plus sampleRateHz/channels/bitD
 
 Use a lazy resolver callback for cold installs so verified warm open never invokes codec/network work. Snapshot/validate authoritative shape before consuming the stream. Derive interval offsets/counts/activeBytes incrementally from admitted spans, enforcing the retained sparse PCM interval and8MiB index limits throughout; freeze the final index at EOF. Never require a complete native-FLAC map before its first decode output. An optional upfront index is validated before consumption and must match the final derived index exactly. Freeze/copy only bounded metadata; consume each borrowed PCM event before releasing its decoder credit. Store consumes a single source at a time per identity. Returned descriptor is immutable metadata and a Blob handle for the final packed payload; callers must not treat the raw commit marker as verified evidence. No public method synthesizes a dense persistent Blob.
 
-This primitive intentionally does not own session pins, global cache eviction or source-count fanout. Completed data files are immutable and retained; there is no automatic deletion of committed sources. Quota pressure refuses rather than deleting another client's committed bytes. A successor wraps it with required session leases, durable offline pins, safe quota eviction and legacy migration before app adoption. This avoids inventing a second conflicting ownership index here. Explicit app Clear Data can later remove the entire existing folder under the app's established lifecycle lock.
+This primitive intentionally does not own session pins, global cache eviction or source-count fanout. Completed data files are immutable and retained; there is no automatic deletion of committed sources. Quota pressure refuses rather than deleting another client's committed bytes. A successor adds required session leases and durable offline pins under the same retain/refuse policy before app adoption. Automatic eviction and dense-cache migration are outside that launch slice. This avoids inventing a second conflicting ownership index here. Explicit app Clear Data can later remove the entire existing folder under the app's established lifecycle lock.
 
 ## Separate cache identity and commit protocol
 
@@ -224,3 +224,37 @@ sparse browser PASS: the required sparse close/reopen and marker-failure case
 has not yet been added. Diagnose that existing harness failure and add the small
 required case before the single final independent attempt2 verdict. No subsequent
 feature implementation or release is authorized from this intermediate checkpoint.
+
+## Qualification environment amendment — approved by Astra medium
+
+Root isolated the existing WebKit failure from the cache implementation. Installed
+Linux Playwright WebKit2336 (26.5, WPE and GTK) and2248 (26.0, WPE) expose neither
+navigator.storage nor FileSystemFileHandle in a secure, isolated persistent
+profile. Attempted MiniBrowser feature flags did not expose storage to inspector
+pages; upstream Playwright issue31185 describes that flag limitation. No working
+OPFS-without-constructor behavior was observed, so the original capability
+assertions remain mandatory.
+
+Run the same existing packed OPFS harness on macos-15 through one small repository
+PR/manual workflow using the locked npm/Playwright dependencies. No second harness,
+storage mock or capability relaxation. Record exact tested checkout versus PR
+event SHA, runner image/OS, Node/npm, Playwright and actual browser versions. Test
+failure fails the job; upload diagnostics even on failure. This proves macOS
+Playwright Chromium/WebKit storage behavior, not iOS Safari. Final attempt2 review
+awaits both the corrected sparse fixture and the actual remote result.
+
+## Attempt 2 completed local correction — remote WebKit and verdict pending
+
+Luna added scoped iterator ownership before upfront admission and cleanup after
+downstream failure, corrected prospective marker brackets, settled physical
+writes despite abort rejection, and released a lock granted concurrently with
+caller cancellation. Four additional regressions bring the focused suite to
+24/24; root independently reran those compiled cases. Luna reports the complete
+package check passing all232 cases. This is a checkpoint awaiting review, not PASS.
+
+The existing packed OPFS harness now includes sparse close/reopen without a warm
+resolver and injected marker-close cleanup. Local Chromium151.0.7922.34 passes
+every assertion, including those sparse cases. Linux WebKit26.5 fails the retained
+FileSystemFileHandle assertion as diagnosed above. The new macOS workflow runs
+that same harness with exact checkout and browser provenance; its actual result
+and the one independent Astra medium attempt2 verdict remain required.

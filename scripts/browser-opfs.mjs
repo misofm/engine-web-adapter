@@ -14,6 +14,7 @@ const supportModules = join(process.cwd(), "node_modules");
 const root = await mkdtemp(join(tmpdir(), "engine-web-adapter-opfs-"));
 process.env.npm_config_cache = join(root, "npm-cache");
 const consumer = join(root, "consumer");
+console.log(JSON.stringify({ gate: "opfs-write", tempRoot: root, consumer }));
 await mkdir(join(consumer, "node_modules", "@misofm"), { recursive: true });
 const packed = run("npm", ["pack", "--json", "--pack-destination", root], process.cwd());
 const tarball = join(root, JSON.parse(packed)[0].filename);
@@ -76,6 +77,7 @@ try {
   for (const engine of engines) {
     const context = await engine.launch();
     try {
+      console.log(JSON.stringify({ gate: "opfs-write", engine: engine.name, browserVersion: context.browser()?.version() }));
       const page = await context.newPage();
       const consoleErrors = [];
       page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
@@ -100,9 +102,14 @@ try {
       assert.equal(result.capabilityRefusal.code, "capability.opfs", `${label}: capability refusal code`);
       assert.equal(result.capabilityRefusal.missing, "FileSystemFileHandle", `${label}: capability refusal must name what is missing`);
       assert.ok(typeof result.capabilityRefusal.remedy === "string" && result.capabilityRefusal.remedy.length > 0, `${label}: capability refusal must carry a remedy`);
+      assert.equal(result.sparse.coldCommitted, true, `${label}: sparse cold commit must verify`);
+      assert.equal(result.sparse.warmPayloadBytes, 8, `${label}: sparse close/reopen payload size`);
+      assert.equal(result.sparse.warmResolverCalls, 0, `${label}: sparse warm reopen must not resolve again`);
+      assert.equal(result.sparse.markerFailureClean, true, `${label}: sparse marker failure must clean owned files`);
       assert.equal(result.physicalLocks.sameExistingFileReacquired, true);
       assert.equal(result.cleanup.stagingRemoved, true);
       assert.deepEqual(consoleErrors, [], `${label}: console errors`);
+      console.log(JSON.stringify({ gate: "opfs-write", engine: label, browserVersion: context.browser()?.version(), coldBytes: result.coldIngest.bytes, sparse: result.sparse }));
       report.push({
         engine: label,
         userAgent: result.userAgent,
@@ -112,6 +119,7 @@ try {
         coldBytes: result.coldIngest.bytes,
         withoutCreateWritableBytes: result.withoutCreateWritable.bytes,
         createWritableWasPresent: result.createWritableWasPresent,
+        sparse: result.sparse,
       });
     } finally {
       await context.close();
@@ -143,7 +151,7 @@ function resolveChromeExecutable() {
 
 function browserSource() { return String.raw`
 import { EngineWebAdapterError, openEngineWebSession } from "@misofm/engine-web-adapter";
-import { OpfsStemStore, OpfsStorageBackend, VerifiedStemStore } from "@misofm/engine-web-adapter/stems";
+import { OpfsStemStore, OpfsStorageBackend, VerifiedSparsePcmStore, VerifiedStemStore } from "@misofm/engine-web-adapter/stems";
 
 declare global { var __result: unknown; var __error: unknown }
 
@@ -200,6 +208,52 @@ async function ingest(folderName: string, seed: number) {
   });
   await warm.close();
   return { verified, bytes: readBack.length, declaredBytes: DECLARED_BYTES, warmResolverCalls };
+}
+
+async function sparseGate() {
+  const bytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+  const identity = await identityOf(bytes);
+  const expected = {
+    identity: identity as never,
+    sampleRateHz: 48_000,
+    channels: 1 as const,
+    bitDepth: 16 as const,
+    frames: 4,
+    canonicalBytes: bytes.length,
+  };
+  const resolver = () => ({
+    spans: (async function* () { yield { startFrame: 0, bytes }; })(),
+  });
+  const backend = new OpfsStorageBackend({ folderName: "opfs-sparse-close-reopen-v1", assets: { createWorker: (url, options) => new Worker(url, options) }, readDeadlineMs: 1_500 });
+  const cold = new VerifiedSparsePcmStore({ backend, instanceId: "sparse-cold", readDeadlineMs: 1_500 });
+  await cold.installSource(expected, { resolve: async () => resolver() });
+  await cold.close();
+  const warm = new VerifiedSparsePcmStore({ backend, instanceId: "sparse-warm", readDeadlineMs: 1_500 });
+  let warmResolverCalls = 0;
+  const descriptor = await warm.installSource(expected, { resolve: async () => { warmResolverCalls += 1; throw new Error("sparse warm reopen must not resolve"); } });
+  const warmPayloadBytes = descriptor.data.size;
+  await warm.close();
+
+  const failureBackend = new OpfsStorageBackend({ folderName: "opfs-sparse-marker-failure-v1", assets: { createWorker: (url, options) => new Worker(url, options) }, readDeadlineMs: 1_500 });
+  const originalCreateWriter = failureBackend.createWriter.bind(failureBackend);
+  failureBackend.createWriter = async (name, signal) => {
+    const writer = await originalCreateWriter(name, signal);
+    if (!name.startsWith("sparse-pcm-v1-commit-")) return writer;
+    return {
+      write: (chunk: Uint8Array | string) => writer.write(chunk),
+      close: async () => { throw new Error("injected marker close failure"); },
+      abort: (reason?: unknown) => writer.abort(reason),
+    };
+  };
+  const failed = new VerifiedSparsePcmStore({ backend: failureBackend, instanceId: "sparse-marker-failure", readDeadlineMs: 1_500 });
+  await failed.installSource(expected, { resolve: async () => resolver() }).then(
+    () => { throw new Error("sparse marker failure unexpectedly committed"); },
+    () => undefined,
+  );
+  const remaining = (await failureBackend.list()).filter((name) => name.startsWith("sparse-pcm-v1-"));
+  await failed.close();
+  failureBackend.close();
+  return { coldCommitted: true, warmPayloadBytes, warmResolverCalls, markerFailureClean: remaining.length === 0 };
 }
 
 function expect(value: unknown, label: string): asserts value {
@@ -418,6 +472,7 @@ try {
 
   const physicalLocks = await timeoutLocks();
   const cleanup = await timeoutCleanup();
+  const sparse = await sparseGate();
 
   // A browser with no OPFS handles must refuse at the synchronous capability
   // boundary with the typed error, not an untyped TypeError from the store.
@@ -437,7 +492,7 @@ try {
     windowHasSyncAccessHandle: syncAccessHandleAvailable,
     createWritableWasPresent, createWritableCalls,
     createWritableRemoved, coldIngest, withoutCreateWritable,
-    capabilityRefusal, physicalLocks, cleanup,
+    capabilityRefusal, physicalLocks, cleanup, sparse,
   };
 } catch (error) {
   globalThis.__error = chain(error);

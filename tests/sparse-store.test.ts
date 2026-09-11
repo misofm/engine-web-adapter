@@ -467,4 +467,132 @@ describe("VerifiedSparsePcmStore", () => {
     assert.equal(thirdReady, true);
     await thirdLease.release();
   });
+
+  it("always returns a source iterator before removing owned output on span or writer failure", async () => {
+    const canonical = new Uint8Array([1, 2, 3, 4]);
+    for (const mode of ["malformed", "writer"] as const) {
+      const events: string[] = [];
+      class ObservedBackend extends MemoryStemStorageBackend {
+        override async createWriter(name: string, signal?: AbortSignal) {
+          const writer = await super.createWriter(name, signal);
+          if (mode !== "writer" || !name.startsWith("sparse-pcm-v1-data-")) return writer;
+          return {
+            write: async () => { events.push("write-failed"); throw new Error("injected write failure"); },
+            close: () => writer.close(),
+            abort: (reason?: unknown) => writer.abort(reason),
+          };
+        }
+        override async remove(name: string): Promise<void> {
+          events.push(events.includes("iterator-return") ? `remove-after-return:${name}` : `remove-before-return:${name}`);
+          await super.remove(name);
+        }
+      }
+      const backend = new ObservedBackend();
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: `iterator-${mode}` });
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { startFrame: 0, bytes: mode === "malformed" ? new Uint8Array([1]) : canonical };
+          } finally {
+            events.push("iterator-return");
+          }
+        },
+      };
+      await assert.rejects(store.installSource(expectation(canonical, 2), { resolve: async () => ({ spans: source }) }));
+      assert.equal(events.includes("iterator-return"), true, `${mode}: generator finally ran`);
+      assert.equal(events.some((event) => event.startsWith("remove-before-return")), false, `${mode}: owned output removal waited for iterator return`);
+      await store.close();
+    }
+  });
+
+  it("closes an already-resolved source when upfront admission fails", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const events: string[] = [];
+    const source = {
+      [Symbol.asyncIterator]() {
+        const generator = (async function* () { yield { startFrame: 0, bytes }; })();
+        return {
+          next: () => generator.next(),
+          return: async () => { events.push("iterator-return"); return generator.return(); },
+          [Symbol.asyncIterator]() { return this; },
+        };
+      },
+    };
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "admission-return" });
+    const badIndex = {
+      format: "miso_sparse_pcm_v1" as const,
+      identity: expectation(bytes, 1).identity,
+      sampleRateHz: 48_000,
+      channels: 1 as const,
+      bitDepth: 16 as const,
+      frames: 1,
+      intervals: [{ startFrame: 0, frames: 2, byteOffset: 0 }],
+    };
+    await assert.rejects(store.installSource(expectation(bytes, 1), { resolve: async () => ({ index: badIndex as never, spans: source }) }));
+    assert.deepEqual(events, ["iterator-return"]);
+    await store.close();
+  });
+
+  it("releases a lock granted in the same turn as caller cancellation", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const controller = new AbortController();
+    let callbacksFinished = 0;
+    const locks = {
+      request: async <T>(name: string, _options: { readonly mode: "exclusive"; readonly signal?: AbortSignal }, callback: () => Promise<T>): Promise<T> => {
+        const running = callback();
+        if (name.includes(":ingest:")) controller.abort(new DOMException("cancelled", "AbortError"));
+        try { return await running; }
+        finally { callbacksFinished += 1; }
+      },
+    };
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), locks, instanceId: "grant-cancel" });
+    await assert.rejects(store.installSource(expectation(bytes, 1), { signal: controller.signal, resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.equal(callbacksFinished, 2, "both historical lock callbacks released after the grant/cancel race");
+    await store.close();
+  });
+
+  it("waits for a pending physical write even when writer abort rejects", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const events: string[] = [];
+    let resolveWrite!: () => void;
+    let notifyAbort!: () => void;
+    const writeStarted = new Promise<void>((resolve) => { notifyAbort = resolve; });
+    const writeGate = new Promise<void>((resolve) => { resolveWrite = resolve; });
+    class AbortRejectBackend extends MemoryStemStorageBackend {
+      override async createWriter(name: string, signal?: AbortSignal) {
+        const writer = await super.createWriter(name, signal);
+        if (!name.startsWith("sparse-pcm-v1-data-")) return writer;
+        return {
+          write: async (chunk: Uint8Array | string) => {
+            events.push("write-start");
+            notifyAbort();
+            await writeGate;
+            events.push("write-settled");
+            await writer.write(chunk);
+          },
+          close: () => writer.close(),
+          abort: async () => { events.push("abort-rejected"); throw new Error("injected abort failure"); },
+        };
+      }
+      override async remove(name: string): Promise<void> {
+        events.push(`remove:${name}`);
+        await super.remove(name);
+      }
+    }
+    const backend = new AbortRejectBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "abort-reject" });
+    const installing = store.installSource(expectation(bytes, 1), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+    await writeStarted;
+    const closing = store.close();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(events.includes("abort-rejected"), true);
+    assert.equal(events.includes("write-settled"), false);
+    resolveWrite();
+    await closing;
+    await assert.rejects(installing);
+    assert.ok(events.indexOf("write-settled") >= 0);
+    const firstRemove = events.findIndex((event) => event.startsWith("remove:"));
+    assert.ok(firstRemove > events.indexOf("write-settled"), events.join(","));
+  });
 });
