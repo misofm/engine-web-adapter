@@ -39,6 +39,11 @@ class DecodeWorker implements FlacWorkerLike {
   terminated = false;
   #slot: Extract<FlacWorkerRequest, { type: "start" }>['inputSlot'] | undefined;
   #listeners = new Set<(event: { readonly data: FlacWorkerResponse }) => void>();
+  #pendingOutputs: readonly { readonly bytes: ArrayBuffer; readonly frames: number }[] = [];
+  #outputCredits = 0;
+  #completeRequestId: number | undefined;
+  #completePcmBytes = 0;
+  #completeFrames = 0;
 
   constructor(readonly pcm?: Uint8Array) {}
 
@@ -51,6 +56,9 @@ class DecodeWorker implements FlacWorkerLike {
     } else if (message.type === "initialize") {
       setTimeout(() => this.emit({ type: "input-credit", requestId: message.requestId, maximumBytes: 256 * 1024, phase: "audio", phaseBytesRemaining: 0 }), 0);
       setTimeout(() => this.poll(message.requestId, message.expectedFrames, message.totalPcmBytes), 0);
+    } else if (message.type === "output-credit") {
+      this.#outputCredits += 1;
+      this.flushOutputs();
     }
   }
 
@@ -77,15 +85,40 @@ class DecodeWorker implements FlacWorkerLike {
       return;
     }
     if (this.pcm !== undefined && this.pcm.byteLength === pcmBytes && pcmBytes > 384 * 1024) {
-      const firstFrames = Math.floor(frames / 2);
+      const firstFrames = Math.floor(frames / 3);
       const frameBytes = pcmBytes / frames;
       const firstBytes = firstFrames * frameBytes;
-      this.emit({ type: "pcm", requestId, bytes: this.pcm.slice(0, firstBytes).buffer, frames: firstFrames, totalPcmBytes: pcmBytes });
-      this.emit({ type: "pcm", requestId, bytes: this.pcm.slice(firstBytes).buffer, frames: frames - firstFrames, totalPcmBytes: pcmBytes });
+      const secondBytes = firstBytes * 2;
+      (this.#pendingOutputs as { bytes: ArrayBuffer; frames: number }[]).push(
+        { bytes: this.pcm.slice(0, firstBytes).buffer, frames: firstFrames },
+        { bytes: this.pcm.slice(firstBytes, secondBytes).buffer, frames: firstFrames },
+        { bytes: this.pcm.slice(secondBytes).buffer, frames: frames - firstFrames * 2 },
+      );
     } else {
-      this.emit({ type: "pcm", requestId, bytes: this.pcm?.slice().buffer ?? new ArrayBuffer(pcmBytes), frames, totalPcmBytes: pcmBytes });
+      (this.#pendingOutputs as { bytes: ArrayBuffer; frames: number }[]).push({
+        bytes: this.pcm?.slice().buffer ?? new ArrayBuffer(pcmBytes), frames,
+      });
     }
-    this.emit({ type: "complete", requestId, pcmBytes, frames });
+    this.#outputCredits = 2;
+    this.#completeRequestId = requestId;
+    this.#completePcmBytes = pcmBytes;
+    this.#completeFrames = frames;
+    this.flushOutputs();
+  }
+
+  private flushOutputs(): void {
+    if (this.terminated || this.#completeRequestId === undefined) return;
+    while (this.#outputCredits > 0 && this.#pendingOutputs.length > 0) {
+      const output = this.#pendingOutputs[0]!;
+      (this.#pendingOutputs as { readonly bytes: ArrayBuffer; readonly frames: number }[]).shift();
+      this.#outputCredits -= 1;
+      this.emit({ type: "pcm", requestId: this.#completeRequestId, bytes: output.bytes, frames: output.frames, totalPcmBytes: this.#completePcmBytes });
+    }
+    if (this.#pendingOutputs.length === 0) {
+      const requestId = this.#completeRequestId;
+      this.#completeRequestId = undefined;
+      this.emit({ type: "complete", requestId, pcmBytes: this.#completePcmBytes, frames: this.#completeFrames });
+    }
   }
 }
 
@@ -612,6 +645,7 @@ test("a real stereo24 block stays borrowed across mapper slices and an indexed g
       requests += 1;
       return new Response(responseBytes(packageBytes.body), { status: 200, headers: { "Content-Length": String(packageBytes.body.byteLength) } });
     },
+    decodeNoProgressMs: 5,
     createWorker: () => {
       const worker = new DecodeWorker(packed);
       workers.push(worker);
@@ -619,6 +653,8 @@ test("a real stereo24 block stays borrowed across mapper slices and an indexed g
     },
   });
   const installing = store.installSource(expected, { resolve: signal => resolver(expected, signal) });
+  let completed = false;
+  void installing.then(() => { completed = true; }, () => { completed = true; });
   for (let attempt = 0; attempt < 200 && backend.writes === 0; attempt += 1) {
     await new Promise<void>(resolve => setTimeout(resolve, 1));
   }
@@ -627,6 +663,8 @@ test("a real stereo24 block stays borrowed across mapper slices and an indexed g
   assert.deepEqual(await backend.list(), []);
   assert.equal(workers.length, 1);
   assert.equal(workers[0]!.posted.filter(message => message.type === "output-credit").length, 0);
+  await new Promise<void>(resolve => setTimeout(resolve, 20));
+  assert.equal(completed, false);
 
   backend.releaseFirstWrite();
   const result = await installing;
@@ -634,11 +672,89 @@ test("a real stereo24 block stays borrowed across mapper slices and an indexed g
   assert.equal(result.index.activeBytes, packed.byteLength);
   assert.equal(result.index.canonicalBytes, canonical.byteLength);
   assert.deepEqual(new Uint8Array(await result.data.arrayBuffer()), packed);
-  // Completion was already observed when the final borrowed block is released,
-  // so the controller correctly suppresses a terminal late credit. The
-  // deferred assertion above proves that the original credit was held through
-  // both mapper slices and the indexed gap.
-  assert.equal(workers[0]!.posted.filter(message => message.type === "output-credit").length, 0);
+  assert.equal(workers[0]!.posted.filter(message => message.type === "output-credit").length, 1);
+  await store.close();
+});
+
+test("store cancellation settles a pending BYOB read before cleanup", async () => {
+  const packed = emptySilentPackage();
+  const backend = new MemoryStemStorageBackend();
+  const store = new VerifiedSparsePcmStore({ backend, instanceId: "sparse-byob-cancel" });
+  let started!: () => void;
+  let resolveRead!: (result: ReadableStreamReadResult<Uint8Array>) => void;
+  let cancelled = 0;
+  const readStarted = new Promise<void>(resolve => { started = resolve; });
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/pending-byob",
+    fetch: async () => {
+      const response = new Response(null, { status: 200 });
+      const body = {
+        locked: false,
+        getReader: () => ({
+          read: () => {
+            started();
+            return new Promise<ReadableStreamReadResult<Uint8Array>>(resolve => { resolveRead = resolve; });
+          },
+          cancel: async () => {
+            cancelled += 1;
+            resolveRead({ done: true, value: new Uint8Array() });
+          },
+          releaseLock: () => {},
+        }),
+      };
+      Object.defineProperty(response, "body", { value: body });
+      return response;
+    },
+    createWorker: () => { throw new Error("pending body must not create a decoder worker"); },
+  });
+  const operation = new AbortController();
+  const installing = store.installSource(packed.expected, { signal: operation.signal, resolve: signal => resolver(packed.expected, signal) });
+  await readStarted;
+  operation.abort(new Error("store cancellation"));
+  await assert.rejects(installing, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+  assert.equal(cancelled, 1);
+  assert.deepEqual(await backend.list(), []);
+  await store.close();
+});
+
+test("quota failure leaves a prior cache intact and the same resolver safely reuses admission", async () => {
+  const oldBytes = new Uint8Array([1, 2, 3, 4]);
+  const oldExpected: SparsePcmExpectation = {
+    identity: `sha256:${createHash("sha256").update(oldBytes).digest("hex")}`,
+    sampleRateHz: 48_000,
+    channels: 1,
+    bitDepth: 16,
+    frames: 2,
+    canonicalBytes: oldBytes.byteLength,
+  };
+  const backend = new MemoryStemStorageBackend();
+  const store = new VerifiedSparsePcmStore({ backend, instanceId: "sparse-quota-reuse" });
+  await store.installSource(oldExpected, {
+    resolve: async () => ({ spans: (async function* () { yield { startFrame: 0, bytes: oldBytes }; })() }),
+  });
+  const prior = new Map([...backend.files].map(([name, bytes]) => [name, bytes.slice()]));
+  const packed = emptySilentPackage();
+  let fetches = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/quota",
+    fetch: async () => {
+      fetches += 1;
+      return new Response(responseBytes(packed.body), { status: 200, headers: { "Content-Length": String(packed.body.byteLength) } });
+    },
+    createWorker: () => { throw new Error("all-silent quota source must not create a decoder worker"); },
+  });
+  backend.quotaBytes = (await backend.estimate()).usage;
+  await assert.rejects(
+    store.installSource(packed.expected, { resolve: signal => resolver(packed.expected, signal) }),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.quota",
+  );
+  assert.deepEqual([...backend.files], [...prior]);
+
+  backend.quotaBytes = undefined;
+  const recovered = await store.installSource(packed.expected, { resolve: signal => resolver(packed.expected, signal) });
+  assert.equal(fetches, 2);
+  assert.equal(recovered.index.activeBytes, 0);
+  for (const [name, bytes] of prior) assert.deepEqual(backend.files.get(name), bytes);
   await store.close();
 });
 
