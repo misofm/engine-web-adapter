@@ -86,3 +86,29 @@ consumer passed its new sparse worker/gap/seek smoke (one asset read, generation
 512-byte conservative scratch for its mono16 fixture), alongside existing checks.
 This is the completed first attempt, awaiting one independent Astra medium
 verdict; no session-open integration, registry release or deployment is claimed.
+
+## Attempt 1 verdict — FAIL; bounded attempt 2 approved
+
+Independent non-implementing Astra medium reviewed pushed bf72c37 in the existing
+review thread (not fresh context) and reproduced an aggregate deadline bug:
+three healthy45ms descriptor reads with a100ms request deadline terminate at
+about104ms before initialization. Each operation meets its deadline, but the
+combined opening timeout incorrectly turns source count into a latency limit.
+Independent full check passes245/245; this does not waive the reproduction.
+The existing macOS OPFS workflow34620563571 also passes at bf72c37; it is storage
+qualification, not sparse-pump WebKit qualification.
+
+Attempt2 removes the aggregate initialization deadline and applies the existing
+Effect Clock timeout to each unique descriptor read, retaining the separate
+shared handshake/request deadline and scoped termination. No new total timeout,
+source-count cap, timer framework or parallel acquisition controller is allowed.
+Add representative healthy cumulative progress, stalled read/late result, sparse
+initialization cancellation (including post-reply handoff), and five mixed-size
+sources proving the largest-four scratch/read bound across pending seeks.
+Preserve cancellation/error classification. Run proportional focused/full gates
+and the existing packed Chromium smoke, then obtain one independent verdict.
+
+Review and reproduction are retained under
+`/data/sparse-pcm-launch/tooling/adapter-60-attempt1-review/`, with the review copy
+in `adapter-60-reviews/attempt1-bf72c37.md`. No additional Cause-loss defect was
+demonstrated; this correction does not authorize a wider error-boundary rewrite.
