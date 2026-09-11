@@ -1,4 +1,4 @@
-# Clean late OPFS promotion after cancellation
+# Clean verified late promotion after cancelled OPFS ingest
 
 Independent review of adapter main 2c0d7928395db82744733d3dd5c045545eb366e9 and issue47 processing work reproduced a pre-existing cancellation race. A backend.move can remain in flight after the store's deadline/abort rejects. Store cleanup removes staging, releases the stem lock and rejects the opening; a delayed move can then finish and leave a verified but unindexed final PCM file.
 
