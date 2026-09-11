@@ -10,7 +10,7 @@ import { Effect } from "effect";
 import { ADAPTER_ASSETS, createFlacWorker } from "../src/assets.js";
 import { EngineWebAdapterError } from "../src/errors.js";
 import { readExactFlacRange } from "../src/stems/flac-delivery.js";
-import { createFlacStemResolver, createFlacStemResolverWithSource } from "../src/stems/flac-resolver.js";
+import { createFlacStemChunkResolver, createFlacStemResolver, createFlacStemResolverWithSource } from "../src/stems/flac-resolver.js";
 import { DecoderByteSourceError, type DecoderByteSource, type DecoderByteSourceOptions } from "../src/stems/decoder-byte-source.js";
 import { FlacWorkerPool } from "../src/stems/flac-worker-pool.js";
 import type {
@@ -502,6 +502,95 @@ test("a source adopts a synchronous borrow before cancellation and releases it o
   assert.equal(reads, 1);
   assert.equal(releases, 1);
   assert.equal(worker.terminated, true);
+});
+
+test("private chunk output borrows the shared queue and returns credit only on release", async () => {
+  const expected = {
+    sampleRateHz: 44_100, channels: 1 as const, bitDepth: 16 as const,
+    frames: 2, canonicalBytes: 4,
+  };
+  const pcm = new Uint8Array([9, 8, 7, 6]);
+  const worker = new ScriptedWorker((physical, requestId) => {
+    physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+    queueMicrotask(() => physical.emit({ type: "pcm", requestId, bytes: pcm.slice().buffer, frames: 2, totalPcmBytes: 4 }));
+  });
+  const resolver = createFlacStemChunkResolver({
+    createWorker: () => worker, hardwareConcurrency: 2,
+    wholeSourceIdentity: IDENTITY,
+    chunk: { expected, pcmSha256: createHash("sha256").update(pcm).digest("hex") },
+    sourceFactory: () => syntheticSource({
+      prepare: Effect.succeed({ streamInfo: syntheticStreamInfo(), expectedFrames: 2, totalPcmBytes: 4 }),
+      read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
+      finish: Effect.sync(() => {}),
+    }),
+  });
+  const { output } = await resolver.resolve();
+  const reader = output.getReader();
+  const first = await reader.read();
+  assert.equal(first.done, false);
+  assert.deepEqual([...(first.value?.bytes ?? [])], [...pcm]);
+  assert.equal(worker.posted.filter(message => message.type === "output-credit").length, 0);
+  first.value!.release();
+  const requestId = worker.posted.find((message): message is Extract<FlacWorkerRequest, { type: "start" }> => message.type === "start")!.requestId;
+  worker.emit({ type: "complete", requestId, pcmBytes: 4, frames: 2 });
+  assert.equal((await reader.read()).done, true);
+  assert.equal(worker.posted.filter(message => message.type === "output-credit").length, 1);
+  assert.equal(worker.terminated, true);
+});
+
+test("private chunk output enforces frame alignment independently of processing", async () => {
+  const expected = {
+    sampleRateHz: 44_100, channels: 2 as const, bitDepth: 24 as const,
+    frames: 1, canonicalBytes: 6,
+  };
+  const streamInfo = { ...syntheticStreamInfo(), channels: 2 as const, bitDepth: 24 as const };
+  const worker = new ScriptedWorker((physical, requestId) => {
+    physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+    queueMicrotask(() => physical.emit({ type: "pcm", requestId, bytes: new Uint8Array([1, 2, 3, 4, 5]).buffer, frames: 1, totalPcmBytes: 6 }));
+  });
+  const resolver = createFlacStemChunkResolver({
+    createWorker: () => worker, hardwareConcurrency: 2,
+    wholeSourceIdentity: IDENTITY,
+    chunk: { expected, pcmSha256: "0".repeat(64) },
+    sourceFactory: () => syntheticSource({
+      prepare: Effect.succeed({ streamInfo, expectedFrames: 1, totalPcmBytes: 6 }),
+      read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
+      finish: Effect.sync(() => {}),
+    }),
+  });
+  const reader = (await resolver.resolve()).output.getReader();
+  await assert.rejects(reader.read(), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.decode.worker");
+  assert.equal(worker.terminated, true);
+});
+
+test("private output capacity includes the checked-out block until its release", async () => {
+  const expected = {
+    sampleRateHz: 44_100, channels: 1 as const, bitDepth: 16 as const,
+    frames: 3, canonicalBytes: 6,
+  };
+  const worker = new ScriptedWorker((physical, requestId) => {
+    physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+    queueMicrotask(() => physical.emit({ type: "pcm", requestId, bytes: new Uint8Array([1, 2]).buffer, frames: 1, totalPcmBytes: 6 }));
+  });
+  const resolver = createFlacStemChunkResolver({
+    createWorker: () => worker, hardwareConcurrency: 2,
+    wholeSourceIdentity: IDENTITY,
+    chunk: { expected, pcmSha256: "0".repeat(64) },
+    sourceFactory: () => syntheticSource({
+      prepare: Effect.succeed({ streamInfo: syntheticStreamInfo(), expectedFrames: 3, totalPcmBytes: 6 }),
+      read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
+      finish: Effect.sync(() => {}),
+    }),
+  });
+  const reader = (await resolver.resolve()).output.getReader();
+  const first = await reader.read();
+  const requestId = worker.posted.find((message): message is Extract<FlacWorkerRequest, { type: "start" }> => message.type === "start")!.requestId;
+  worker.emit({ type: "pcm", requestId, bytes: new Uint8Array([3, 4]).buffer, frames: 1, totalPcmBytes: 6 });
+  worker.emit({ type: "pcm", requestId, bytes: new Uint8Array([5, 6]).buffer, frames: 1, totalPcmBytes: 6 });
+  await assert.rejects(reader.read(), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.decode.worker");
+  assert.equal(worker.terminated, true);
+  first.value?.release();
+  assert.equal(worker.posted.filter(message => message.type === "output-credit").length, 0);
 });
 
 test("input lane refuses invalid credits and bounded-command overflow before source access", async () => {
