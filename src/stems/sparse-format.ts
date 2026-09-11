@@ -81,9 +81,11 @@ function hasOwn(value: Record<string, unknown>, key: string): boolean {
 
 function exactObject(value: unknown, keys: readonly string[], path: string): Record<string, unknown> {
   if (!isRecord(value)) throw corrupt(`${path} must be an object`);
-  const actual = Object.keys(value).sort();
+  const ownKeys = Object.keys(value);
+  if (ownKeys.length !== keys.length) throw corrupt(`${path} has an unknown or missing key`, { path, keys: ownKeys });
+  const actual = ownKeys.sort();
   const expected = [...keys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+  if (actual.some((key, index) => key !== expected[index])) {
     throw corrupt(`${path} has an unknown or missing key`, { path, keys: actual });
   }
   return value;
@@ -192,17 +194,25 @@ function normalizeManifest(value: unknown, payloadBytes?: number): SparseStemMan
     throw corrupt("Sparse package sources must contain between one and 1024 sources");
   }
   if (root.sources.length === 0) throw corrupt("Sparse package sources cannot be empty");
+  let remainingUnits = SPARSE_STEM_MAX_UNITS;
+  for (let sourceIndex = 0; sourceIndex < root.sources.length; sourceIndex += 1) {
+    const rawSource = root.sources[sourceIndex];
+    if (!isRecord(rawSource) || !Array.isArray(rawSource.units)) {
+      throw corrupt(`sources[${sourceIndex}].units must be an array`);
+    }
+    if (rawSource.units.length > remainingUnits) {
+      throw corrupt("Sparse package contains too many units", { limit: SPARSE_STEM_MAX_UNITS });
+    }
+    remainingUnits -= rawSource.units.length;
+  }
   const sources: SparseStemSource[] = [];
   let previousIdentity = "";
-  let unitCount = 0;
   let payloadEnd = 0;
   for (let sourceIndex = 0; sourceIndex < root.sources.length; sourceIndex += 1) {
     const source = sourceShape(root.sources[sourceIndex], sourceIndex, payloadEnd);
     sources.push(source);
     if (source.identity <= previousIdentity) throw corrupt("Sparse package sources must be unique and sorted by identity");
     previousIdentity = source.identity;
-    unitCount += source.units.length;
-    if (unitCount > SPARSE_STEM_MAX_UNITS) throw corrupt("Sparse package contains too many units", { limit: SPARSE_STEM_MAX_UNITS });
     if (source.units.length > 0) {
       const last = source.units[source.units.length - 1]!;
       payloadEnd = last.offset + last.bytes;

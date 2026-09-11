@@ -73,6 +73,8 @@ export type {
 export {
   SPARSE_PCM_FORMAT,
   SPARSE_PCM_MAX_WINDOW_FRAMES,
+  SPARSE_PCM_MAX_INTERVALS,
+  SPARSE_PCM_MAX_INDEX_BYTES,
   deriveSparsePcmIndex,
   validateSparsePcmIndex,
   readSparsePcmWindow,

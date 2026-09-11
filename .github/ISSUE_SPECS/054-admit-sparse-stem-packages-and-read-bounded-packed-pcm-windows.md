@@ -87,3 +87,33 @@ Include counters proving a small read does not traverse unrelated intervals
 and oversized arrays reject before element access. The wire contract and
 existing resource ceilings remain unchanged. No new harness or integration
 scope is authorized by this revision.
+
+## Attempt 2 implementation evidence (Luna)
+
+Attempt 2 keeps the same transport/session scope. Sparse PCM admission now
+records a module-private WeakSet proof; `readSparsePcmWindow` rejects frozen or
+structured-cloned forgeries and performs only constant-time Blob-size and
+request checks before binary search/intersection copying. Standalone PCM
+admission has fixed known keys, a 65,536 interval ceiling, an 8 MiB metadata
+ceiling, checked packed offsets and derived byte counts. Transport source unit
+counts are preflighted across all sources before source/unit element walking or
+cloning. Focused tests add raw malformed-wire cases, binding negatives, early
+array-access discriminators, repeated-read freeze counters, and independent
+dense integer oracles for mono16/stereo24, all-active/silent, leading/interior/
+trailing gaps, one-LSB data, large gaps, 8192 boundaries, partial EOF and
+launch-rate extremes.
+
+Evidence from this worktree:
+
+- Focused `node --test .test-dist/tests/sparse-stems.test.js`: 11 tests passed.
+- `npm run typecheck`: passed.
+- `npm test`: 202 tests passed.
+- `npm run format:check`: passed.
+- `node scripts/check-source-policy.mjs`: passed.
+- `npm run check:package`: passed.
+
+No network, store, session, worker, Rust, mono-conversion, version, or
+artist-data behavior changed. The worker must re-admit a structured-cloned
+index in its own module realm; this issue still does not add worker/session
+integration. Astra's attempt-2 verdict and root's checkpoint/push remain
+pending.

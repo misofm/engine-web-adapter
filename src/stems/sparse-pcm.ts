@@ -7,6 +7,8 @@ import {
 
 export const SPARSE_PCM_FORMAT = "miso_sparse_pcm_v1" as const;
 export const SPARSE_PCM_MAX_WINDOW_FRAMES = 8192;
+export const SPARSE_PCM_MAX_INTERVALS = 65_536;
+export const SPARSE_PCM_MAX_INDEX_BYTES = 8 * 1024 * 1024;
 
 export interface SparsePcmInterval {
   readonly startFrame: number;
@@ -60,6 +62,12 @@ function bytesPerFrame(source: Pick<SparseStemSource, "channels" | "bitDepth">):
 }
 
 type PackedSize = Blob | ArrayBuffer | ArrayBufferView | number;
+
+const PCM_INDEX_KEYS = [
+  "activeBytes", "bitDepth", "canonicalBytes", "channels", "format", "frames", "identity", "intervals", "sampleRateHz",
+] as const;
+const PCM_INTERVAL_KEYS = ["byteOffset", "frames", "startFrame"] as const;
+const ADMITTED = new WeakSet<SparsePcmIndex>();
 
 function packedSize(value: PackedSize): number {
   if (typeof value === "number") return integer(value, "packedBytes", 0);
@@ -126,12 +134,22 @@ export function deriveSparsePcmIndex(source: SparseStemSource, packed: PackedSiz
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return (prototype === Object.prototype || prototype === null) && Object.getOwnPropertySymbols(value).length === 0;
+}
+
+function exactKeys(value: Record<string, unknown>, allowed: readonly string[], required: readonly string[], path: string): void {
+  const keys = Object.keys(value);
+  if (keys.some((key) => !allowed.includes(key)) || required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) {
+    throw corrupt(`${path} has an unknown or missing key`, { path, keys });
+  }
 }
 
 /** Validate an independently constructed packed-PCM index and derive its byte counts. */
 export function validateSparsePcmIndex(value: unknown, packed?: PackedSize): SparsePcmIndex {
   if (!isRecord(value)) throw corrupt("Packed PCM index must be an object");
+  exactKeys(value, PCM_INDEX_KEYS, ["bitDepth", "channels", "format", "frames", "identity", "intervals", "sampleRateHz"], "index");
   if (value.format !== SPARSE_PCM_FORMAT) throw corrupt("Packed PCM index format tag is unsupported");
   const identity = value.identity as SparseStemSource["identity"];
   const sampleRateHz = value.sampleRateHz as number;
@@ -151,11 +169,16 @@ export function validateSparsePcmIndex(value: unknown, packed?: PackedSize): Spa
   const canonicalBytes = frames * frameBytes;
   if (!Number.isSafeInteger(canonicalBytes)) throw corrupt("Packed PCM canonical byte count is unsafe");
   if (!Array.isArray(value.intervals)) throw corrupt("Packed PCM intervals must be an array");
+  if (value.intervals.length > SPARSE_PCM_MAX_INTERVALS) {
+    throw corrupt("Packed PCM index contains too many intervals", { limit: SPARSE_PCM_MAX_INTERVALS });
+  }
   const intervals: SparsePcmInterval[] = [];
+  let intervalMetadataBytes = 0;
   let expectedOffset = 0;
   let previousEnd = 0;
   for (const rawInterval of value.intervals) {
     if (!isRecord(rawInterval)) throw corrupt("Packed PCM interval must be an object");
+    exactKeys(rawInterval, PCM_INTERVAL_KEYS, PCM_INTERVAL_KEYS, "interval");
     const startFrame = integer(rawInterval.startFrame, "interval.startFrame", 0);
     const intervalFrames = integer(rawInterval.frames, "interval.frames", 1);
     const byteOffset = integer(rawInterval.byteOffset, "interval.byteOffset", 0);
@@ -168,12 +191,23 @@ export function validateSparsePcmIndex(value: unknown, packed?: PackedSize): Spa
     if (!Number.isSafeInteger(next)) throw corrupt("Packed PCM offset arithmetic is unsafe");
     expectedOffset = next;
     previousEnd = startFrame + intervalFrames;
+    intervalMetadataBytes += new TextEncoder().encode(JSON.stringify({ byteOffset, frames: intervalFrames, startFrame })).byteLength;
+    if (!Number.isSafeInteger(intervalMetadataBytes) || intervalMetadataBytes > SPARSE_PCM_MAX_INDEX_BYTES) {
+      throw corrupt("Packed PCM index metadata exceeds its bounded size", { limit: SPARSE_PCM_MAX_INDEX_BYTES });
+    }
     intervals.push(Object.freeze({ startFrame, frames: intervalFrames, byteOffset }));
   }
   if (value.activeBytes !== undefined && value.activeBytes !== expectedOffset) throw corrupt("Packed PCM active byte count is invalid");
   if (value.canonicalBytes !== undefined && value.canonicalBytes !== canonicalBytes) throw corrupt("Packed PCM canonical byte count is invalid");
   if (packed !== undefined && packedSize(packed) !== expectedOffset) throw corrupt("Packed PCM payload size does not match its index");
-  return Object.freeze({
+  const prefix = `{"activeBytes":${expectedOffset},"bitDepth":${bitDepth},"canonicalBytes":${canonicalBytes},"channels":${channels},"format":${JSON.stringify(SPARSE_PCM_FORMAT)},"frames":${frames},"identity":${JSON.stringify(identity)},"intervals":[`;
+  const suffix = `],"sampleRateHz":${sampleRateHz}}`;
+  const encodedBytes = new TextEncoder().encode(prefix).byteLength + intervalMetadataBytes +
+    Math.max(0, intervals.length - 1) + new TextEncoder().encode(suffix).byteLength;
+  if (!Number.isSafeInteger(encodedBytes) || encodedBytes > SPARSE_PCM_MAX_INDEX_BYTES) {
+    throw corrupt("Packed PCM index metadata exceeds its bounded size", { bytes: encodedBytes, limit: SPARSE_PCM_MAX_INDEX_BYTES });
+  }
+  const admitted = Object.freeze({
     format: SPARSE_PCM_FORMAT,
     identity,
     sampleRateHz,
@@ -184,6 +218,8 @@ export function validateSparsePcmIndex(value: unknown, packed?: PackedSize): Spa
     activeBytes: expectedOffset,
     canonicalBytes,
   });
+  ADMITTED.add(admitted);
+  return admitted;
 }
 
 function firstIntersecting(intervals: readonly SparsePcmInterval[], frame: number): number {
@@ -208,8 +244,13 @@ export async function readSparsePcmWindow(
   startFrame: number,
   frameCount: number,
 ): Promise<Uint8Array> {
-  const valid = validateSparsePcmIndex(index, packed);
+  if (!ADMITTED.has(index)) throw corrupt("Packed PCM index has not been admitted by this module");
   if (!(packed instanceof Blob)) throw corrupt("Packed PCM input must be a Blob");
+  const packedBytes = packed.size;
+  if (!Number.isSafeInteger(packedBytes) || packedBytes !== index.activeBytes) {
+    throw corrupt("Packed PCM payload size does not match its admitted index", { actual: packedBytes, expected: index.activeBytes });
+  }
+  const valid = index;
   const start = integer(startFrame, "startFrame", 0);
   const count = integer(frameCount, "frameCount", 1);
   if (count > SPARSE_PCM_MAX_WINDOW_FRAMES) throw corrupt("PCM window exceeds its bounded frame count", { count, limit: SPARSE_PCM_MAX_WINDOW_FRAMES });

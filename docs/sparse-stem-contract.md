@@ -14,4 +14,8 @@ zero-filled logical window of at most 8192 frames. It binary-searches the first
 active interval, performs one contiguous packed Blob read for all intersections,
 and performs no read for an all-gap window. A short read is an error. Callers
 own generation checks, cancellation and physical-read admission; this helper
-does not create a pump or background concurrency state machine.
+does not create a pump or background concurrency state machine. A PCM index is
+admitted once by the module's private identity proof, with at most 65536
+intervals and 8 MiB of fixed-depth metadata; repeated reads perform only O(1)
+size/request checks plus interval binary search. A structured-cloned index must
+be admitted again in its receiving worker.
