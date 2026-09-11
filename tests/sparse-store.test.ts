@@ -882,4 +882,144 @@ describe("VerifiedSparsePcmStore", () => {
     await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
     await store.close();
   });
+
+  it("inspects a non-silent source without reading PCM bytes or hashing", async () => {
+    let payloadArrayBufferReads = 0;
+    let payloadBlobReads = 0;
+    class CountingBlob extends Blob {
+      override arrayBuffer(): Promise<ArrayBuffer> {
+        payloadArrayBufferReads += 1;
+        return super.arrayBuffer();
+      }
+
+      override slice(start?: number, end?: number, contentType?: string): Blob {
+        return new CountingBlob([super.slice(start, end, contentType)]);
+      }
+    }
+    class PresenceSpyBackend extends MemoryStemStorageBackend {
+      override async read(name: string): Promise<Blob> {
+        if (!name.startsWith("sparse-pcm-v1-data-")) return super.read(name);
+        const bytes = this.files.get(name);
+        if (bytes === undefined) return super.read(name);
+        payloadBlobReads += 1;
+        return new CountingBlob([bytes.slice()]);
+      }
+    }
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const expected = expectation(bytes, 2);
+    const backend = new PresenceSpyBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "presence-spy" });
+    await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+    payloadArrayBufferReads = 0;
+    payloadBlobReads = 0;
+    assert.deepEqual(await store.inspectSourcePresence(expected), { status: "present", activeBytes: bytes.byteLength });
+    assert.equal(payloadBlobReads, 1, "presence may read the payload Blob metadata");
+    assert.equal(payloadArrayBufferReads, 0, "presence must not read PCM bytes");
+    const payload = [...backend.files.keys()].find((name) => name.startsWith("sparse-pcm-v1-data-"));
+    assert.ok(payload);
+    const tampered = backend.files.get(payload)!.slice();
+    tampered[0] = (tampered[0] ?? 0) ^ 1;
+    backend.files.set(payload, tampered);
+    assert.deepEqual(await store.inspectSourcePresence(expected), { status: "present", activeBytes: bytes.byteLength });
+    await assert.rejects(store.openSource(expected), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+    assert.equal(payloadArrayBufferReads > 0, true, "full open must perform canonical PCM verification");
+    await store.close();
+  });
+
+  it("rejects malformed presence metadata, missing generations, and wrong extents", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const expected = expectation(bytes, 2);
+    for (const mode of ["malformed-marker", "missing-generation", "wrong-extent"] as const) {
+      const backend = new MemoryStemStorageBackend();
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: `presence-${mode}` });
+      await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+      const marker = [...backend.files.keys()].find((name) => name.startsWith("sparse-pcm-v1-commit-"));
+      const payload = [...backend.files.keys()].find((name) => name.startsWith("sparse-pcm-v1-data-"));
+      assert.ok(marker);
+      assert.ok(payload);
+      if (mode === "malformed-marker") backend.files.set(marker, new Uint8Array([123, 125]));
+      if (mode === "missing-generation") backend.files.delete(payload);
+      if (mode === "wrong-extent") backend.files.set(payload, backend.files.get(payload)!.slice(0, 2));
+      await assert.rejects(store.inspectSourcePresence(expected), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+      await store.close();
+    }
+  });
+
+  it("rejects duplicate IDs and conflicting aliases before opening storage", async () => {
+    class OpenSpyBackend extends MemoryStemStorageBackend {
+      opens = 0;
+      override async open(): Promise<void> { this.opens += 1; await super.open(); }
+    }
+    const bytes = new Uint8Array([1, 2]);
+    const expected = expectation(bytes, 1);
+    const conflicting = { ...expected, frames: 2, canonicalBytes: 4 };
+    const backend = new OpenSpyBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "session-admission" });
+    const resolve = async () => ({ spans: spans({ startFrame: 0, bytes }) });
+    await assert.rejects(store.openSession({ leaseId: "ids", sources: [{ ...expected, sourceId: "same" }, { ...expected, sourceId: "same" }], resolve }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    await assert.rejects(store.openSession({ leaseId: "shape", sources: [{ ...expected, sourceId: "first" }, { ...conflicting, sourceId: "second" }], resolve }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    assert.equal(backend.opens, 0, "admission failures must precede backend access");
+    await store.close();
+  });
+
+  it("releases each source scope before the next and preserves earlier assets on late failure", async () => {
+    const firstBytes = new Uint8Array([1, 2]);
+    const secondBytes = new Uint8Array([3, 4]);
+    const first = expectation(firstBytes, 1);
+    const second = expectation(secondBytes, 1);
+    const active = new Set<string>();
+    let firstReleasedBeforeSecond = false;
+    const locks = {
+      request: async <T>(name: string, _options: { readonly mode: "exclusive"; readonly signal?: AbortSignal }, callback: () => Promise<T>): Promise<T> => {
+        active.add(name);
+        try {
+          if (name.endsWith(second.identity.slice(7))) firstReleasedBeforeSecond = ![...active].some((held) => held.endsWith(first.identity.slice(7)));
+          return await callback();
+        } finally {
+          active.delete(name);
+        }
+      },
+    };
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, locks, instanceId: "scope-order" });
+    await assert.rejects(store.openSession({
+      leaseId: "late-failure",
+      sources: [{ ...first, sourceId: "first" }, { ...second, sourceId: "second" }],
+      resolve: async (expected) => {
+        if (expected.identity === second.identity) throw new Error("late source failed");
+        return { spans: spans({ startFrame: 0, bytes: firstBytes }) };
+      },
+    }));
+    assert.equal(firstReleasedBeforeSecond, true);
+    assert.deepEqual((await store.openSource(first))?.index.activeBytes, firstBytes.byteLength);
+    await store.close();
+  });
+
+  it("keeps warm resolver calls at zero, independent leases independent, and reverse orders deadlock-free", async () => {
+    const firstBytes = new Uint8Array([1, 2]);
+    const secondBytes = new Uint8Array([3, 4]);
+    const first = expectation(firstBytes, 1);
+    const second = expectation(secondBytes, 1);
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "session-independent" });
+    await store.installSource(first, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: firstBytes }) }) });
+    let warmResolves = 0;
+    const warm = await store.openSession({ leaseId: "warm", sources: [{ ...first, sourceId: "warm" }], resolve: async () => { warmResolves += 1; throw new Error("warm resolver called"); } });
+    assert.equal(warmResolves, 0);
+    const independent = await store.openSession({ leaseId: "independent", sources: [{ ...first, sourceId: "independent" }], resolve: async () => ({ spans: spans() }) });
+    await warm.close();
+    assert.equal((await independent.read(first.identity)).data.size, firstBytes.byteLength);
+    await independent.close();
+
+    const resolver = async (expected: SparsePcmExpectation) => ({ spans: spans({ startFrame: 0, bytes: expected.identity === first.identity ? firstBytes : secondBytes }) });
+    const [left, right] = await Promise.all([
+      store.openSession({ leaseId: "left", sources: [{ ...first, sourceId: "left-first" }, { ...second, sourceId: "left-second" }], resolve: resolver }),
+      store.openSession({ leaseId: "right", sources: [{ ...second, sourceId: "right-second" }, { ...first, sourceId: "right-first" }], resolve: resolver }),
+    ]);
+    assert.equal((await left.read(second.identity)).data.size, secondBytes.byteLength);
+    assert.equal((await right.read(first.identity)).data.size, firstBytes.byteLength);
+    await left.close();
+    await right.close();
+    await store.close();
+  });
 });

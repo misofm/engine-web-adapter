@@ -312,11 +312,15 @@ class SparseCoordination extends Context.Service<SparseCoordination, {
 
 interface Lifecycle { readonly _tag: "opening" | "streaming" | "data-closed" | "marker-writing" | "committed" | "aborting" | "closed" }
 interface OperationState { readonly ref: Ref.Ref<Lifecycle>; readonly signal: AbortSignal; readonly dispose: () => void }
+interface PreparedSparsePcmSession {
+  readonly lease: SparsePcmSessionLease;
+  readonly handoff: () => void;
+}
 
 class SparseProgram extends Context.Service<SparseProgram, {
   readonly openSource: (expected: unknown, callerSignal?: AbortSignal) => Effect.Effect<SparsePcmDescriptor | undefined, SparseFailure, ScopeRequirement>;
   readonly installSource: (expected: unknown, options: SparsePcmInstallOptions) => Effect.Effect<SparsePcmDescriptor, SparseFailure, ScopeRequirement>;
-  readonly openSession: (options: unknown) => Effect.Effect<SparsePcmSessionLease, SparseFailure, ScopeRequirement>;
+  readonly openSession: (options: unknown) => Effect.Effect<PreparedSparsePcmSession, SparseFailure, ScopeRequirement>;
   readonly inspectSourcePresence: (expected: unknown, callerSignal?: AbortSignal) => Effect.Effect<SparsePcmPresence, SparseFailure, ScopeRequirement>;
 }>()("engine-web/SparseProgram") {
   static layer: Layer.Layer<SparseProgram, never, SparseBackend | SparseCoordination | SparseLifecycle> = Layer.effect(this, Effect.gen(function*() {
@@ -419,9 +423,22 @@ class SparseProgram extends Context.Service<SparseProgram, {
         descriptors.set(unique.identity, descriptor);
       }
       yield* checkSignal(operation.signal);
-      const lease = new SparsePcmSessionLeaseImpl(checked.leaseId, checked.sources, descriptors, lifecycle.signal, checked.signal);
+      const lease = new SparsePcmSessionLeaseImpl(checked.leaseId, checked.sources, descriptors);
+      const handoffState: { storeSignal: AbortSignal | undefined; callerSignal: AbortSignal | undefined } = {
+        storeSignal: lifecycle.signal,
+        callerSignal: checked.signal,
+      };
+      const handoff = () => {
+        const storeSignal = handoffState.storeSignal;
+        const callerSignal = handoffState.callerSignal;
+        handoffState.storeSignal = undefined;
+        handoffState.callerSignal = undefined;
+        if (storeSignal?.aborted || callerSignal?.aborted) {
+          throw new EngineWebAdapterError("stem.cancelled", "Sparse PCM session open was cancelled", {}, callerSignal?.reason ?? storeSignal?.reason);
+        }
+      };
       operation.dispose();
-      return lease;
+      return { lease, handoff };
     });
     return SparseProgram.of({ openSource, installSource, openSession, inspectSourcePresence });
   }));
@@ -462,13 +479,12 @@ export class VerifiedSparsePcmStore {
 
   openSession(options: SparsePcmSessionOptions): Promise<SparsePcmSessionLease> {
     this.assertOpen();
-    return this.run(Effect.scoped(SparseProgram.use((program) => program.openSession(options)))).then(async (lease) => {
-      if (!(lease instanceof SparsePcmSessionLeaseImpl)) return lease;
+    return this.run(Effect.scoped(SparseProgram.use((program) => program.openSession(options)))).then(async (prepared) => {
       try {
-        lease.assertHandoff();
-        return lease;
+        prepared.handoff();
+        return prepared.lease;
       } catch (error) {
-        await lease.close();
+        await prepared.lease.close();
         throw error;
       }
     });
@@ -511,22 +527,11 @@ class SparsePcmSessionLeaseImpl implements SparsePcmSessionLease {
   readonly sources: readonly SparsePcmSessionSource[];
   readonly #state: Ref.Ref<ReadonlyMap<StemIdentity, SparsePcmDescriptor> | undefined>;
 
-  readonly #storeSignal: AbortSignal;
-  readonly #callerSignal: AbortSignal | undefined;
-
-  constructor(leaseId: string, sources: readonly SparsePcmSessionSource[], descriptors: ReadonlyMap<StemIdentity, SparsePcmDescriptor>, storeSignal: AbortSignal, callerSignal: AbortSignal | undefined) {
+  constructor(leaseId: string, sources: readonly SparsePcmSessionSource[], descriptors: ReadonlyMap<StemIdentity, SparsePcmDescriptor>) {
     this.leaseId = leaseId;
     this.sources = sources;
     this.#state = Ref.makeUnsafe<ReadonlyMap<StemIdentity, SparsePcmDescriptor> | undefined>(descriptors);
-    this.#storeSignal = storeSignal;
-    this.#callerSignal = callerSignal;
     Object.freeze(this);
-  }
-
-  assertHandoff(): void {
-    if (this.#storeSignal.aborted || this.#callerSignal?.aborted) {
-      throw new EngineWebAdapterError("stem.cancelled", "Sparse PCM session open was cancelled", {}, this.#callerSignal?.reason ?? this.#storeSignal.reason);
-    }
   }
 
   async read(identity: StemIdentity): Promise<SparsePcmDescriptor> {
