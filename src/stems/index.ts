@@ -41,6 +41,10 @@ export type {
   SparsePcmDescriptor,
   SparsePcmInstallOptions,
   SparsePcmStoreOptions,
+  SparsePcmSessionSource,
+  SparsePcmSessionOptions,
+  SparsePcmSessionLease,
+  SparsePcmPresence,
 } from "./sparse-store.js";
 export type {
   DeclaredStemSource,
