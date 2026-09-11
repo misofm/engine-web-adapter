@@ -329,3 +329,14 @@ Checkpoint the smallest coherent correction, then run proportional final package
 and macOS gates and one independent attempt4 review. Three attempts have received
 FAIL; the maximum remains five. Global simplification remains a later user-requested
 pass once the complete delivery flow works.
+
+## Attempt 4 local checkpoint — full-Cause boundary
+
+The public facade now runs one complete Effect Exit and maps its Cause once,
+preserving existing adapter classification/details and every cleanup value,
+including undefined, defects and interruption. The source-specific failure
+tracker and primary-error mutation were removed. Luna reports the focused26-test
+suite and complete234-test package check passing; root independently reran26
+focused cases. Retained review probes for the previous error-path defects pass.
+This coherent checkpoint awaits its own macOS gate and independent attempt4
+verdict; no acceptance, release or subsequent feature implementation is claimed.

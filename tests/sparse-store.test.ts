@@ -643,4 +643,60 @@ describe("VerifiedSparsePcmStore", () => {
       }
     }
   });
+
+  it("maps complete Effect causes once at the public edge", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const runCase = async (phase: "undefined" | "getter" | "capability") => {
+      const primary = new Error("PRIMARY_GETTER_SENTINEL");
+      const cleanup = new Error("RETURN_CLEANUP_SENTINEL");
+      class CauseBackend extends MemoryStemStorageBackend {
+        override async createWriter(name: string, signal?: AbortSignal) {
+          const writer = await super.createWriter(name, signal);
+          if (phase !== "capability" || !name.startsWith("sparse-pcm-v1-data-")) return writer;
+          return {
+            write: async () => { throw new EngineWebAdapterError("capability.opfs", "ORIGINAL_CAPABILITY_SENTINEL"); },
+            close: () => writer.close(),
+            abort: (reason?: unknown) => writer.abort(reason),
+          };
+        }
+      }
+      const backend = new CauseBackend();
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: `cause-${phase}` });
+      const span: { startFrame: number; bytes: Uint8Array } = { startFrame: 0, bytes: phase === "undefined" ? new Uint8Array([1]) : bytes };
+      if (phase === "getter") Object.defineProperty(span, "startFrame", { get: () => { throw primary; }, enumerable: true });
+      const source = {
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => ({ done: false, value: span }),
+            return: async () => { throw phase === "undefined" ? undefined : cleanup; },
+            [Symbol.asyncIterator]() { return this; },
+          };
+        },
+      } as AsyncIterable<{ readonly startFrame: number; readonly bytes: Uint8Array }>;
+      const expected = expectation(bytes, 1);
+      let error: unknown;
+      await store.installSource(expected, { resolve: async () => ({ spans: source }) }).catch((value: unknown) => { error = value; });
+      if (phase === "undefined") {
+        assert.ok(error instanceof EngineWebAdapterError);
+        const aggregate = (error as Error).cause;
+        assert.ok(aggregate instanceof AggregateError);
+        assert.equal(aggregate.errors.some((value) => value === undefined), true);
+      } else if (phase === "getter") {
+        assert.ok(error instanceof EngineWebAdapterError);
+        assert.equal(error.code, "stem.corrupt");
+        assert.ok(error.cause instanceof AggregateError);
+        assert.equal(error.cause.errors.includes(primary), true);
+        assert.equal(error.cause.errors.includes(cleanup), true);
+      } else {
+        assert.ok(error instanceof EngineWebAdapterError);
+        assert.equal(error.code, "capability.opfs");
+        assert.ok(error.cause instanceof AggregateError);
+        assert.equal(error.cause.errors.some((value) => value instanceof EngineWebAdapterError && value.code === "capability.opfs" || value instanceof Error && value.cause instanceof EngineWebAdapterError && value.cause.code === "capability.opfs"), true);
+        assert.equal(error.cause.errors.includes(cleanup), true);
+      }
+      assert.equal((await backend.list()).length, 0);
+      await store.close();
+    };
+    for (const phase of ["undefined", "getter", "capability"] as const) await runCase(phase);
+  });
 });

@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
+import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
 
 import { EngineWebAdapterError } from "../errors.js";
 import { assertStemIdentity } from "./identity.js";
@@ -301,21 +301,19 @@ class SparseProgram extends Context.Service<SparseProgram, {
         (lease) => Effect.promise(() => lease.close()),
         { interruptible: true },
       );
-      return yield* withSourceLease(source, Effect.gen(function*() {
-        const asserted = yield* admitOptionalIndex(resolved.index, expected);
-        const generation = yield* uniqueGeneration(backend, expected.identity);
-        const dataName = payloadName(expected.identity, generation);
-        if (asserted !== undefined) {
-          const knownMarker = canonicalJsonBytes(makeMarker(expected, asserted, dataName, generation));
-          if (knownMarker.byteLength > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse known index marker exceeds its bound" });
-          yield* quotaCheck(backend, asserted.activeBytes + knownMarker.byteLength);
-        }
-        const committed = yield* ingestAndCommit(backend, expected, source, asserted, dataName, generation, operation);
-        const descriptor = Object.freeze({ kind: "sparse-pcm" as const, data: committed.data, index: committed.marker.index });
-        yield* Ref.set(operation.ref, { _tag: "committed" } as Lifecycle);
-        operation.dispose();
-        return descriptor;
-      }));
+      const asserted = yield* admitOptionalIndex(resolved.index, expected);
+      const generation = yield* uniqueGeneration(backend, expected.identity);
+      const dataName = payloadName(expected.identity, generation);
+      if (asserted !== undefined) {
+        const knownMarker = canonicalJsonBytes(makeMarker(expected, asserted, dataName, generation));
+        if (knownMarker.byteLength > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse known index marker exceeds its bound" });
+        yield* quotaCheck(backend, asserted.activeBytes + knownMarker.byteLength);
+      }
+      const committed = yield* ingestAndCommit(backend, expected, source, asserted, dataName, generation, operation);
+      const descriptor = Object.freeze({ kind: "sparse-pcm" as const, data: committed.data, index: committed.marker.index });
+      yield* Ref.set(operation.ref, { _tag: "committed" } as Lifecycle);
+      operation.dispose();
+      return descriptor;
     });
     return SparseProgram.of({ openSource, installSource });
   }));
@@ -346,12 +344,12 @@ export class VerifiedSparsePcmStore {
 
   openSource(expected: SparsePcmExpectation, options: { readonly signal?: AbortSignal } = {}): Promise<SparsePcmDescriptor | undefined> {
     this.assertOpen();
-    return this.track(this.#runtime.runPromise(Effect.scoped(SparseProgram.use((program) => program.openSource(expected, options.signal)))));
+    return this.run(Effect.scoped(SparseProgram.use((program) => program.openSource(expected, options.signal))));
   }
 
   installSource(expected: SparsePcmExpectation, options: SparsePcmInstallOptions): Promise<SparsePcmDescriptor> {
     this.assertOpen();
-    return this.track(this.#runtime.runPromise(Effect.scoped(SparseProgram.use((program) => program.installSource(expected, options)))));
+    return this.run(Effect.scoped(SparseProgram.use((program) => program.installSource(expected, options))));
   }
 
   async close(): Promise<void> {
@@ -367,10 +365,16 @@ export class VerifiedSparsePcmStore {
   }
 
   private track<T>(promise: Promise<T>): Promise<T> {
-    const tracked = promise.catch((error) => { throw mapPublicError(error); });
-    this.#active.add(tracked);
-    void tracked.then(() => this.#active.delete(tracked), () => this.#active.delete(tracked));
-    return tracked;
+    this.#active.add(promise);
+    void promise.then(() => this.#active.delete(promise), () => this.#active.delete(promise));
+    return promise;
+  }
+  private run<A>(effect: Effect.Effect<A, SparseFailure, SparseProgram>): Promise<A> {
+    const promise = this.#runtime.runPromiseExit(effect).then((exit) => {
+      if (Exit.isSuccess(exit)) return exit.value;
+      throw mapPublicCause(exit.cause);
+    });
+    return this.track(promise);
   }
   private assertOpen(): void { if (this.#closed) throw new EngineWebAdapterError("session.closed", "Sparse PCM store is closed"); }
 }
@@ -566,7 +570,7 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
       previousEnd = span.startFrame + spanFrames;
     });
     const stream = sourceStream(source, backend.readDeadlineMs);
-    yield* withSourceLease(source, Stream.runForEach(stream, processSpan));
+    yield* Stream.runForEach(stream, processSpan);
     yield* hashZeros(hash, (expected.frames - previousEnd) * frameBytes, operation.signal);
     const index = yield* Effect.try({ try: () => validateSparsePcmIndex({ format: SPARSE_PCM_FORMAT, identity: expected.identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth, frames: expected.frames, intervals, activeBytes, canonicalBytes: expected.canonicalBytes }, activeBytes), catch: (cause) => new SparseCorruptError({ message: "Derived sparse index is invalid", cause }) });
     if (asserted !== undefined) compareIndexes(asserted, index);
@@ -612,7 +616,6 @@ interface SourceLease {
   readonly markEof: () => void;
   readonly abortPending: () => Promise<void>;
   readonly close: () => Promise<void>;
-  readonly takeCleanupFailure: () => unknown | undefined;
 }
 
 function makeSourceLease(source: AsyncIterable<SparsePcmSpan>, controller: AbortController): SourceLease {
@@ -621,9 +624,6 @@ function makeSourceLease(source: AsyncIterable<SparsePcmSpan>, controller: Abort
   let closed = false;
   let pending: Promise<IteratorResult<SparsePcmSpan>> | undefined;
   let closing: Promise<void> | undefined;
-  let cleanupFailed = false;
-  let cleanupFailure: unknown;
-  let cleanupReported = false;
   const next = (): Promise<IteratorResult<SparsePcmSpan>> => {
     if (closed) return Promise.reject(new DOMException("Sparse resolver stream is closed", "AbortError"));
     let read: Promise<IteratorResult<SparsePcmSpan>>;
@@ -645,28 +645,17 @@ function makeSourceLease(source: AsyncIterable<SparsePcmSpan>, controller: Abort
     if (closing !== undefined) return closing;
     closed = true;
     closing = (async () => {
-      try {
-        await abortPending();
-        if (!normalEof && iterator.return !== undefined) {
-          const returned = Promise.resolve(iterator.return());
-          // A return rejection/throw is part of the operation result. Unlike a
-          // pending pull, it has no other observer and must reach the facade.
-          await returned;
-        }
-      } catch (cause) {
-        cleanupFailed = true;
-        cleanupFailure = cause;
-        throw cause;
+      await abortPending();
+      if (!normalEof && iterator.return !== undefined) {
+        const returned = Promise.resolve(iterator.return());
+        // A return rejection/throw is part of the operation result. Unlike a
+        // pending pull, it has no other observer and must reach the facade.
+        await returned;
       }
     })();
     return closing;
   };
-  const takeCleanupFailure = (): unknown | undefined => {
-    if (!cleanupFailed || cleanupReported) return undefined;
-    cleanupReported = true;
-    return cleanupFailure;
-  };
-  return { next, markEof: () => { normalEof = true; }, abortPending, close, takeCleanupFailure };
+  return { next, markEof: () => { normalEof = true; }, abortPending, close };
 }
 
 function sourceStream(source: SourceLease, deadlineMs: number): Stream.Stream<SparsePcmSpan, SparseFailure> {
@@ -691,40 +680,7 @@ function sourceStream(source: SourceLease, deadlineMs: number): Stream.Stream<Sp
     }
     return [[result.value], Option.some(undefined)] as const;
   });
-  return Stream.paginate(undefined, () => pull());
-}
-
-function withSourceLease<A>(source: SourceLease, effect: Effect.Effect<A, SparseFailure, ScopeRequirement>): Effect.Effect<A, SparseFailure, ScopeRequirement> {
-  const close = Effect.tryPromise({ try: () => source.close(), catch: (cause) => cause });
-  return Effect.matchCauseEffect(effect, {
-    onSuccess: (value) => Effect.gen(function*() {
-      const cleanup = yield* Effect.result(close);
-      if (cleanup._tag === "Failure") {
-        const failure = source.takeCleanupFailure();
-        if (failure !== undefined) return yield* new SparseIoError({ message: "Sparse source cleanup failed", cause: failure });
-      }
-      return value;
-    }),
-    onFailure: (cause) => Effect.gen(function*() {
-      const cleanup = yield* Effect.result(close);
-      if (cleanup._tag === "Failure") {
-        const failure = source.takeCleanupFailure();
-        if (failure !== undefined) {
-          const primary = cause.reasons.find(Cause.isFailReason)?.error;
-          if (primary !== undefined) return yield* Effect.fail(attachCleanupFailure(primary, failure));
-          return yield* Effect.failCause(Cause.combine(cause, Cause.die(failure)));
-        }
-      }
-      return yield* Effect.failCause(cause);
-    }),
-  });
-}
-
-function attachCleanupFailure(primary: SparseFailure, cleanup: unknown): SparseFailure {
-  const existing = primary.cause;
-  const aggregate = new AggregateError(existing === undefined ? [cleanup] : [existing, cleanup], "Sparse source cleanup failed");
-  Object.defineProperty(primary, "cause", { value: aggregate, configurable: true, enumerable: true, writable: true });
-  return primary;
+  return Stream.paginate(undefined, () => pull()).pipe(Stream.ensuring(Effect.promise(() => source.close())));
 }
 
 /** Internal node-test seam; intentionally omitted from the `/stems` barrel. */
@@ -735,7 +691,7 @@ export function sparseSourceProgramForTest(source: AsyncIterable<SparsePcmSpan>,
       (value) => Effect.promise(() => value.close()),
       { interruptible: true },
     );
-    return yield* withSourceLease(lease, Stream.runCollect(sourceStream(lease, deadlineMs)));
+    return yield* Stream.runCollect(sourceStream(lease, deadlineMs));
   }));
 }
 
@@ -841,6 +797,29 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean { return a.byteLength 
 function quotaCheck(backend: BackendShape, additional: number): Effect.Effect<void, SparseFailure> { return Effect.gen(function*() { const estimate = yield* backend.estimate; if (estimate.quota !== undefined && estimate.usage !== undefined && (!Number.isSafeInteger(additional) || additional < 0 || estimate.usage + additional > estimate.quota)) return yield* new SparseQuotaError({ message: "Sparse storage quota is insufficient" }); }); }
 function isAbort(error: unknown): boolean { return error instanceof DOMException && error.name === "AbortError" || error instanceof Error && error.name === "AbortError"; }
 function isTimeout(error: unknown): boolean { return error instanceof DOMException && error.name === "TimeoutError" || error instanceof Error && error.name === "TimeoutError"; }
+function mapPublicCause(cause: Cause.Cause<SparseFailure>): unknown {
+  const reasons = cause.reasons;
+  if (reasons.length === 0) {
+    return new EngineWebAdapterError("stem.corrupt", "Sparse operation failed", {}, new Error("Sparse operation failed without a cause"));
+  }
+  const values = reasons.map((reason) => causeValue(reason));
+  const primary = values[0];
+  const mapped = mapPublicError(primary);
+  if (mapped instanceof EngineWebAdapterError) {
+    if (values.length === 1) return mapped;
+    return new EngineWebAdapterError(mapped.code, mapped.message, mapped.details, new AggregateError(values, "Sparse operation failed"));
+  }
+  const preserved = values.length === 1 && values[0] !== undefined ? values[0] : new AggregateError(values, "Sparse operation failed");
+  const code = Cause.isInterruptReason(reasons[0]!) || isAbort(primary) ? "stem.cancelled" : "stem.corrupt";
+  return new EngineWebAdapterError(code, code === "stem.cancelled" ? "Sparse operation was cancelled" : "Sparse operation failed", {}, preserved);
+}
+function causeValue(reason: Cause.Reason<SparseFailure>): unknown {
+  if (Cause.isFailReason(reason)) return reason.error;
+  if (Cause.isDieReason(reason)) return reason.defect;
+  const interrupted = new Error("Sparse operation was interrupted", { cause: reason });
+  interrupted.name = "AbortError";
+  return interrupted;
+}
 function mapPublicError(error: unknown): unknown {
   if (error instanceof EngineWebAdapterError) return error;
   const preserved = nestedAdapterError(error);
