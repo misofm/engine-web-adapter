@@ -159,3 +159,29 @@ root checkpoints. Such checkpoints do not substitute for the final complete
 contract review or create additional attempts. Pump, session lifecycle and
 acquisition implementation remain paused until this issue passes. Maximum five
 coherent attempts remains unchanged; one has received FAIL.
+
+## Attempt 2 intermediate core checkpoint — contract still incomplete
+
+Luna replaced the broad async store orchestration with Effect backend,
+coordination and program services, scoped lock/writer calls, pull Stream,
+Ref lifecycle, supported-rate admission and generation collision checks.
+The shared fallback lock now retains a cancelled waiter's predecessor until
+the chain settles; both historical lock levels are released on failure.
+Typecheck/build and the four existing focused cases pass. Root independently
+confirmed typecheck and focused cases. No new failure/browser tests are claimed.
+
+This is a recoverable compiling checkpoint within attempt2, not its final review.
+Root inspection still finds unresolved requirements from the first verdict:
+generic writer timeout/create promises can be abandoned, abort/remove/lock
+failures are swallowed, resolver and Blob-read deadlines remain incomplete,
+and iterator cleanup synthesizes an abort event instead of owning cancellation.
+Rolling quota still counts accumulated bytes and a fixed allowance instead of
+the physical-backend/current-marker contract. Known-index admission, complete
+incremental marker accounting, option preflight and post-close cancellation
+must also be completed with their discriminating tests. In particular natural
+iterator EOF must not abort the still-owned data writer, and cold commit must
+not be accepted before the final cancellation/physical-settlement boundary.
+
+Root checkpoints these exact paths before Luna continues the remaining coherent
+correction/test tranche. No independent attempt2 verdict yet; all later features,
+full package and browser gates remain pending the completed focused contract.
