@@ -1,6 +1,7 @@
 import { CanonicalPcmPump, PCM_DRIVE_PASSES } from "../stems/pump.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "../stems/worker-protocol.js";
 import type { StemIdentity } from "../stems/types.js";
+import { Effect, Schema } from "effect";
 
 interface WorkerScope {
   onmessage: ((event: MessageEvent<PumpWorkerRequest>) => void) | null;
@@ -16,7 +17,7 @@ let idleWake: (() => void) | undefined;
 let idleMs = 4;
 
 scope.onmessage = (event) => {
-  const queued = tail.then(() => handle(event.data));
+  const queued = tail.then(() => runMessage(event.data));
   tail = queued.then(() => undefined, () => undefined);
   void queued.catch((error: unknown) => {
     scope.postMessage({
@@ -53,7 +54,11 @@ async function handle(message: PumpWorkerRequest): Promise<void> {
   if (message.type === "initialize-sparse") {
     stopDriving();
     pump?.close();
-    pump = CanonicalPcmPump.fromClonedSparse({
+    if (!Number.isSafeInteger(message.idleMs) || message.idleMs < 0 ||
+        typeof message.generation !== "bigint" || message.generation < 0n) {
+      throw new TypeError("Sparse PCM Worker initialization options are invalid");
+    }
+    pump = CanonicalPcmPump.createSparse({
       assets: message.assets,
       sources: message.sources,
       windowFrames: message.windowFrames,
@@ -83,6 +88,50 @@ async function handle(message: PumpWorkerRequest): Promise<void> {
   pump?.close(); pump = undefined;
   scope.postMessage({ type: "stopped", requestId: message.requestId });
   scope.close?.();
+}
+
+const SparseInitializeSchema = Schema.Struct({
+  type: Schema.Literal("initialize-sparse"),
+  requestId: Schema.Number,
+  sources: Schema.Array(Schema.Unknown),
+  assets: Schema.Array(Schema.Unknown),
+  windowFrames: Schema.Number,
+  generation: Schema.BigInt,
+  idleMs: Schema.Number,
+});
+
+function runMessage(raw: unknown): Promise<void> {
+  return Effect.runPromise(Effect.gen(function* () {
+    const message = yield* Effect.try({
+      try: () => decodeMessage(raw),
+      catch: (cause) => cause,
+    });
+    yield* Effect.tryPromise({
+      try: () => handle(message),
+      catch: (cause) => cause,
+    });
+  }));
+}
+
+function decodeMessage(raw: unknown): PumpWorkerRequest {
+  if (!isRecord(raw) || raw.type !== "initialize-sparse") return raw as PumpWorkerRequest;
+  const sources = raw.sources;
+  const assets = raw.assets;
+  if (!Array.isArray(sources) || !Array.isArray(assets)) {
+    throw new RangeError("Sparse PCM Worker message arrays exceed their bounded count");
+  }
+  if (Object.keys(raw).length !== 7) throw new TypeError("Sparse PCM Worker message has unknown keys");
+  const decoded = Schema.decodeUnknownSync(SparseInitializeSchema)(raw);
+  if (!Number.isSafeInteger(decoded.requestId) || decoded.requestId < 0 ||
+      !Number.isSafeInteger(decoded.windowFrames) || decoded.windowFrames <= 0 || decoded.windowFrames > 8192 ||
+      !Number.isSafeInteger(decoded.idleMs) || decoded.idleMs < 0) {
+    throw new RangeError("Sparse PCM Worker message bounds are invalid");
+  }
+  return decoded as PumpWorkerRequest;
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function startDriving(): void {

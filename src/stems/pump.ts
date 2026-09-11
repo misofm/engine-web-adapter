@@ -55,7 +55,7 @@ export const PCM_DRIVE_PASSES = 8;
 
 /** Bounded current/next windows and a shared four-read local I/O scheduler. */
 export class CanonicalPcmPump {
-  readonly #lease: Pick<StemSessionLease, "read">;
+  readonly #lease: Pick<StemSessionLease, "read"> | undefined;
   readonly #states: SourceState[];
   readonly #windowFrames: number;
   readonly #reads = new Set<Promise<void>>();
@@ -82,20 +82,22 @@ export class CanonicalPcmPump {
     readonly assets?: readonly SparsePcmDescriptor[];
     readonly windowFrames?: number;
     readonly generation?: bigint;
-  }, admittedSparse?: ReadonlyMap<StemIdentity, SparseReadable>) {
+  }) {
     const sparseAssets = options.assets;
     const sparse = sparseAssets !== undefined;
     if (!sparse && options.lease === undefined) throw new TypeError("Dense PCM pump needs a verified lease");
     if (!sparse && typeof options.lease?.read !== "function") throw new TypeError("PCM pump needs a verified lease");
-    this.#lease = options.lease ?? { read: async () => { throw new Error("Sparse PCM pump has no dense lease"); } };
+    this.#lease = options.lease;
     this.#windowFrames = positive(options.windowFrames ?? PCM_WINDOW_FRAMES, "windowFrames");
     if (sparse && this.#windowFrames > PCM_WINDOW_FRAMES) throw new RangeError("Sparse PCM windowFrames cannot exceed 8192");
     this.#generation = options.generation ?? 1n;
-    const sparseMap = sparse ? admittedSparse ?? admitSparseAssets(sparseAssets!) : undefined;
+    if (typeof this.#generation !== "bigint" || this.#generation < 0n) throw new RangeError("generation must be a nonnegative bigint");
+    const sparseMap = sparse ? admitSparseAssets(sparseAssets!) : undefined;
     const sourceIds = new Set<string>();
     this.#states = options.sources.map((source) => {
       if (sourceIds.has(source.sourceId)) throw new RangeError("PCM pump source IDs must be unique");
       sourceIds.add(source.sourceId);
+      if (typeof source.sourceId !== "string" || source.sourceId.length === 0) throw new RangeError("PCM pump source IDs must be nonempty");
       if (!positive(source.frames, "frames") || source.channels < 1 || source.channels > 2 ||
           (source.bitDepth !== 16 && source.bitDepth !== 24)) throw new RangeError("Invalid PCM pump source shape");
       const sparseReadable = sparseMap === undefined ? undefined : sparseMap.get(source.identity);
@@ -118,30 +120,24 @@ export class CanonicalPcmPump {
     }
     // A pending read owns its destination slot even across seek; that source
     // cannot start another read until the old operation physically settles.
-    this.maximumWindowBytes = this.#states.reduce(
-      (sum, state) => sum + 2 * this.#windowFrames * state.channels * (state.bitDepth / 8), 0,
+    this.maximumWindowBytes = safeByteSum(
+      this.#states.map((state) => 2 * this.#windowFrames * state.channels * (state.bitDepth / 8)),
+      "PCM window bound",
     );
     const scratchBounds = this.#states
       .map((state) => this.#windowFrames * state.channels * (state.bitDepth / 8))
       .sort((left, right) => right - left);
-    this.maximumReadScratchBytes = sparse ? scratchBounds.slice(0, 4).reduce((sum, bytes) => sum + bytes, 0) : 0;
-    this.ringBytes = this.#states.reduce(
-      (sum, state) => sum + msb1RingBytes(state.channels, state.writer.frameCapacity, state.writer.capacity), 0,
+    this.maximumReadScratchBytes = sparse ? safeByteSum(scratchBounds.slice(0, 4), "Sparse PCM read scratch bound") : 0;
+    this.ringBytes = safeByteSum(
+      this.#states.map((state) => msb1RingBytes(state.channels, state.writer.frameCapacity, state.writer.capacity)),
+      "PCM ring bound",
     );
+    safeByteSum([this.maximumWindowBytes, this.maximumReadScratchBytes], "PCM allocation bound");
     for (const state of this.#states) state.writer.engage(this.#generation);
   }
 
   static createSparse(options: SparsePcmPumpOptions): CanonicalPcmPump {
     return new CanonicalPcmPump(options);
-  }
-
-  /** Worker-only receiving-boundary admission; each cloned descriptor is checked once. */
-  static fromClonedSparse(options: SparsePcmPumpOptions): CanonicalPcmPump {
-    const Pump = CanonicalPcmPump as unknown as new (
-      options: SparsePcmPumpOptions,
-      admitted: ReadonlyMap<StemIdentity, SparseReadable>,
-    ) => CanonicalPcmPump;
-    return new Pump(options, admitSparseAssets(options.assets));
   }
 
   get finished(): boolean { return this.#states.every((state) => state.finished); }
@@ -264,7 +260,10 @@ export class CanonicalPcmPump {
       const count = Math.min(alignedFrames, state.frames - start) * frameBytes;
       let bytes: Uint8Array;
       if (state.sparse === undefined) {
-        const blob = state.blob ?? await this.#lease.read(state.identity);
+        const lease = this.#lease;
+        if (lease === undefined) throw new TypeError("Dense PCM pump has no verified lease");
+        const blob = state.blob ?? await lease.read(state.identity);
+        if (this.#stopped || generation !== this.#generation) return;
         state.blob = blob;
         bytes = new Uint8Array(await blob.slice(start * frameBytes, start * frameBytes + count).arrayBuffer());
       } else {
@@ -396,3 +395,11 @@ function admitSparseAssets(assets: readonly SparsePcmDescriptor[]): Map<StemIden
 
 function positive(value: number, label: string): number { if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${label} must be positive`); return value; }
 function nonnegative(value: number, label: string): number { if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${label} must be nonnegative`); return value; }
+function safeByteSum(values: readonly number[], label: string): number {
+  let total = 0;
+  for (const value of values) {
+    if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(total + value)) throw new RangeError(`${label} is unsafe`);
+    total += value;
+  }
+  return total;
+}

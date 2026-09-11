@@ -69,3 +69,20 @@ of the Effect amendment. Preserve the existing post-await dense stop/generation
 guard, validate each unique sparse descriptor once, and avoid redundant receiving
 constructors or placeholder dense lease functions. Do not broaden the scheduler
 rewrite. Root checkpoints this tranche before additional implementation.
+
+## Attempt 1 completed checkpoint — independent review pending
+
+The client now shares an Effect callback request map and Clock deadlines across
+dense/sparse requests, composes sparse initialization through one scoped program,
+and checks worker replies against computed window/ring/scratch bounds. Receiving
+worker admission uses Schema and existing pure sparse validators; the redundant
+constructor, placeholder dense lease and repeated alias admission were removed.
+The existing post-await dense generation/stop guard is restored. Source counts
+are not capped by the unrelated per-stem interval limit.
+
+Luna reports all245 package tests and format/typecheck/source/decoder/package
+checks passing. Root reran28 focused pump/worker tests. The packed Chromium
+consumer passed its new sparse worker/gap/seek smoke (one asset read, generation2,
+512-byte conservative scratch for its mono16 fixture), alongside existing checks.
+This is the completed first attempt, awaiting one independent Astra medium
+verdict; no session-open integration, registry release or deployment is claimed.

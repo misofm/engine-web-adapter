@@ -208,6 +208,10 @@ try {
   assert.equal(result.result?.observationBytes, 2 * profile.channels * 128 * 4);
   assert.equal(result.result?.coldClosed, true);
   assert.equal(result.result?.warmClosed, true);
+  assert.ok(result.result?.sparseWorker?.writes > 0, "sparse packed Worker did not publish any gap/active windows");
+  assert.equal(result.result?.sparseWorker?.reads, 1, "sparse packed Worker resolved the canonical asset more than once");
+  assert.equal(result.result?.sparseWorker?.generation, "2", "sparse packed Worker seek did not advance generation");
+  assert.equal(result.result?.sparseWorker?.scratch, 256 * profile.channels * profile.bitDepth / 8, "sparse packed Worker scratch bound changed");
   for (const [order, observed] of [["console first", result.result?.consoleFirst], ["meters first", result.result?.meterFirst]]) {
     assert.ok(observed?.meterUpdates > 0, `${order}: no meter update arrived`);
     assert.deepEqual(observed?.meterTrackIds, [observed?.trackId], `${order}: meters are not keyed by track id`);
@@ -545,6 +549,58 @@ async function exerciseTerminalPumpFailure(mode: "reject" | "stall" | "crash") {
       code: error.code, causeCode: error.cause?.code ?? null, milliseconds: performance.now() - started };
   } finally { await engine.close(); }
 }
+async function exerciseSparseWorker(ring: SharedArrayBuffer) {
+  const frames = 256;
+  const frameBytes = profile.channels * (profile.bitDepth / 8);
+  const intervals = [{ startFrame: 2, frames: 2, byteOffset: 0 }, { startFrame: 200, frames: 2, byteOffset: 2 * frameBytes }];
+  const packed = new Uint8Array(4 * frameBytes);
+  const view = new DataView(packed.buffer);
+  for (let frame = 0; frame < 4; frame++) for (let channel = 0; channel < profile.channels; channel++) {
+    const sample = (frame + 1) * (channel === 0 ? 4096 : -2048);
+    const offset = (frame * profile.channels + channel) * (profile.bitDepth / 8);
+    if (profile.bitDepth === 16) view.setInt16(offset, sample, true);
+    else { view.setUint8(offset, sample & 0xff); view.setUint8(offset + 1, (sample >> 8) & 0xff); view.setUint8(offset + 2, (sample >> 16) & 0xff); }
+  }
+  const identity = ("sha256:" + "3".repeat(64)) as any;
+  const descriptor = { kind: "sparse-pcm" as const, data: new Blob([packed]), index: {
+    format: "miso_sparse_pcm_v1" as const, identity, sampleRateHz: profile.sampleRateHz,
+    channels: profile.channels, bitDepth: profile.bitDepth, frames, intervals,
+  }};
+  let reads = 0;
+  const controlBefore = new Int32Array(ring, 0, 32);
+  const wroteBefore = Atomics.load(controlBefore, MSB1_CONTROL.WROTE);
+  const pump = await PcmPumpWorkerClient.createSparse({
+    lease: { async read() { reads++; return descriptor; } },
+    sources: [{ sourceId: "source-000", identity, sampleRateHz: profile.sampleRateHz,
+      channels: profile.channels, bitDepth: profile.bitDepth, frames, ring }],
+    windowFrames: frames,
+  });
+  const control = new Int32Array(ring, 0, 32);
+  const waitForWrites = async (before: number) => {
+    const deadline = performance.now() + 5000;
+    while (Atomics.load(control, MSB1_CONTROL.WROTE) <= before) {
+      if (performance.now() >= deadline) throw new Error("sparse packed Worker did not publish PCM");
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+  };
+  try {
+    await waitForWrites(wroteBefore);
+    const firstWrote = Atomics.load(control, MSB1_CONTROL.WROTE);
+    const pcmOffset = Atomics.load(control, MSB1_CONTROL.PCM_OFFSET);
+    const capacity = Atomics.load(control, MSB1_CONTROL.CAPACITY);
+    const channels = Atomics.load(control, MSB1_CONTROL.CHANNELS);
+    const frameCapacity = Atomics.load(control, MSB1_CONTROL.FRAME_CAPACITY);
+    const slot = (Atomics.load(control, MSB1_CONTROL.WRITE_INDEX) - 1) & (capacity - 1);
+    const firstPlane = new Float32Array(ring, pcmOffset + slot * channels * frameCapacity * 4, frameCapacity);
+    if (!firstPlane.some((sample) => sample !== 0)) throw new Error(JSON.stringify({ message: "sparse packed Worker published only gap silence", first: [...firstPlane].slice(0, 16), slot, write: Atomics.load(control, MSB1_CONTROL.WRITE_INDEX), frameCapacity, channels }));
+    Atomics.store(control, MSB1_CONTROL.READ_INDEX, Atomics.load(control, MSB1_CONTROL.WRITE_INDEX));
+    const generation = await pump.seekFrames(200);
+    if (generation !== 2n) throw new Error("sparse packed Worker seek generation changed unexpectedly");
+    await waitForWrites(firstWrote);
+    if (reads !== 1) throw new Error("sparse packed Worker resolved an asset more than once");
+    return { writes: Atomics.load(control, MSB1_CONTROL.WROTE), reads, generation: String(generation), scratch: pump.allocation.maximumReadScratchBytes };
+  } finally { await pump.close(); }
+}
 try {
   const coldIngest = createIngestDiagnostics();
   const warmIngest = createIngestDiagnostics();
@@ -573,6 +629,7 @@ try {
   await cold.close();
   const coldClosed = cold.state === "closed";
   if (sourceObservation.pull(() => { throw new Error("closed observation delivered PCM"); }) !== 0) throw new Error("observer survived session close");
+  const sparseWorker = await exerciseSparseWorker(rings[0]!);
   const coldLocatorCalls = locatorCalls;
   const coldFlacWorkers = flacWorkers;
   const coldNetworkRequests = networkRequests;
@@ -604,7 +661,7 @@ try {
     coldNetworkRequests, warmNetworkRequests: networkRequests,
     observedRemoteBytes, observedEtag,
     observedChunks, observationBytes: allocation.observationBytes, coldClosed, warmClosed, consoleFirst, meterFirst, notAttached, meterNotAttached,
-    ...counters, seekProofs, terminalPumpFailures,
+    ...counters, seekProofs, terminalPumpFailures, sparseWorker,
   };
 } catch (error) {
   globalThis.__error = describe(error);
