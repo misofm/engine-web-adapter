@@ -115,6 +115,7 @@ interface SparsePullState {
   intervalIndex: number;
   done: boolean;
   activeResolve: Promise<import("./flac-resolver.js").ResolvedFlacChunk> | undefined;
+  activeOutput: ReadableStream<import("./flac-resolver.js").BorrowedFlacPcm> | undefined;
 }
 
 function intervalEnd(interval: SparseStemInterval): number {
@@ -193,6 +194,7 @@ function nextSparseSpan(state: SparsePullState): Pull.Pull<readonly [SparsePcmSp
         }
         state.currentReader.releaseLock();
         state.currentReader = undefined;
+        state.activeOutput = undefined;
         const chunk = state.currentChunk;
         if (chunk === undefined || state.chunkFrames !== chunk.frames) {
           return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "Sparse decoder output did not cover its declared chunk", {
@@ -224,15 +226,19 @@ function nextSparseSpan(state: SparsePullState): Pull.Pull<readonly [SparsePcmSp
         sourceFactory: sourceFactory(state.cursor, chunk),
       });
       const resolving = resolver.resolve(state.signal);
-      state.activeResolve = resolving;
+      const tracked = resolving.then((result) => {
+        state.activeOutput = result.output;
+        return result;
+      }).finally(() => {
+        if (state.activeResolve === tracked) state.activeResolve = undefined;
+      });
+      state.activeResolve = tracked;
       const result = yield* Effect.tryPromise({
-        try: () => resolving,
+        try: () => tracked,
         catch: (cause) => cause instanceof EngineWebAdapterError
           ? cause
           : new EngineWebAdapterError("stem.decode.worker", "Sparse FLAC chunk resolution failed", { identity: state.expected.identity }, cause),
-      }).pipe(Effect.ensuring(Effect.sync(() => {
-        if (state.activeResolve === resolving) state.activeResolve = undefined;
-      })));
+      });
       state.currentChunk = chunk;
       state.chunkFrames = 0;
       state.currentReader = result.output.getReader();
@@ -263,6 +269,7 @@ function scopedAsyncIterable(stream: Stream.Stream<SparsePcmSpan, EngineWebAdapt
     [Symbol.asyncIterator]() {
       const context = Context.empty();
       const runPromise = Effect.runPromiseWith(context);
+      const runPromiseExit = Effect.runPromiseExitWith(context);
       const runFork = Effect.runForkWith(context);
       const scope = Scope.makeUnsafe();
       let pull: Pull.Pull<SparsePullChunk, EngineWebAdapterError | Cause.Done<void>> | undefined;
@@ -275,11 +282,15 @@ function scopedAsyncIterable(stream: Stream.Stream<SparsePcmSpan, EngineWebAdapt
         closePromise = (async () => {
           const failures: unknown[] = [];
           if (fiber !== undefined) {
-            try { await runPromise(Fiber.interrupt(fiber)); }
-            catch (cause) { failures.push(cause); }
+            try {
+              const interrupted = await runPromiseExit(Fiber.interrupt(fiber));
+              if (Exit.isFailure(interrupted)) failures.push(interrupted.cause);
+            } catch (cause) { failures.push(cause); }
           }
-          try { await runPromise(Scope.close(scope, exit)); }
-          catch (cause) { failures.push(cause); }
+          try {
+            const closed = await runPromiseExit(Scope.close(scope, exit));
+            if (Exit.isFailure(closed)) failures.push(closed.cause);
+          } catch (cause) { failures.push(cause); }
           if (failures.length > 0) throw closeFailure(identity, "stream", failures);
           return { done: true, value: undefined };
         })();
@@ -401,24 +412,28 @@ export function createSparseStemResolver(
         intervalIndex: 0,
         done: false,
         activeResolve: undefined,
+        activeOutput: undefined,
       };
       yield* Effect.addFinalizer(() => Effect.promise(async () => {
         const failures: unknown[] = [];
         state.abort();
-        const resolving = state.activeResolve;
-        if (resolving !== undefined) {
-          try { await resolving; } catch (cause) { failures.push(cause); }
-        }
-        const block = state.currentBlock;
-        state.currentBlock = undefined;
-        if (block !== undefined) {
-          try { block.value.release(); } catch (cause) { failures.push(cause); }
-        }
         const reader = state.currentReader;
         state.currentReader = undefined;
         if (reader !== undefined) {
           try { await reader.cancel(); } catch (cause) { failures.push(cause); }
           try { reader.releaseLock(); } catch (cause) { failures.push(cause); }
+        }
+        const resolving = state.activeResolve;
+        if (resolving !== undefined) {
+          try { await resolving; } catch (cause) { failures.push(cause); }
+        }
+        if (reader === undefined && state.activeOutput !== undefined) {
+          try { await state.activeOutput.cancel(); } catch (cause) { failures.push(cause); }
+        }
+        const block = state.currentBlock;
+        state.currentBlock = undefined;
+        if (block !== undefined) {
+          try { block.value.release(); } catch (cause) { failures.push(cause); }
         }
         if (failures.length > 0) throw closeFailure(state.expected.identity, "decoder", failures);
       }));

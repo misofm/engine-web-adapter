@@ -173,20 +173,6 @@ const server = createServer(async (request, response) => {
       response.end(bytes.subarray(start, end + 1));
       return;
     }
-    // Vite copies the package's module Worker entrypoints as assets while
-    // retaining their relative source imports. Serve those package modules
-    // at the paths their copied Worker URLs resolve, so the packed browser
-    // probe exercises the shipped Worker rather than a missing dependency.
-    if (pathname === "/errors.js" || pathname.startsWith("/stems/")) {
-      const modulePath = join(consumer, "node_modules", "@misofm", "engine-web-adapter", "dist", pathname.slice(1));
-      requests.set(pathname, "text/javascript; charset=utf-8");
-      response.statusCode = 200;
-      response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-      response.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-      response.setHeader("Content-Type", "text/javascript; charset=utf-8");
-      response.end(await readFile(modulePath));
-      return;
-    }
     const relative = pathname === "/" ? "index.html" : pathname.slice(1);
     const path = join(dist, relative);
     const mime = mimeFor(path);
@@ -311,26 +297,35 @@ try {
 }
 
 async function prepareIndexedFixture() {
-  const fixtureDirectory = process.env.ADAPTER_71_MULTIBLOCK_DIR;
-  if (fixtureDirectory === undefined) throw new Error("ADAPTER_71_MULTIBLOCK_DIR is required with --indexed-sparse");
+  const fixtureDirectory = process.env.ADAPTER_71_MULTIBLOCK_DIR ?? join(process.cwd(), "tests", "fixtures");
+  const fixtureFlac = "native-multiblock-stereo24.flac";
+  const fixturePcm = process.env.ADAPTER_71_MULTIBLOCK_DIR === undefined ? "native-multiblock-stereo24.pcm" : "source.pcm";
   const outputDirectory = join(process.env.ADAPTER_71_EVIDENCE_DIR ?? join(process.cwd(), ".adapter-71-evidence"), "multiblock");
   await mkdir(outputDirectory, { recursive: true });
-  const firstFlac = new Uint8Array(await readFile(join(fixtureDirectory, "part-a.flac")));
-  const secondFlac = new Uint8Array(await readFile(join(fixtureDirectory, "part-b.flac")));
-  const firstPcm = new Uint8Array(await readFile(join(fixtureDirectory, "part-a.pcm")));
-  const secondPcm = new Uint8Array(await readFile(join(fixtureDirectory, "part-b.pcm")));
+  const fixtureFlacBytes = new Uint8Array(await readFile(join(fixtureDirectory, fixtureFlac)));
+  const fixturePcmBytes = new Uint8Array(await readFile(join(fixtureDirectory, fixturePcm)));
   const frameBytes = 2 * (24 / 8);
-  const chunkFrames = firstPcm.byteLength / frameBytes;
-  if (chunkFrames !== 36_000 || secondPcm.byteLength !== chunkFrames * frameBytes) throw new Error("indexed fixture chunks are not two 36000-frame stereo24 payloads");
+  const chunkFrames = fixturePcmBytes.byteLength / frameBytes;
+  if (chunkFrames !== 72_000) throw new Error("indexed fixture is not the frozen 72000-frame stereo24 payload");
+  if (sha256Hex(fixturePcmBytes) !== "4b5bc724ea7d855b3b5518b7a5e4da7222a41b9d0c98ca42880ca37e7458654d") {
+    throw new Error("indexed fixture PCM SHA-256 changed");
+  }
+  if (sha256Hex(fixtureFlacBytes) !== "cfb6381ba955b097a8088a81d1956cb13a7d0b1c2c59a25843b832aa80a3d3cb") {
+    throw new Error("indexed fixture FLAC SHA-256 changed");
+  }
+  const firstFlac = fixtureFlacBytes;
+  const secondFlac = fixtureFlacBytes;
+  const firstPcm = fixturePcmBytes;
+  const secondPcm = fixturePcmBytes;
   const intervals = [
-    { startFrame: 0, frames: 50_000, packedFrameOffset: 0 },
-    { startFrame: 60_000, frames: 22_000, packedFrameOffset: 50_000 },
+    { startFrame: 0, frames: 100_000, packedFrameOffset: 0 },
+    { startFrame: 120_000, frames: 44_000, packedFrameOffset: 100_000 },
   ];
-  const frames = 100_000;
+  const frames = 164_000;
   const canonical = new Uint8Array(frames * frameBytes);
   canonical.set(firstPcm, 0);
-  canonical.set(secondPcm.subarray(0, 14_000 * frameBytes), 36_000 * frameBytes);
-  canonical.set(secondPcm.subarray(14_000 * frameBytes), 60_000 * frameBytes);
+  canonical.set(secondPcm.subarray(0, 28_000 * frameBytes), 72_000 * frameBytes);
+  canonical.set(secondPcm.subarray(28_000 * frameBytes), 120_000 * frameBytes);
   const identity = `sha256:${sha256Hex(canonical)}`;
   const manifest = {
     format: "miso_sparse_stem_v1",
@@ -358,7 +353,7 @@ async function prepareIndexedFixture() {
       url: "/native-multiblock.sparse",
       etag: '"adapter-71-multiblock-v1"',
       expected: { identity, sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames, canonicalBytes: canonical.byteLength },
-      activeBytes: 72_000 * frameBytes,
+      activeBytes: 144_000 * frameBytes,
       canonicalPcmSha256: identity.slice(7),
       intervals: intervals.map((interval) => ({ startFrame: interval.startFrame, frames: interval.frames, byteOffset: interval.packedFrameOffset * frameBytes })),
       chunks: manifest.chunks.map((chunk) => ({ frames: chunk.frames, bytes: chunk.bytes, packedStartFrame: chunk.packedStartFrame })),
@@ -421,40 +416,28 @@ function resolveChromeExecutable() {
 
 function indexedBrowserSource(profile) { return String.raw`
 import { createSparseStemResolver, OpfsStorageBackend, VerifiedSparsePcmStore } from "@misofm/engine-web-adapter/stems";
-import { ADAPTER_ASSETS } from "@misofm/engine-web-adapter/assets";
 
 declare global { var __result: unknown; var __error: unknown }
 const profile = ${JSON.stringify(profile)} as const;
 const assetUrl = new URL(profile.url, location.href).href;
 const NativeFetch = globalThis.fetch;
+const NativeWorker = Worker;
 let locateCalls = 0;
 let networkRequests = 0;
 let flacWorkers = 0;
 let opfsWorkers = 0;
 let spanCount = 0;
 const workerErrors: Array<{ readonly worker: string; readonly message: string | undefined; readonly filename?: string; readonly line?: number; readonly column?: number; readonly error?: string }> = [];
-const workerStarts: Array<{ readonly worker: string; readonly decoderWasmUrl?: string }> = [];
-const assets = {
-  flacWorkerUrl: ADAPTER_ASSETS.flacWorker,
-  flacDecoderWasmUrl: ADAPTER_ASSETS.flacDecoderWasm,
-  opfsWorkerUrl: ADAPTER_ASSETS.opfsWorker,
-  createWorker(url: string | URL, options: WorkerOptions & { readonly type: "module" }) {
+globalThis.Worker = class ObservedWorker extends NativeWorker {
+  constructor(url: string | URL, options?: WorkerOptions) {
+    super(url, options);
     const label = String(url);
     if (label.includes("flac-worker")) flacWorkers += 1;
     if (label.includes("opfs-worker")) opfsWorkers += 1;
-    const worker = new Worker(url, options);
-    const postMessage = worker.postMessage.bind(worker);
-    worker.postMessage = ((message: unknown, transfer?: Transferable[]) => {
-      if (typeof message === "object" && message !== null && "type" in message && message.type === "start") {
-        workerStarts.push({ worker: label, decoderWasmUrl: "decoderWasmUrl" in message ? String(message.decoderWasmUrl) : undefined });
-      }
-      return postMessage(message, transfer);
-    }) as typeof worker.postMessage;
-    worker.addEventListener("error", (event) => workerErrors.push({ worker: label, message: event.message,
+    this.addEventListener("error", (event) => workerErrors.push({ worker: label, message: event.message,
       filename: event.filename, line: event.lineno, column: event.colno, error: event.error?.message }));
-    return worker;
-  },
-};
+  }
+} as typeof Worker;
 const fetchPackage: typeof fetch = async (input, init) => {
   const url = input instanceof Request ? input.url : new URL(input, location.href).href;
   if (url === assetUrl) networkRequests += 1;
@@ -467,13 +450,11 @@ const resolver = createSparseStemResolver({
     return assetUrl;
   },
   fetch: fetchPackage,
-  assets,
   readDeadlineMs: 30_000,
   maximumWorkers: 1,
 });
 const backend = new OpfsStorageBackend({
   folderName: "adapter71-indexed-multiblock-" + Date.now(),
-  assets,
 });
 const store = new VerifiedSparsePcmStore({ backend, instanceId: "indexed-multiblock" });
 const expected = profile.expected;
@@ -507,10 +488,9 @@ try {
     opfsWorkers,
     spanCount,
     workerErrors,
-    workerStarts,
   };
 } catch (error) {
-  globalThis.__error = { error: describe(error), workerErrors, workerStarts };
+  globalThis.__error = { error: describe(error), workerErrors };
 } finally {
   await store.close();
   backend.close();

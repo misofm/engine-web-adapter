@@ -25,3 +25,18 @@ checks the result with the reference decoder.
 same bytes. Its second frame has a valid CRC but starts at sample 577 instead
 of 576, proving the private wrapper rejects reordered/noncontiguous PCM rather
 than relying on libFLAC to enforce the host's cumulative-position contract.
+
+`native-multiblock-stereo24.flac` and its `native-multiblock-stereo24.pcm`
+oracle contain 72,000 stereo 24-bit frames at 48 kHz. The packed indexed
+browser proof uses this one fixture twice as two 72,000-frame FLAC chunks,
+with an interval crossing the chunk boundary and a later interval after a
+timeline gap. The PCM is generated as
+`left=(frame*7919)%16000001-8000000; right=-trunc(left/2)` and encoded as
+signed little-endian 24-bit samples.
+
+- PCM bytes: 432,000
+- Canonical PCM SHA-256: `4b5bc724ea7d855b3b5518b7a5e4da7222a41b9d0c98ca42880ca37e7458654d`
+- FLAC bytes: 281,039
+- FLAC SHA-256: `cfb6381ba955b097a8088a81d1956cb13a7d0b1c2c59a25843b832aa80a3d3cb`
+- Reference encoder: FFmpeg 6.1.1-3ubuntu5; independent reference decode
+  matches every PCM byte.

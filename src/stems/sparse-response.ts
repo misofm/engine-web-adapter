@@ -5,7 +5,6 @@ import { EngineWebAdapterError } from "../errors.js";
 import type { StemIdentity } from "./types.js";
 import type { BoundedStemAdmission, StemAdmissionLease } from "./flac-admission.js";
 
-export const SPARSE_RESPONSE_MAX_CHUNK_BYTES = 1 * 1024 * 1024;
 export const SPARSE_RESPONSE_MAX_INPUT_BYTES = 256 * 1024;
 
 export interface SparseResponseOptions {
@@ -207,7 +206,7 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
         return { done: true as const, value: new Uint8Array() };
       }
       if (!(value instanceof Uint8Array) || (byob && (value.byteLength > SPARSE_RESPONSE_MAX_INPUT_BYTES || value.buffer.byteLength > SPARSE_RESPONSE_MAX_INPUT_BYTES))) {
-        return yield* Effect.fail(failure("stem.delivery.range", "Sparse full response body chunk exceeds its bounded transport view", { identity: options.identity, limit: SPARSE_RESPONSE_MAX_CHUNK_BYTES }));
+        return yield* Effect.fail(failure("stem.delivery.range", "Sparse BYOB response body view exceeds its bounded input", { identity: options.identity, limit: SPARSE_RESPONSE_MAX_INPUT_BYTES }));
       }
       if (byob && value.buffer instanceof ArrayBuffer) byobBuffer = new Uint8Array(value.buffer);
       if (exit.value.done) {
