@@ -258,3 +258,31 @@ every assertion, including those sparse cases. Linux WebKit26.5 fails the retain
 FileSystemFileHandle assertion as diagnosed above. The new macOS workflow runs
 that same harness with exact checkout and browser provenance; its actual result
 and the one independent Astra medium attempt2 verdict remain required.
+
+## Attempt 2 independent verdict — FAIL; macOS OPFS passed
+
+Astra medium independently reviewed3867778 and reran the full package check:
+232/232 tests and package policy pass. The delayed-write/abort-failure and
+post-grant lock-cancellation probes now pass. One remaining blocker is confirmed:
+makeSourceLease.close converts iterator.return rejection into successful cleanup,
+so the public error loses the cleanup failure. Review and reproducer are retained
+by root outside the worktree. This is the single attempt2 verdict.
+
+The real macOS OPFS workflow subsequently passed for this exact feature SHA:
+run34609974781, macOS15.7.9 arm64 (image20260907.0337.1), Node22.23.2,
+npm10.9.8, locked Playwright1.62.1, Chromium and WebKit26.5. Both engines passed
+the existing physical-lock/cleanup assertions plus sparse close/reopen and
+marker-failure cleanup. Artifacts record feature SHA separately from the PR event
+merge SHA. This does not waive the source cleanup blocker or claim iOS evidence.
+
+Attempt3 is a narrowly bounded correction: preserve/report asynchronous return
+rejection and synchronous return throw alongside the original failure through
+the existing public error boundary, retaining exactly-once finalization and
+physical settlement order. Verify downstream admission/write failure and early
+optional-index rejection. Do not add a new error ABI or framework. Effect's
+Promise runner can squash a multi-reason Cause to its first reason, so removing
+the local rejection swallow alone is insufficient without a discriminating
+public-boundary test. Keep all accepted cancellation, normal EOF and store tests.
+Checkpoint the coherent correction, rerun proportional package/browser gates on
+that source, then obtain one independent Astra medium attempt3 verdict. Two
+attempts have received FAIL; the maximum remains five.
