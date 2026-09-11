@@ -100,3 +100,7 @@ Fresh non-implementing Astra medium records PASS at31ba381280c105d954a2cff0df7d0
 Retained candidate archive is204791 bytes, SHA2568083a721958d425e5a87e0df003f7e7e0436bc8932b67cf3ca9202aaf23e225c. The existing browser harness unpacks the archive and copies pinned dependencies into its consumer; this is actual packed-package execution, not registry installation. Package0.3.5 remains an unpublished candidate. Default backend/write-client release is proved with explicit simulated Worker/filesystem boundaries; the real Chromium session fixture uses an injected descriptor map with real packaged pump/engine/worklets. Do not claim new macOS/iOS sparse playback evidence.
 
 This evidence-only checkpoint changes no source, so the exact preceding gates remain applicable. Root pushes/synchronizes PASS, closes64 and merges the bounded controller capability. Full-response acquisition, published dependency and app adoption remain mandatory successors.
+
+## Merged delivery
+
+PR65 merged asd23f98579c8cf59e8e8109bf1d864ac62f730b3d after macOS Chromium/WebKit OPFS run34635965598 passed exact evidence checkpoint460d2f78a2fbcd311df65e2ad0075dc7569fcd98. GitHub64 is closed. This CI is real storage qualification, not sparse-session WebKit/iOS playback. Root retained the packed candidate and browser/review evidence outside the completed worktree. Full-response decoder input is numbered successor66.
