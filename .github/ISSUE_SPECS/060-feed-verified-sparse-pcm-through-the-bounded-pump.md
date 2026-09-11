@@ -132,3 +132,23 @@ Logs are retained at `/data/sparse-pcm-launch/adapter-60-attempt2/`; packed cons
 is `/tmp/engine-web-adapter-browser-ASgaHx`. Root reviewed the bounded code diff
 and retained logs, and git diff --check passes. One independent Astra medium
 verdict remains required; no CLI, registry or app delivery is claimed here.
+
+## Accepted — attempt 2 PASS
+
+Independent non-implementing Astra medium records PASS at
+fdcef5b06f97a7ef20932021016f5c1ec9cba610 in the existing review thread (not fresh
+context). All249 tests and package policies pass independently. The original
+three45ms/100ms reproduction now completes successfully in141ms; stalled and
+cancelled initialization still refuse without a live client. The mixed-source
+resource fixture confirms60 bytes of largest-four scratch and four physical
+pending reads across seek. Producer-run packed Chromium evidence was inspected
+independently. Existing macOS OPFS run34622074379 passes at this exact source;
+it remains storage qualification, not sparse-pump WebKit qualification.
+
+Review: `/data/sparse-pcm-launch/tooling/adapter-60-reviews/attempt2-fdcef5b.md`.
+Independent logs: `tooling/adapter-60-attempt2-review/`; packed candidate/provenance:
+`tooling/adapter-60-fdcef5b/`; macOS artifacts: `tooling/adapter-60-macos-fdcef5b/`,
+all under `/data/sparse-pcm-launch/`. The candidate is unpublished. Root may close
+this bounded pump issue after synchronizing this evidence. Session lifetime,
+acquisition, CLI preparation, app adoption and the final Astra xhigh
+simplification pass remain required launch successors.
