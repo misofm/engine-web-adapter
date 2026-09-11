@@ -38,6 +38,8 @@ export interface DecoderByteSourceOptions {
     readonly bytes: Uint8Array;
     readonly totalBytes: number;
     readonly release: () => void;
+    /** Internal handoff marker used to quarantine a borrowed range on interruption. */
+    readonly handoff?: () => void;
   }, EngineWebAdapterError>;
 }
 
@@ -67,6 +69,7 @@ export function makeDecoderByteSource(options: DecoderByteSourceOptions): Decode
     if (prepared) return yield* new DecoderByteSourceError({ operation: "prepare", message: "FLAC decoder source was prepared twice" });
     if (finished) return yield* new DecoderByteSourceError({ operation: "prepare", message: "FLAC decoder source was finished" });
     const probe = yield* range("probe", 0, NATIVE_FLAC_STREAMINFO_PROBE_BYTES - 1, "prepare");
+    probe.handoff?.();
     let parsed: Readonly<{ streamInfo: NativeFlacStreamInfo; streamInfoIsFinal: boolean }>;
     try {
       totalBytes = probe.totalBytes;
@@ -80,6 +83,7 @@ export function makeDecoderByteSource(options: DecoderByteSourceOptions): Decode
     offset = NATIVE_FLAC_STREAMINFO_PROBE_BYTES;
     while (!scanner.complete) {
       const result = yield* range("metadata", scanner.nextHeaderOffset, scanner.nextHeaderOffset + 3, "prepare");
+      result.handoff?.();
       let header: number;
       try { header = scanner.acceptHeader(result.bytes, result.totalBytes).nextOffset; }
       catch (cause) {
@@ -119,12 +123,13 @@ export function makeDecoderByteSource(options: DecoderByteSourceOptions): Decode
     }
     const length = Math.min(maximumBytes, totalBytes - offset);
     const result = yield* range("audio", offset, offset + length - 1, "read");
+    result.handoff?.();
     try {
       if (result.bytes.byteLength < 1 || result.bytes.byteLength > maximumBytes || result.bytes.byteLength !== length) {
         result.release();
         return yield* new DecoderByteSourceError({ operation: "read", message: "FLAC delivery returned bytes outside the input credit" });
       }
-      const bytes = result.bytes.slice();
+      const bytes = result.bytes;
       const end = offset + bytes.byteLength === totalBytes;
       offset += bytes.byteLength;
       return { bytes, end, release: result.release };

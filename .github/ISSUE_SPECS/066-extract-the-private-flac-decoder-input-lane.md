@@ -4,6 +4,12 @@
 
 Luna xhigh extracted the private byte source and provided range Effect, replaced inputTail with a capacity-one Effect Queue, and added a synthetic sequential source through the existing controller. Producer reports typecheck, compiled focused resolver/cancellation/watchdog/source tests, lint and format checks passing. This is recoverable implementation groundwork, not an independent verdict. Root identified remaining contract work before full qualification: controller-side credit validation before source invocation, input admission shutdown at completion, cancellation/borrow handoff ownership, preserving complete Effect failure/cleanup causes at the existing edge, and delayed/rejecting finish plus invalid-credit/overflow/cancellation discriminators. Avoid an unnecessary extra copy of every legacy range. Full package and actual packed Chromium native decode checks remain. No acquisition/indexed install or public API is claimed by this checkpoint.
 
+## Attempt 1 review candidate
+
+Luna added controller credit validation, terminal input admission, a runPromiseExit edge with teardown-cause preservation, removed redundant range copying, suspended the watchdog during source operations and added delayed/rejecting finish plus invalid/stale-credit, overflow and cancellation discriminators. Source/test type compilation, lint and format checks pass; root independently reran all29 delivery/worker tests successfully (`/data/sparse-pcm-launch/tooling/adapter-66/attempt1/root-focused.log`).
+
+This is a frozen review candidate, not acceptance. Root flags the new range handoff arrangement for independent scrutiny: its ensuring cleanup runs inside the range Effect while the caller invokes the handoff marker only after that Effect returns, which appears to release the borrow before acceptance. Full package and actual packed Chromium evidence remain pending. The independent review must assess actual ownership/finalizer ordering and complete causes rather than infer correctness from the happy-path bytes. The legacy API and accepted resource contracts remain mandatory; no broader acquisition work starts before this issue passes.
+
 Astra medium scope, rechecked by root against merged adapter d23f98579c8cf59e8e8109bf1d864ac62f730b3d after issue64 acceptance. The FLAC resolver/delivery source is unchanged from the planner baseline. This is acquisition slice A only, after accepted store/session integration. No public API, indexed parser, full GET, sparse install, codec ABI or app change.
 
 ## Smaller than the acquisition umbrella

@@ -1,4 +1,4 @@
-import { Effect, Queue } from "effect";
+import { Cause, Effect, Exit, Queue } from "effect";
 import { beginIngestStage, ownRunnableWorker, configureProcessingDiagnostics, recordWorkerProcessing, deliveredRangeOwner, registerFlacResolver, releaseDecoded, retainDecoded, type IngestDiagnostics } from "./ingest-diagnostics.js";
 import { MAXIMUM_CANONICAL_OUTPUT_BYTES } from "./native-flac-decoder.js";
 import { EngineWebAdapterError } from "../errors.js";
@@ -61,6 +61,41 @@ function decoderSourceError(error: unknown): EngineWebAdapterError {
   }
   if (error instanceof EngineWebAdapterError) return error;
   return new EngineWebAdapterError("stem.decode.worker", "FLAC decoder input lane failed", {}, error);
+}
+
+function inputCauseValue(reason: Cause.Reason<unknown>): unknown {
+  if (Cause.isFailReason(reason)) {
+    const error = reason.error;
+    return error instanceof DecoderByteSourceError && "cause" in error ? error.cause : error;
+  }
+  if (Cause.isDieReason(reason)) return reason.defect;
+  const interrupted = new Error("FLAC decoder input lane was interrupted", { cause: reason });
+  interrupted.name = "AbortError";
+  return interrupted;
+}
+
+function inputCauseError(cause: Cause.Cause<unknown>): EngineWebAdapterError {
+  const reasons = cause.reasons;
+  const values = reasons.map(inputCauseValue);
+  const primary = values[0];
+  if (primary instanceof EngineWebAdapterError && values.length === 1) return primary;
+  const mapped = decoderSourceError(primary);
+  const preserved = values.length === 1 && values[0] !== undefined
+    ? values[0]
+    : new AggregateError(values, "FLAC decoder input lane failed");
+  if (primary instanceof Error && primary.name === "AbortError") {
+    return new EngineWebAdapterError("stem.cancelled", "FLAC decoder input lane was cancelled", {}, preserved);
+  }
+  return values.length === 1 ? mapped : new EngineWebAdapterError(mapped.code, mapped.message, mapped.details, preserved);
+}
+
+function mergeInputCause(primary: unknown, exit: Exit.Exit<unknown, unknown>): unknown {
+  if (Exit.isSuccess(exit)) return primary;
+  const reasons = exit.cause.reasons.map(inputCauseValue);
+  if (reasons.length === 0) return primary;
+  const mapped = decoderSourceError(primary);
+  return new EngineWebAdapterError(mapped.code, mapped.message, mapped.details,
+    new AggregateError([primary, ...reasons], "FLAC decoder input lane failed"));
 }
 
 /** Create the advanced low-level native-FLAC resolver used by session integration. */
@@ -168,7 +203,9 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             | { readonly type: "input-credit"; readonly message: Extract<FlacWorkerResponse, { type: "input-credit" }> }
             | { readonly type: "complete"; readonly message: Extract<FlacWorkerResponse, { type: "complete" }> };
           const inputQueue = Effect.runSync(Queue.bounded<InputCommand>(1));
-          let inputLane = Promise.resolve();
+          let inputLane: Promise<Exit.Exit<unknown, unknown>> = Promise.resolve(Exit.succeed(undefined));
+          let acceptingInput = true;
+          let sourcePending = 0;
           let preparedMetadata: Readonly<{
             readonly streamInfo: import("./native-flac-metadata.js").NativeFlacStreamInfo;
             readonly expectedFrames: number;
@@ -178,12 +215,22 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           const resetWatchdog = (phase: "decoder-load" | "metadata" | "frame" | "finish") => {
             if (watchdog !== undefined) clearTimeout(watchdog);
             watchdog = undefined;
-            if (stopping || networkPending > 0 || blocks.length >= 2) return;
+            if (stopping || networkPending > 0 || sourcePending > 0 || blocks.length >= 2) return;
             watchdog = setTimeout(() => stop(new EngineWebAdapterError(
               "stem.decode.stall", `FLAC decoder made no progress for ${decodeNoProgressMs}ms`,
               { identity, phase, milliseconds: decodeNoProgressMs, retryable: false },
             ), true), decodeNoProgressMs);
           };
+          const runSource = <A>(effect: Effect.Effect<A, DecoderByteSourceError>, phase: "metadata" | "frame" | "finish") =>
+            Effect.gen(function*() {
+              sourcePending += 1;
+              resetWatchdog(phase);
+              try { return yield* effect; }
+              finally {
+                sourcePending -= 1;
+                resetWatchdog(phase);
+              }
+            });
           resumeConsumer = () => resetWatchdog("frame");
           const cleanup = () => {
             finishWorker();
@@ -193,9 +240,10 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             physical.removeEventListener("error", onWorkerFailure);
             physical.removeEventListener("messageerror", onMessageError);
           };
-          const stop = (error: unknown, sendCancel: boolean, successful = false) => {
+          const stop = (error: unknown, sendCancel: boolean, successful = false, laneSettled = false) => {
             if (stopping) return;
             stopping = true;
+            acceptingInput = false;
             stopActive = undefined;
             cleanup();
             if (!successful) {
@@ -207,8 +255,8 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             }
             if (!successful) controller.abort(error);
             if (!successful) physical.terminate();
-            void inputLane.then(() => {
-              if (successful) resolve(); else reject(error);
+            void inputLane.then((exit) => {
+              if (successful) resolve(); else reject(laneSettled ? error : mergeInputCause(error, exit));
             });
           };
           stopActive = stop;
@@ -236,7 +284,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             onProduced: release => { handoffRelease = release; },
             onActivity: () => resetWatchdog(phase === "audio" ? "frame" : phase === "metadata" ? "metadata" : "decoder-load"),
             }).pipe(
-              Effect.tap(() => Effect.sync(() => { handed = true; })),
+              Effect.map(result => ({ ...result, handoff: () => { handed = true; } })),
               Effect.ensuring(Effect.sync(() => {
                 if (!handed) handoffRelease?.();
                 networkPending -= 1;
@@ -255,7 +303,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               const command = yield* Queue.take(inputQueue);
               if (command.type === "ready") {
                 if (initialized) return yield* new DecoderByteSourceError({ operation: "prepare", message: "FLAC Worker sent ready twice" });
-                preparedMetadata = yield* source.prepare;
+                preparedMetadata = yield* runSource(source.prepare, "metadata");
                 initialized = true;
                 try {
                   physical.postMessage({
@@ -269,7 +317,10 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               } else if (command.type === "input-credit") {
                 if (!initialized) return yield* new DecoderByteSourceError({ operation: "read", message: "FLAC Worker requested input before readiness" });
                 const message = command.message;
-                const result = yield* source.read(message.maximumBytes);
+                if (!Number.isSafeInteger(message.maximumBytes) || message.maximumBytes < 1 || message.maximumBytes > FLAC_INPUT_SLOT_BYTES) {
+                  return yield* new DecoderByteSourceError({ operation: "read", message: "FLAC Worker requested invalid input credit" });
+                }
+                const result = yield* runSource(source.read(message.maximumBytes), "frame");
                 try {
                   if (stopping || controller.signal.aborted) return;
                   if (result.bytes.byteLength < 1 || result.bytes.byteLength > message.maximumBytes || result.bytes.byteLength > FLAC_INPUT_SLOT_BYTES) {
@@ -288,7 +339,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
                 }
                 if (message.metrics !== undefined) recordWorkerProcessing(diagnostics, message.metrics);
                 if (workerHashes) verifiedDigest = message.digest;
-                yield* source.finish;
+                yield* runSource(source.finish, "finish");
                 return;
               }
             }
@@ -307,6 +358,10 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             if (message.type === "ready") {
               enqueue({ type: "ready" });
             } else if (message.type === "input-credit") {
+              if (!acceptingInput) {
+                stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker requested input after completion", { identity }), true);
+                return;
+              }
               enqueue({ type: "input-credit", message });
             } else if (message.type === "pcm") {
               if (!(message.bytes instanceof ArrayBuffer) || message.bytes.byteLength > MAXIMUM_CANONICAL_OUTPUT_BYTES || blocks.length >= 2) {
@@ -328,6 +383,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               });
               notify();
             } else if (message.type === "complete") {
+              acceptingInput = false;
               enqueue({ type: "complete", message });
             } else if (message.type === "error") {
               stop(workerError(message), false);
@@ -336,10 +392,14 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           physical.addEventListener("message", onMessage);
           physical.addEventListener("error", onWorkerFailure);
           physical.addEventListener("messageerror", onMessageError);
-          inputLane = Effect.runPromise(inputProgram, { signal: controller.signal }).then(
-            () => { if (!stopping) stop(undefined, false, true); },
-            (error) => { if (!stopping) stop(decoderSourceError(error), true); },
-          );
+          inputLane = Effect.runPromiseExit(inputProgram, { signal: controller.signal }).then((exit) => {
+            if (Exit.isSuccess(exit)) {
+              if (!stopping) stop(undefined, false, true);
+            } else if (!stopping) {
+              stop(inputCauseError(exit.cause), true, false, true);
+            }
+            return exit;
+          });
           resetWatchdog("decoder-load");
           try {
             physical.postMessage({

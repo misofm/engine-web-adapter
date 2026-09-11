@@ -11,6 +11,7 @@ import { ADAPTER_ASSETS, createFlacWorker } from "../src/assets.js";
 import { EngineWebAdapterError } from "../src/errors.js";
 import { readExactFlacRange } from "../src/stems/flac-delivery.js";
 import { createFlacStemResolver, createFlacStemResolverWithSource } from "../src/stems/flac-resolver.js";
+import { DecoderByteSourceError, type DecoderByteSource } from "../src/stems/decoder-byte-source.js";
 import { FlacWorkerPool } from "../src/stems/flac-worker-pool.js";
 import type {
   FlacWorkerLike,
@@ -322,6 +323,74 @@ class FakeWorker implements FlacWorkerLike {
   }
 }
 
+class ScriptedWorker implements FlacWorkerLike {
+  readonly posted: FlacWorkerRequest[] = [];
+  terminated = false;
+  readonly slotState = { value: -1 };
+  #listeners = new Map<string, Set<(event: any) => void>>();
+  #onInitialize: (worker: ScriptedWorker, requestId: number) => void;
+  #slot: Extract<FlacWorkerRequest, { type: "start" }>['inputSlot'] | undefined;
+
+  constructor(onInitialize: (worker: ScriptedWorker, requestId: number) => void) {
+    this.#onInitialize = onInitialize;
+  }
+
+  postMessage(message: FlacWorkerRequest): void {
+    if (this.terminated) return;
+    this.posted.push(message);
+    if (message.type === "start") {
+      this.#slot = message.inputSlot;
+      queueMicrotask(() => this.emit({ type: "ready", requestId: message.requestId }));
+    } else if (message.type === "initialize") {
+      queueMicrotask(() => this.#onInitialize(this, message.requestId));
+    }
+  }
+
+  terminate(): void {
+    this.terminated = true;
+    if (this.#slot !== undefined) this.slotState.value = Atomics.load(new Int32Array(this.#slot.control), 0);
+  }
+
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
+    const listeners = this.#listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.#listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
+    this.#listeners.get(type)?.delete(listener);
+  }
+
+  emit(message: FlacWorkerResponse): void {
+    for (const listener of this.#listeners.get("message") ?? []) listener({ data: message });
+  }
+
+  fail(error: Error): void {
+    for (const listener of this.#listeners.get("error") ?? []) listener({ message: error.message, error });
+  }
+}
+
+function syntheticStreamInfo() {
+  return Object.freeze({
+    sampleRateHz: 44_100 as const, channels: 1 as const, bitDepth: 16 as const, totalSamples: 1,
+    minimumBlockSamples: 16, maximumBlockSamples: 16, minimumFrameBytes: 0, maximumFrameBytes: 0,
+    streamMd5: new Uint8Array(16), decoderDescription: new Uint8Array(42),
+  });
+}
+
+function syntheticSource(options: {
+  readonly prepare?: DecoderByteSource["prepare"];
+  readonly read: DecoderByteSource["read"];
+  readonly finish: DecoderByteSource["finish"];
+}) {
+  const info = syntheticStreamInfo();
+  return {
+    prepare: options.prepare ?? Effect.succeed({ streamInfo: info, expectedFrames: 1, totalPcmBytes: 4 }),
+    read: options.read,
+    finish: options.finish,
+  };
+}
+
 test("resolver follows Worker credit with exact nonoverlapping ranges and disposes the one-stem Worker", async () => {
   const source = singleFrameFlac();
   const ranges: string[] = [];
@@ -403,6 +472,210 @@ test("private input lane consumes one synthetic sequential source with bounded c
   assert.equal(releases, 2);
   assert.equal(finishes, 1);
   assert.deepEqual(worker.acceptedInputBytes, [4, 1]);
+});
+
+test("input lane refuses invalid credits and bounded-command overflow before source access", async () => {
+  let invalidReads = 0;
+  const invalidWorker = new ScriptedWorker((worker, requestId) => {
+    worker.emit({ type: "input-credit", requestId, maximumBytes: 0, phase: "audio", phaseBytesRemaining: 0 });
+  });
+  const invalidResolver = createFlacStemResolverWithSource({
+    createWorker: () => invalidWorker, hardwareConcurrency: 2, locate: () => assert.fail("synthetic source must not locate"),
+  }, () => syntheticSource({
+    read: () => { invalidReads += 1; return Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }); },
+    finish: Effect.sync(() => {}),
+  }));
+  await assert.rejects((await invalidResolver.resolve(IDENTITY)).stream.getReader().read(), (error: unknown) =>
+    error instanceof EngineWebAdapterError && error.code === "stem.decode.worker");
+  assert.equal(invalidReads, 0);
+  assert.equal(invalidWorker.terminated, true);
+
+  const staleAbort = new AbortController();
+  let staleReads = 0;
+  const staleWorker = new ScriptedWorker((worker, requestId) => {
+    worker.emit({ type: "input-credit", requestId: requestId + 1, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+  });
+  const staleResolver = createFlacStemResolverWithSource({
+    createWorker: () => staleWorker, hardwareConcurrency: 2, locate: () => assert.fail("synthetic source must not locate"),
+  }, () => syntheticSource({
+    read: () => { staleReads += 1; return Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }); },
+    finish: Effect.sync(() => {}),
+  }));
+  const staleReading = (await staleResolver.resolve(IDENTITY, { signal: staleAbort.signal })).stream.getReader().read();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  staleAbort.abort("stale credit");
+  await assert.rejects(staleReading, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+  assert.equal(staleReads, 0);
+  assert.equal(staleWorker.terminated, true);
+
+  const pending = deferred<{ readonly bytes: Uint8Array; readonly end: boolean; readonly release: () => void }>();
+  let overflowReads = 0;
+  const overflowWorker = new ScriptedWorker((worker, requestId) => {
+    for (let index = 0; index < 3; index += 1) {
+      worker.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+    }
+  });
+  const overflowResolver = createFlacStemResolverWithSource({
+    createWorker: () => overflowWorker, hardwareConcurrency: 2, locate: () => assert.fail("synthetic source must not locate"),
+  }, () => syntheticSource({
+    read: () => { overflowReads += 1; return Effect.promise(() => pending.promise); },
+    finish: Effect.sync(() => {}),
+  }));
+  await assert.rejects((await overflowResolver.resolve(IDENTITY)).stream.getReader().read(), (error: unknown) =>
+    error instanceof EngineWebAdapterError && error.code === "stem.decode.worker");
+  assert.ok(overflowReads <= 1);
+  assert.equal(overflowWorker.terminated, true);
+  assert.equal(overflowWorker.slotState.value, 3);
+});
+
+test("input lane waits for finish and suspends the watchdog during a source read", async () => {
+  const finishGate = deferred<void>();
+  let finishStarted = false;
+  const worker = new ScriptedWorker((physical, requestId) => {
+    physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+    queueMicrotask(() => {
+      physical.emit({ type: "pcm", requestId, bytes: new Uint8Array([9, 8, 7, 6]).buffer, frames: 1, totalPcmBytes: 4 });
+      physical.emit({ type: "complete", requestId, pcmBytes: 4, frames: 1 });
+    });
+  });
+  const resolver = createFlacStemResolverWithSource({
+    createWorker: () => worker, hardwareConcurrency: 2, decodeNoProgressMs: 5,
+    locate: () => assert.fail("synthetic source must not locate"),
+  }, () => syntheticSource({
+    read: () => Effect.promise(() => new Promise(resolve => setTimeout(() => resolve({ bytes: new Uint8Array([1]), end: true, release() {} }), 25))),
+    finish: Effect.promise(() => { finishStarted = true; return finishGate.promise; }),
+  }));
+  const reader = (await resolver.resolve(IDENTITY)).stream.getReader();
+  const first = await reader.read();
+  assert.deepEqual([...(first.value ?? [])], [9, 8, 7, 6]);
+  const ending = reader.read();
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(finishStarted, false);
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(finishStarted, true);
+  assert.equal(worker.terminated, false);
+  let settled = false;
+  void ending.then(() => { settled = true; });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(settled, false);
+  finishGate.resolve();
+  assert.equal((await ending).done, true);
+  assert.equal(worker.terminated, true);
+
+  const finishFailure = new Error("finish sentinel");
+  const failingWorker = new ScriptedWorker((physical, requestId) => {
+    physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+    queueMicrotask(() => {
+      physical.emit({ type: "pcm", requestId, bytes: new Uint8Array([9, 8, 7, 6]).buffer, frames: 1, totalPcmBytes: 4 });
+      physical.emit({ type: "complete", requestId, pcmBytes: 4, frames: 1 });
+    });
+  });
+  const failingResolver = createFlacStemResolverWithSource({
+    createWorker: () => failingWorker, hardwareConcurrency: 2, decodeNoProgressMs: 100,
+    locate: () => assert.fail("synthetic source must not locate"),
+  }, () => syntheticSource({
+    read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
+    finish: Effect.fail(new DecoderByteSourceError({ operation: "finish", message: "finish failed", cause: finishFailure })),
+  }));
+  const failingReader = (await failingResolver.resolve(IDENTITY)).stream.getReader();
+  assert.deepEqual([...(await failingReader.read()).value ?? []], [9, 8, 7, 6]);
+  await assert.rejects(failingReader.read(), (error: unknown) => {
+    assert.ok(error instanceof EngineWebAdapterError);
+    assert.equal(error.code, "stem.decode.worker");
+    assert.equal(error.cause, finishFailure);
+    return true;
+  });
+  assert.equal(failingWorker.terminated, true);
+});
+
+test("input lane cancellation settles pending prepare, read, and finish without late publication", async () => {
+  const waitFor = async (predicate: () => boolean) => {
+    for (let index = 0; index < 100 && !predicate(); index += 1) await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(predicate(), true);
+  };
+
+  {
+    const abort = new AbortController();
+    let prepareStarted = false;
+    let initialized = false;
+    const worker = new ScriptedWorker(() => {});
+    const gate = deferred<{ readonly streamInfo: ReturnType<typeof syntheticStreamInfo>; readonly expectedFrames: number; readonly totalPcmBytes: number }>();
+    const resolver = createFlacStemResolverWithSource({
+      createWorker: () => worker, hardwareConcurrency: 2, locate: () => assert.fail("synthetic source must not locate"),
+    }, () => ({
+      prepare: Effect.promise(() => { prepareStarted = true; return gate.promise; }),
+      read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
+      finish: Effect.sync(() => {}),
+    }));
+    const resolved = await resolver.resolve(IDENTITY, { signal: abort.signal });
+    const reading = resolved.stream.getReader().read();
+    await waitFor(() => prepareStarted);
+    initialized = worker.posted.some(message => message.type === "initialize");
+    abort.abort("cancel prepare");
+    await assert.rejects(reading, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.equal(initialized, false);
+    assert.equal(worker.terminated, true);
+  }
+
+  {
+    const abort = new AbortController();
+    let readStarted = false;
+    const worker = new ScriptedWorker((physical, requestId) => {
+      physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+    });
+    const gate = deferred<{ readonly bytes: Uint8Array; readonly end: boolean; readonly release: () => void }>();
+    const cleanupFailure = new Error("read cleanup sentinel");
+    const resolver = createFlacStemResolverWithSource({
+      createWorker: () => worker, hardwareConcurrency: 2, locate: () => assert.fail("synthetic source must not locate"),
+    }, () => syntheticSource({
+      read: () => Effect.acquireUseRelease(
+        Effect.sync(() => { readStarted = true; }),
+        () => Effect.promise(() => gate.promise),
+        () => Effect.fail(new DecoderByteSourceError({ operation: "read", message: "read cleanup failed", cause: cleanupFailure })),
+      ),
+      finish: Effect.sync(() => {}),
+    }));
+    const resolved = await resolver.resolve(IDENTITY, { signal: abort.signal });
+    const reading = resolved.stream.getReader().read();
+    await waitFor(() => readStarted);
+    abort.abort("cancel read");
+    await assert.rejects(reading, (error: unknown) => {
+      assert.ok(error instanceof EngineWebAdapterError);
+      assert.equal(error.code, "stem.cancelled");
+      assert.ok(error.cause instanceof AggregateError);
+      assert.equal(error.cause.errors.includes(cleanupFailure), true);
+      return true;
+    });
+    assert.equal(worker.terminated, true);
+    assert.equal(worker.slotState.value, 3);
+  }
+
+  {
+    const abort = new AbortController();
+    let finishStarted = false;
+    const finishGate = deferred<void>();
+    const worker = new ScriptedWorker((physical, requestId) => {
+      physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+      queueMicrotask(() => {
+        physical.emit({ type: "pcm", requestId, bytes: new Uint8Array([9, 8, 7, 6]).buffer, frames: 1, totalPcmBytes: 4 });
+        physical.emit({ type: "complete", requestId, pcmBytes: 4, frames: 1 });
+      });
+    });
+    const resolver = createFlacStemResolverWithSource({
+      createWorker: () => worker, hardwareConcurrency: 2, decodeNoProgressMs: 100,
+      locate: () => assert.fail("synthetic source must not locate"),
+    }, () => syntheticSource({
+      read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
+      finish: Effect.promise(() => { finishStarted = true; return finishGate.promise; }),
+    }));
+    const reader = (await resolver.resolve(IDENTITY, { signal: abort.signal })).stream.getReader();
+    assert.deepEqual([...(await reader.read()).value ?? []], [9, 8, 7, 6]);
+    const ending = reader.read();
+    await waitFor(() => finishStarted);
+    abort.abort("cancel finish");
+    await assert.rejects(ending, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.equal(worker.terminated, true);
+  }
 });
 
 test("mid-body retry resumes at Worker credit without duplicated accepted bytes", async () => {
