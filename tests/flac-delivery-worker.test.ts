@@ -738,6 +738,31 @@ test("private source failures retain operation, message, Cause reasons, and unde
   }
 });
 
+test("cyclic progress failures still settle the public stream and terminate the Worker", async () => {
+  const source = singleFrameFlac();
+  const worker = new FakeWorker();
+  const cyclic = new AggregateError([], "cyclic progress failure");
+  cyclic.errors.push(cyclic);
+  const resolver = createFlacStemResolver({
+    createWorker: () => worker, maximumAttempts: 1, locate: () => "https://caller.invalid/stem",
+    fetch: responseFetch(request => {
+      const match = /^bytes=(\d+)-(\d+)$/u.exec(request.headers.range!)!;
+      return exactResponse(source, Number(match[1]), Number(match[2]));
+    }),
+  });
+  const result = await resolver.resolve(IDENTITY, {
+    onProgress: progress => { if (progress.stage === "probing") throw cyclic; },
+  });
+  await assert.rejects(result.stream.getReader().read(), (error: unknown) => {
+    assert.ok(error instanceof EngineWebAdapterError);
+    assert.equal(error.code, "stem.decode.worker");
+    assert.ok(error.cause instanceof AggregateError);
+    assert.equal(error.cause.errors.includes(cyclic), true);
+    return true;
+  });
+  assert.equal(worker.terminated, true);
+});
+
 test("input lane cancellation settles pending prepare, read, and finish without late publication", async () => {
   const waitFor = async (predicate: () => boolean) => {
     for (let index = 0; index < 100 && !predicate(); index += 1) await new Promise(resolve => setTimeout(resolve, 0));

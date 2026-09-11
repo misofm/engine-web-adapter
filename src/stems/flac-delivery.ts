@@ -70,12 +70,12 @@ function retryable(error: unknown): boolean {
 }
 
 function preserveDeliveryCause(primary: unknown, cleanup: unknown): EngineWebAdapterError {
-  if (primary instanceof EngineWebAdapterError) {
-    return new EngineWebAdapterError(primary.code, primary.message, primary.details,
-      new AggregateError([primary, cleanup], "FLAC delivery failed during cleanup"));
+  if (cleanup instanceof EngineWebAdapterError) {
+    return new EngineWebAdapterError(cleanup.code, cleanup.message, cleanup.details,
+      new AggregateError([cleanup, primary], "FLAC delivery failed during cleanup"));
   }
-  return new EngineWebAdapterError("stem.delivery.http", "FLAC range operation failed during cleanup", {},
-    new AggregateError([primary, cleanup], "FLAC delivery failed during cleanup"));
+  return new EngineWebAdapterError("stem.delivery.stall", "FLAC delivery cleanup failed", {},
+    new AggregateError([cleanup, primary], "FLAC delivery failed during cleanup"));
 }
 
 function requestFor(

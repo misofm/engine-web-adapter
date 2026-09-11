@@ -75,26 +75,12 @@ function inputCauseValue(reason: Cause.Reason<unknown>): unknown {
   return interrupted;
 }
 
-function preservedCause(value: unknown): unknown {
-  // EngineWebAdapterError cannot distinguish an omitted cause from an
-  // explicit undefined. Keep an AggregateError wrapper at this boundary so a
-  // defect's full Cause remains observable even when its payload is undefined.
-  if (value === undefined) return new AggregateError([undefined], "FLAC decoder input lane failed");
-  if (value instanceof DecoderByteSourceError && "cause" in value) {
-    return new AggregateError([value, preservedCause(value.cause)], "FLAC decoder input lane failed");
-  }
-  return value;
-}
-
-function expandedCause(value: unknown): ReadonlyArray<unknown> {
-  const preserved = preservedCause(value);
-  if (value instanceof DecoderByteSourceError && "cause" in value) {
-    return [preserved, ...expandedCause(value.cause)];
-  }
-  if (value instanceof AggregateError) {
-    return [preserved, ...value.errors.flatMap(expandedCause)];
-  }
-  return [preserved];
+function shallowCauseValues(value: unknown): ReadonlyArray<unknown> {
+  // Cause payloads are opaque objects and may be cyclic. Retain the tagged
+  // source error and its immediate payload by reference; never walk an error
+  // graph while mapping a failed lane.
+  if (value instanceof DecoderByteSourceError && "cause" in value) return [value, value.cause];
+  return [value];
 }
 
 function inputCauseError(cause: Cause.Cause<unknown>): EngineWebAdapterError {
@@ -102,7 +88,7 @@ function inputCauseError(cause: Cause.Cause<unknown>): EngineWebAdapterError {
   const values = reasons.map(inputCauseValue);
   const primary = values[0];
   const mapped = decoderSourceError(primary);
-  const preserved = new AggregateError(values.flatMap(expandedCause), "FLAC decoder input lane failed");
+  const preserved = new AggregateError(values.flatMap(shallowCauseValues), "FLAC decoder input lane failed");
   if (primary instanceof Error && primary.name === "AbortError") {
     return new EngineWebAdapterError("stem.cancelled", "FLAC decoder input lane was cancelled", {}, preserved);
   }
@@ -115,7 +101,7 @@ function mergeInputCause(primary: unknown, exit: Exit.Exit<unknown, unknown>): u
   if (reasons.length === 0) return primary;
   const mapped = decoderSourceError(primary);
   return new EngineWebAdapterError(mapped.code, mapped.message, mapped.details,
-    new AggregateError([preservedCause(primary), ...reasons.flatMap(expandedCause)], "FLAC decoder input lane failed"));
+    new AggregateError([...shallowCauseValues(primary), ...reasons.flatMap(shallowCauseValues)], "FLAC decoder input lane failed"));
 }
 
 /** Create the advanced low-level native-FLAC resolver used by session integration. */
