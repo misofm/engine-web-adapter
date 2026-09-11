@@ -340,3 +340,34 @@ suite and complete234-test package check passing; root independently reran26
 focused cases. Retained review probes for the previous error-path defects pass.
 This coherent checkpoint awaits its own macOS gate and independent attempt4
 verdict; no acceptance, release or subsequent feature implementation is claimed.
+
+## Attempt 4 independent verdict — FAIL; attempt 5 is final
+
+Astra medium independently confirms the complete error-boundary corrections and
+26 focused cases pass at17bf6c2. One consolidated FAIL covers the remaining
+cancellation/progress boundary: abort inside a quota observation is missed by the
+subsequently registered physical-write listener, leaving an already-settled write
+pending until the generic deadline and returning stem.read_deadline instead of
+stem.cancelled. OPFS-owned writes have no duplicate generic timer. Additionally,
+the write-deadline exemption incorrectly suppresses logical metadata deadlines
+for exists/estimate, neither of which supplies its own bound in the actual OPFS
+backend. Exact-source macOS OPFS run34612429686 passed its existing assertions;
+that does not cover or waive these reproduced cases.
+
+Attempt5 is the final permitted coherent attempt. Admit an already-aborted signal
+before starting a new physical mutation, and close the registration window when
+an invoked backend synchronously aborts before listener installation. Preserve
+idempotent completion, pending physical settlement and cleanup/lock ordering.
+Limit the OPFS-owned deadline exception to the writer operations it actually
+owns; metadata observations retain Effect Clock progress bounds. No new helper
+framework, storage API or broader architecture change is needed.
+
+Gates cover abort during quota observation before write, abort during physical
+call registration, and stalled exists/estimate while the backend actually
+satisfies ownsOpfsWriteDeadlines. Verify cancellation classification, no ready
+descriptor, no late marker and lock release after physical settlement. Add the
+small late-cancel case to the existing real OPFS harness. Preserve all prior
+error/Cause, writer/source lifecycle, quota, canonical and coexistence cases.
+Run the complete package check and exact-source macOS gate, then obtain ONE
+independent Astra medium attempt5 verdict. A fifth FAIL stops this implementation
+shape; preserve evidence and rebrief a smaller scope rather than retrying it.
