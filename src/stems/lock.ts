@@ -71,7 +71,12 @@ export async function acquireNamedLock(
     });
     void request.catch(failed);
     try { await ready; }
-    catch (error) { await request.catch(() => undefined); throw error; }
+    catch (error) {
+      let requestFailure: unknown;
+      try { await request; } catch (cause) { requestFailure = cause; }
+      if (requestFailure !== undefined && requestFailure !== error) throw new AggregateError([error, requestFailure], "Web Lock acquisition cleanup failed");
+      throw error;
+    }
     return { release: async () => { release(); await request; } };
   }
   const prior = shared.locks.get(name) ?? Promise.resolve();

@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { Effect, Exit, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 
 import { EngineWebAdapterError } from "../src/errors.js";
 import {
@@ -12,6 +14,7 @@ import {
   type SparsePcmExpectation,
 } from "../src/stems/index.js";
 import { acquireNamedLock } from "../src/stems/lock.js";
+import { sparseSourceProgramForTest } from "../src/stems/sparse-store.js";
 
 function expectation(bytes: Uint8Array, frames: number, shape: { readonly channels?: 1 | 2; readonly bitDepth?: 16 | 24 } = {}): SparsePcmExpectation {
   const channels = shape.channels ?? 1;
@@ -28,6 +31,12 @@ function expectation(bytes: Uint8Array, frames: number, shape: { readonly channe
 
 function spans(...items: readonly { readonly startFrame: number; readonly bytes: Uint8Array }[]): AsyncIterable<{ readonly startFrame: number; readonly bytes: Uint8Array }> {
   return (async function*() { for (const item of items) yield item; })();
+}
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
 }
 
 describe("VerifiedSparsePcmStore", () => {
@@ -171,12 +180,199 @@ describe("VerifiedSparsePcmStore", () => {
     await store.close();
   });
 
+  it("removes a file created before a rejected data or marker create", async () => {
+    class PartialCreateBackend extends MemoryStemStorageBackend {
+      constructor(private readonly phase: "data" | "marker") { super(); }
+      override async createWriter(name: string, signal?: AbortSignal) {
+        const partial = this.phase === "data" ? name.startsWith("sparse-pcm-v1-data-") : name.startsWith("sparse-pcm-v1-commit-");
+        if (partial) {
+          this.files.set(name, new Uint8Array([7, 7]));
+          throw new Error(`${this.phase} create failed after file creation`);
+        }
+        return super.createWriter(name, signal);
+      }
+    }
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    for (const phase of ["data", "marker"] as const) {
+      const backend = new PartialCreateBackend(phase);
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: `partial-${phase}` });
+      await assert.rejects(store.installSource(expectation(bytes, 2), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }));
+      assert.deepEqual(await backend.list(), []);
+      await store.close();
+    }
+  });
+
+  it("does not publish when the cold payload handle has changed size", async () => {
+    class WrongSizeReadBackend extends MemoryStemStorageBackend {
+      constructor(private readonly delta: "short" | "extra") { super(); }
+      override async read(name: string): Promise<Blob> {
+        const blob = await super.read(name);
+        if (!name.startsWith("sparse-pcm-v1-data-")) return blob;
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const changed = this.delta === "short" ? bytes.slice(0, Math.max(0, bytes.byteLength - 1)) : new Uint8Array([...bytes, 99]);
+        return new Blob([changed]);
+      }
+    }
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    for (const delta of ["short", "extra"] as const) {
+      const backend = new WrongSizeReadBackend(delta);
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: `wrong-size-${delta}` });
+      await assert.rejects(store.installSource(expectation(bytes, 2), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }));
+      assert.deepEqual(await backend.list(), []);
+      await store.close();
+    }
+  });
+
+  it("retains owned output when cleanup itself fails", async () => {
+    class CleanupFailureBackend extends MemoryStemStorageBackend {
+      override async createWriter(name: string, signal?: AbortSignal) {
+        const writer = await super.createWriter(name, signal);
+        if (!name.startsWith("sparse-pcm-v1-commit-")) return writer;
+        return { write: (chunk: Uint8Array | string) => writer.write(chunk), close: async () => { await writer.close(); throw new Error("marker close failed"); }, abort: (reason?: unknown) => writer.abort(reason) };
+      }
+      override async remove(name: string): Promise<void> {
+        if (name.startsWith("sparse-pcm-v1-data-")) throw new Error("data removal failed");
+        return super.remove(name);
+      }
+    }
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const backend = new CleanupFailureBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "cleanup-failure" });
+    await assert.rejects(store.installSource(expectation(bytes, 2), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }));
+    assert.ok((await backend.list()).some((name) => name.startsWith("sparse-pcm-v1-data-")));
+    await store.close();
+  });
+
+  it("does not finish close until delayed create, write, and close settle physically", async () => {
+    class DelayedWriterBackend extends MemoryStemStorageBackend {
+      readonly gate = deferred();
+      readonly entered = deferred();
+      constructor(private readonly phase: "create" | "write" | "close") { super(); }
+      override async createWriter(name: string, signal?: AbortSignal) {
+        const writer = await super.createWriter(name, signal);
+        const target = name.startsWith("sparse-pcm-v1-data-");
+        if (!target) return writer;
+        if (this.phase === "create") {
+          this.entered.resolve();
+          await this.gate.promise;
+          return writer;
+        }
+        return {
+          write: async (chunk: Uint8Array | string) => { if (this.phase === "write") { this.entered.resolve(); await this.gate.promise; } return writer.write(chunk); },
+          close: async () => { if (this.phase === "close") { this.entered.resolve(); await this.gate.promise; } return writer.close(); },
+          abort: (reason?: unknown) => writer.abort(reason),
+        };
+      }
+    }
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    for (const phase of ["create", "write", "close"] as const) {
+      const backend = new DelayedWriterBackend(phase);
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: `delayed-${phase}` });
+      const installing = store.installSource(expectation(bytes, 2), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+      await backend.entered.promise;
+      let closed = false;
+      const closing = store.close().then(() => { closed = true; });
+      await Promise.resolve();
+      assert.equal(closed, false);
+      backend.gate.resolve();
+      await closing;
+      await assert.rejects(installing);
+      assert.deepEqual(await backend.list(), []);
+    }
+  });
+
+  it("uses the Effect clock for pending source progress and aborts before iterator return", async () => {
+    const active = new Uint8Array([1, 2]);
+    const canonical = new Uint8Array([1, 2, 0, 0]);
+    const events: string[] = [];
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "source-timeout", readDeadlineMs: 5 });
+    await assert.rejects(store.installSource(expectation(canonical, 2), {
+      resolve: async (signal) => ({
+        spans: {
+          [Symbol.asyncIterator]: () => {
+            let count = 0;
+            return {
+              next: () => {
+                count += 1;
+                if (count === 1) return Promise.resolve({ done: false as const, value: { startFrame: 0, bytes: active } });
+                return new Promise<IteratorResult<{ readonly startFrame: number; readonly bytes: Uint8Array }>>((resolve) => {
+                  signal.addEventListener("abort", () => { events.push("abort"); resolve({ done: true, value: undefined }); }, { once: true });
+                });
+              },
+              return: async () => { events.push("return"); return { done: true, value: undefined }; },
+            };
+          },
+        },
+      }),
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.read_deadline");
+    assert.deepEqual(events, ["abort", "return"]);
+    assert.deepEqual(await backend.list(), []);
+    await store.close();
+  });
+
+  it("proves source progress timeout with the injected TestClock layer", async () => {
+    const controller = new AbortController();
+    const events: string[] = [];
+    const source: AsyncIterable<{ readonly startFrame: number; readonly bytes: Uint8Array }> = {
+      [Symbol.asyncIterator]: () => ({
+        next: () => new Promise<IteratorResult<{ readonly startFrame: number; readonly bytes: Uint8Array }>>((resolve) => {
+          controller.signal.addEventListener("abort", () => { events.push("abort"); resolve({ done: true, value: undefined }); }, { once: true });
+        }),
+        return: async () => { events.push("return"); return { done: true, value: undefined }; },
+      }),
+    };
+    const program = Effect.gen(function*() {
+      const fiber = yield* Effect.forkChild(sparseSourceProgramForTest(source, controller, 100));
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("100 millis");
+      return yield* Fiber.await(fiber);
+    });
+    const exit = await Effect.runPromise(Effect.provide(program, TestClock.layer()));
+    assert.equal(Exit.isFailure(exit), true);
+    assert.deepEqual(events, ["abort", "return"]);
+  });
+
   it("rejects before writing when the exact sparse generation cannot fit quota", async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const backend = new MemoryStemStorageBackend({ quotaBytes: bytes.byteLength });
     const store = new VerifiedSparsePcmStore({ backend, instanceId: "quota" });
     await assert.rejects(store.installSource(expectation(bytes, 2), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.quota");
     assert.deepEqual(await backend.list(), []);
+    await store.close();
+  });
+
+  it("uses reported physical usage without double-counting prior active writes", async () => {
+    class PhysicalUsageBackend extends MemoryStemStorageBackend {
+      private pendingBytes = 0;
+      constructor(private readonly quota: number) { super(); }
+      override async estimate(): Promise<{ readonly quota?: number; readonly usage?: number }> {
+        const estimate = await super.estimate();
+        return { quota: this.quota, usage: (estimate.usage ?? 0) + this.pendingBytes };
+      }
+      override async createWriter(name: string, signal?: AbortSignal) {
+        const writer = await super.createWriter(name, signal);
+        if (!name.startsWith("sparse-pcm-v1-data-")) return writer;
+        return {
+          write: async (chunk: Uint8Array | string) => { this.pendingBytes += typeof chunk === "string" ? new TextEncoder().encode(chunk).byteLength : chunk.byteLength; return writer.write(chunk); },
+          close: async () => { try { return await writer.close(); } finally { this.pendingBytes = 0; } },
+          abort: async (reason?: unknown) => { this.pendingBytes = 0; return writer.abort(reason); },
+        };
+      }
+    }
+    const bytes = new Uint8Array(128);
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = (index % 31) + 1;
+    const expected = expectation(bytes, 64);
+    const pieces = Array.from({ length: 32 }, (_, index) => ({ startFrame: index * 2, bytes: bytes.slice(index * 4, index * 4 + 4) }));
+    const baselineBackend = new MemoryStemStorageBackend();
+    const baselineStore = new VerifiedSparsePcmStore({ backend: baselineBackend, instanceId: "physical-quota" });
+    await baselineStore.installSource(expected, { resolve: async () => ({ spans: spans(...pieces) }) });
+    const baselineBytes = [...baselineBackend.files.values()].reduce((sum, file) => sum + file.byteLength, 0);
+    await baselineStore.close();
+    const backend = new PhysicalUsageBackend(baselineBytes + 32);
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "physical-quota" });
+    const descriptor = await store.installSource(expected, { resolve: async () => ({ spans: spans(...pieces) }) });
+    assert.equal(descriptor.index.activeBytes, bytes.byteLength);
     await store.close();
   });
 
@@ -203,6 +399,19 @@ describe("VerifiedSparsePcmStore", () => {
     const bytes = new Uint8Array([1, 2]);
     let resolves = 0;
     await assert.rejects(store.installSource({ ...expectation(bytes, 1), sampleRateHz: 12_345 }, { resolve: async () => { resolves += 1; return { spans: spans({ startFrame: 0, bytes }) }; } }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    assert.equal(resolves, 0);
+    assert.deepEqual(await backend.list(), []);
+    await store.close();
+  });
+
+  it("rejects strict option keys and late getters before opening a writer", async () => {
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "options" });
+    const bytes = new Uint8Array([1, 2]);
+    let resolves = 0;
+    const options: Record<string, unknown> = { resolve: async () => { resolves += 1; return { spans: spans({ startFrame: 0, bytes }) }; }, extra: 1 };
+    Object.defineProperty(options, "late", { enumerable: true, get: () => { throw new Error("late getter accessed"); } });
+    await assert.rejects(store.installSource(expectation(bytes, 1), options as never), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
     assert.equal(resolves, 0);
     assert.deepEqual(await backend.list(), []);
     await store.close();

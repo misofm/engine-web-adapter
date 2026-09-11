@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, ManagedRuntime, Random, Ref, Schema, Scope, Stream } from "effect";
+import { Context, Effect, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
 
 import { EngineWebAdapterError } from "../errors.js";
 import { assertStemIdentity } from "./identity.js";
@@ -207,7 +207,7 @@ class SparseCoordination extends Context.Service<SparseCoordination, {
         const pending = acquireStemLock(backend.lock, identityHex(identity), signal);
         pending.then(
           (lease) => { if (!effectSignal.aborted && !signal.aborted) resume(Effect.succeed(lease)); },
-          (cause) => { if (!effectSignal.aborted) resume(Effect.fail(new SparseIoError({ message: "Source lock acquisition failed", cause }))); },
+          (cause) => { if (!effectSignal.aborted) resume(Effect.fail(isAbort(cause) || signal.aborted ? new SparseCancelledError({ message: "Source lock acquisition was cancelled", cause }) : new SparseIoError({ message: "Source lock acquisition failed", cause }))); },
         );
         return Effect.promise(async () => {
           let lease: LockLease;
@@ -272,7 +272,7 @@ class SparseProgram extends Context.Service<SparseProgram, {
         if (knownMarker.byteLength > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse known index marker exceeds its bound" });
         yield* quotaCheck(backend, asserted.activeBytes + knownMarker.byteLength);
       }
-      const committed = yield* ingestAndCommit(backend, expected, resolved.spans, asserted, dataName, generation, operation);
+      const committed = yield* ingestAndCommit(backend, expected, resolved.spans, resolved.sourceController, asserted, dataName, generation, operation);
       const descriptor = Object.freeze({ kind: "sparse-pcm" as const, data: committed.data, index: committed.marker.index });
       yield* Ref.set(operation.ref, { _tag: "committed" } as Lifecycle);
       operation.dispose();
@@ -419,7 +419,8 @@ function positiveDeadline(value: number): number { if (!Number.isSafeInteger(val
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function checkSignal(signal: AbortSignal): Effect.Effect<void, SparseCancelledError> { return signal.aborted ? Effect.fail(new SparseCancelledError({ message: "Sparse operation was cancelled", cause: signal.reason })) : Effect.void; }
 
-function resolveSource(resolve: SparsePcmInstallOptions["resolve"], signal: AbortSignal, deadlineMs: number): Effect.Effect<SparsePcmResolved, SparseFailure> {
+interface ResolvedInput extends SparsePcmResolved { readonly sourceController: AbortController }
+function resolveSource(resolve: SparsePcmInstallOptions["resolve"], signal: AbortSignal, deadlineMs: number): Effect.Effect<ResolvedInput, SparseFailure> {
   return Effect.gen(function*() {
     const child = new AbortController();
     if (signal.aborted) child.abort(signal.reason);
@@ -434,7 +435,7 @@ function resolveSource(resolve: SparsePcmInstallOptions["resolve"], signal: Abor
       );
       return Effect.promise(async () => {
         child.abort(new DOMException("Sparse resolver interrupted", "AbortError"));
-        await settleWithin(pending, deadlineMs, "Sparse resolver");
+        await settlePhysical(pending);
       });
     }).pipe(
       Effect.timeout(deadlineMs),
@@ -443,7 +444,7 @@ function resolveSource(resolve: SparsePcmInstallOptions["resolve"], signal: Abor
     const value = yield* resolving;
     return yield* Effect.try({ try: () => {
       if (!isRecord(value) || typeof (value.spans as { readonly [Symbol.asyncIterator]?: unknown } | undefined)?.[Symbol.asyncIterator] !== "function") throw new Error("resolver spans must be an AsyncIterable");
-      return { ...value, spans: cancellableIterable(value.spans, child, deadlineMs) } as SparsePcmResolved;
+      return { ...value, sourceController: child } as ResolvedInput;
     }, catch: (cause) => new SparseBoundaryError({ message: "Sparse resolver result is invalid", cause }) });
   });
 }
@@ -465,7 +466,7 @@ function uniqueGeneration(backend: BackendShape, identity: StemIdentity): Effect
 }
 
 interface CommittedSparse { readonly marker: Marker; readonly data: Blob }
-function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, source: AsyncIterable<SparsePcmSpan>, asserted: SparsePcmIndex | undefined, dataName: string, generation: string, operation: OperationState): Effect.Effect<CommittedSparse, SparseFailure, ScopeRequirement> {
+function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, source: AsyncIterable<SparsePcmSpan>, sourceController: AbortController, asserted: SparsePcmIndex | undefined, dataName: string, generation: string, operation: OperationState): Effect.Effect<CommittedSparse, SparseFailure, ScopeRequirement> {
   let dataOwned = false;
   let markerOwned = false;
   let markerCommitted = false;
@@ -476,8 +477,11 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
   const transaction = Effect.scoped(Effect.gen(function*() {
       yield* Ref.set(operation.ref, { _tag: "streaming" } as Lifecycle);
     let dataClosed = false;
-    const dataWriter = yield* Effect.acquireRelease(backend.createWriter(dataName, operation.signal), (writer) => dataClosed ? Effect.void : backend.abort(writer, "data writer scope closed"), { interruptible: true });
     dataOwned = true;
+    // Reserve the unpublished name before asking the backend to create it.
+    // A backend may create a file and then reject/cancel the create promise;
+    // cleanup must still know that this transaction owns that name.
+    const dataWriter = yield* Effect.acquireRelease(backend.createWriter(dataName, operation.signal), (writer) => dataClosed ? Effect.void : backend.abort(writer, "data writer scope closed"), { interruptible: true });
     const intervals: SparsePcmInterval[] = [];
     const hash = new IncrementalSha256();
     let previousEnd = 0;
@@ -508,9 +512,13 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
       // closes. OPFS already accounts the persisted active file, so reserve
       // just this write plus the exact prospective marker there. The first
       // known-index admission above runs before that file exists.
-      const quotaBytes = backend.opfsOwnedDeadlines
-        ? span.bytes.byteLength + prospectiveMarkerBytes(expected, generation, dataName, activeBytes + span.bytes.byteLength, intervalBytes)
-        : activeBytes + span.bytes.byteLength + prospectiveMarkerBytes(expected, generation, dataName, activeBytes + span.bytes.byteLength, intervalBytes);
+      // `usage` is the only truthful physical-space observation available at
+      // this seam: some backends account an open writer immediately while the
+      // deterministic backend accounts it on close. Reserve only the next
+      // physical write and exact prospective marker. Accumulated active bytes
+      // are either already in usage or are covered by the final close quota
+      // result, so counting them again would reject valid sparse sources.
+      const quotaBytes = span.bytes.byteLength + prospectiveMarkerBytes(expected, generation, dataName, activeBytes + span.bytes.byteLength, intervalBytes);
       yield* quotaCheck(backend, quotaBytes);
       yield* backend.write(dataWriter, span.bytes);
       if (nextIsAdjacent && prior !== undefined) intervals[intervals.length - 1] = Object.freeze({ startFrame: prior.startFrame, frames: prior.frames + spanFrames, byteOffset: prior.byteOffset });
@@ -518,11 +526,7 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
       activeBytes += span.bytes.byteLength;
       previousEnd = span.startFrame + spanFrames;
     });
-    const stream = Stream.fromAsyncIterable(source, (cause) => isAbort(cause)
-      ? new SparseCancelledError({ message: "Sparse resolver stream was cancelled", cause })
-      : isTimeout(cause)
-        ? new SparseDeadlineError({ message: "Sparse resolver stream exceeded its deadline", cause })
-        : new SparseIoError({ message: "Sparse resolver stream failed", cause }));
+    const stream = sourceStream(source, sourceController, backend.readDeadlineMs);
     yield* Stream.runForEach(stream, processSpan);
     yield* hashZeros(hash, (expected.frames - previousEnd) * frameBytes, operation.signal);
     const index = yield* Effect.try({ try: () => validateSparsePcmIndex({ format: SPARSE_PCM_FORMAT, identity: expected.identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth, frames: expected.frames, intervals, activeBytes, canonicalBytes: expected.canonicalBytes }, activeBytes), catch: (cause) => new SparseCorruptError({ message: "Derived sparse index is invalid", cause }) });
@@ -538,13 +542,17 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
     yield* quotaCheck(backend, markerBytes.byteLength);
     yield* Ref.set(operation.ref, { _tag: "marker-writing" } as Lifecycle);
     let markerClosed = false;
-    const markerWriter = yield* Effect.acquireRelease(backend.createWriter(markerName(expected.identity), operation.signal), (writer) => markerClosed ? Effect.void : backend.abort(writer, "marker writer scope closed"), { interruptible: true });
     markerOwned = true;
+    // The marker is visible only after close, but its ordinary file entry may
+    // exist as soon as create is attempted. Register ownership before that
+    // attempt so a partial create is removed only after physical abort.
+    const markerWriter = yield* Effect.acquireRelease(backend.createWriter(markerName(expected.identity), operation.signal), (writer) => markerClosed ? Effect.void : backend.abort(writer, "marker writer scope closed"), { interruptible: true });
     yield* backend.write(markerWriter, markerBytes);
     yield* backend.close(markerWriter);
     markerClosed = true;
     yield* checkSignal(operation.signal);
     const data = yield* backend.read(dataName);
+    if (data.size !== index.activeBytes) return yield* new SparseCorruptError({ message: "Sparse payload length changed before commit" });
     yield* checkSignal(operation.signal);
     markerCommitted = markerClosed;
     return { marker, data };
@@ -560,69 +568,50 @@ function preflightSpan(value: unknown): Effect.Effect<void, SparseBoundaryError>
 function decodeSpan(value: unknown): Effect.Effect<{ readonly startFrame: number; readonly bytes: Uint8Array }, SparseBoundaryError> {
   return Schema.decodeUnknownEffect(SpanSchema, { onExcessProperty: "error" })(value).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse span schema is invalid", cause })));
 }
-function cancellableIterable(source: AsyncIterable<SparsePcmSpan>, controller: AbortController, deadlineMs: number): AsyncIterable<unknown> {
-  const signal = controller.signal;
-  return { [Symbol.asyncIterator]: () => {
-    const iterator = source[Symbol.asyncIterator]();
-    let finished = false;
-    let pending: Promise<IteratorResult<SparsePcmSpan>> | undefined;
-    return {
-      next: async () => {
-        const read = Promise.resolve(iterator.next());
-        pending = read;
-        try {
-          const result = await raceAbort(read, signal, deadlineMs, controller);
-          if (result.done) finished = true;
-          return result;
-        } finally {
-          if (pending === read) pending = undefined;
-        }
-      },
-      return: async () => {
-        if (!finished && !signal.aborted) controller.abort(new DOMException("Sparse resolver stream interrupted", "AbortError"));
-        const activeRead = pending;
-        if (activeRead !== undefined) await settleWithin(activeRead, deadlineMs, "Sparse resolver stream read");
-        if (iterator.return === undefined) return { done: true, value: undefined };
-        const returned = Promise.resolve(iterator.return());
-        await settleWithin(returned, deadlineMs, "Sparse resolver stream close");
-        return await returned;
-      },
-    };
-  } };
-}
-async function settleWithin<T>(promise: PromiseLike<T>, deadlineMs: number, operation: string): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const observed = Promise.resolve(promise).then(() => undefined, () => undefined);
-  const deadline = new Promise<void>((_, reject) => {
-    timer = setTimeout(() => reject(new DOMException(`${operation} exceeded its deadline`, "TimeoutError")), deadlineMs);
-  });
-  try { await Promise.race([observed, deadline]); }
-  finally { if (timer !== undefined) clearTimeout(timer); }
-}
-function raceAbort<T>(promise: PromiseLike<T>, signal: AbortSignal, deadlineMs?: number, controller?: AbortController): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("Operation aborted", "AbortError"));
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (result: () => void) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", abort);
-      if (timer !== undefined) clearTimeout(timer);
-      result();
-    };
-    const abort = () => finish(() => reject(signal.reason ?? new DOMException("Operation aborted", "AbortError")));
-    signal.addEventListener("abort", abort, { once: true });
-    if (deadlineMs !== undefined) timer = setTimeout(() => {
-      const reason = new DOMException("Sparse resolver stream made no progress", "TimeoutError");
-      controller?.abort(reason);
-      finish(() => reject(reason));
-    }, deadlineMs);
-    Promise.resolve(promise).then(
-      (value) => finish(() => resolve(value)),
-      (cause) => finish(() => reject(cause)),
+function sourceStream(source: AsyncIterable<SparsePcmSpan>, controller: AbortController, deadlineMs: number): Stream.Stream<SparsePcmSpan, SparseFailure> {
+  const iterator = source[Symbol.asyncIterator]();
+  let normalEof = false;
+  let pending: Promise<IteratorResult<SparsePcmSpan>> | undefined;
+  const next = Effect.callback<IteratorResult<SparsePcmSpan>, SparseFailure>((resume, effectSignal) => {
+    let read: Promise<IteratorResult<SparsePcmSpan>>;
+    try { read = Promise.resolve(iterator.next()); }
+    catch (cause) { resume(Effect.fail(new SparseIoError({ message: "Sparse resolver stream pull failed", cause }))); return Effect.void; }
+    pending = read;
+    read.then(
+      (result) => { if (pending === read) pending = undefined; if (!effectSignal.aborted) resume(Effect.succeed(result)); },
+      (cause) => { if (pending === read) pending = undefined; if (!effectSignal.aborted) resume(Effect.fail(isAbort(cause) ? new SparseCancelledError({ message: "Sparse resolver stream was cancelled", cause }) : new SparseIoError({ message: "Sparse resolver stream failed", cause }))); },
     );
+    return Effect.promise(async () => {
+      if (!normalEof && !controller.signal.aborted) controller.abort(new DOMException("Sparse resolver stream interrupted", "AbortError"));
+      const activeRead = pending;
+      if (activeRead !== undefined) await settlePhysical(activeRead);
+      if (!normalEof && iterator.return !== undefined) {
+        const returned = Promise.resolve(iterator.return());
+        await settlePhysical(returned);
+      }
+    });
+  }).pipe(
+    Effect.timeout(deadlineMs),
+    Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: "Sparse resolver stream exceeded its deadline" }))),
+  );
+  const pull = Effect.fn("SparseProgram.pullSpan")(function*() {
+    const result = yield* next;
+    if (result.done) {
+      normalEof = true;
+      return [[], Option.none()] as const;
+    }
+    return [[result.value], Option.some(undefined)] as const;
   });
+  return Stream.paginate(undefined, () => pull());
+}
+
+/** Internal node-test seam; intentionally omitted from the `/stems` barrel. */
+export function sparseSourceProgramForTest(source: AsyncIterable<SparsePcmSpan>, controller: AbortController, deadlineMs: number) {
+  return sourceStream(source, controller, deadlineMs).pipe(Stream.runCollect);
+}
+
+async function settlePhysical<T>(promise: PromiseLike<T>): Promise<void> {
+  await Promise.resolve(promise).then(() => undefined, () => undefined);
 }
 function hashZeros(hash: IncrementalSha256, bytes: number, signal: AbortSignal): Effect.Effect<void, SparseFailure> {
   return Effect.fn("SparseProgram.hashZeros")(function*() {
@@ -667,7 +656,9 @@ function prospectiveMarkerBytes(expected: SparsePcmExpectation, generation: stri
     canonicalBytes: expected.canonicalBytes,
   } as SparsePcmIndex;
   const base = canonicalJsonBytes(makeMarker(expected, empty, payload, generation)).byteLength;
-  return base + intervalBytes;
+  // The empty index contributes `[]`; replace those two bytes with the
+  // bounded interval list and its commas.
+  return base - 2 + intervalBytes;
 }
 function verifyMarker(backend: BackendShape, marker: Marker, expected: SparsePcmExpectation, signal: AbortSignal): Effect.Effect<SparsePcmDescriptor, SparseFailure> {
   return Effect.fn("SparseProgram.verifyMarker")(function*() {

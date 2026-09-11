@@ -208,3 +208,19 @@ these must satisfy the already-frozen Effect Clock and partial-create contracts.
 Quota accounting must not infer estimate semantics from ownsOpfsWriteDeadlines:
 that flag concerns writer termination, not whether a backend reports persisted
 usage. This checkpoint makes no claim that those remaining requirements pass.
+
+## Attempt 2 third correction checkpoint — 20 focused tests
+
+Luna replaced the raw-timer source controller with an Effect-owned pull stream,
+registered file ownership before create, and added delayed create/write/close,
+partial-create, cleanup-failure, TestClock, physical-usage quota, option preflight
+and cold payload-size regressions. Typecheck and the 20 focused cases pass;
+root independently reran the 20 compiled cases. The full package check passed
+227 cases before the final size guard and must run again on the completed slice.
+
+The unchanged existing packed OPFS harness reached Chromium checks but failed
+in WebKit at its direct FileSystemFileHandle prototype access. This is not a
+sparse browser PASS: the required sparse close/reopen and marker-failure case
+has not yet been added. Diagnose that existing harness failure and add the small
+required case before the single final independent attempt2 verdict. No subsequent
+feature implementation or release is authorized from this intermediate checkpoint.
