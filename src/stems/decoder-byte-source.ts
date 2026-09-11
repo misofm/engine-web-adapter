@@ -39,12 +39,17 @@ export interface DecoderByteSourceOptions {
     readonly adopt: (release: () => void) => void;
     readonly release: () => void;
   };
-  readonly range: (phase: "probe" | "metadata" | "audio", start: number, end: number) => Effect.Effect<{
+  /** Legacy ranged delivery callback. Finite private sources omit it. */
+  readonly range?: (phase: "probe" | "metadata" | "audio", start: number, end: number) => Effect.Effect<{
     readonly bytes: Uint8Array;
     readonly totalBytes: number;
     readonly release: () => void;
   }, EngineWebAdapterError>;
 }
+
+/** Source-factory boundary for finite packed chunks; no ranged callback is required. */
+export type FiniteDecoderByteSourceOptions = Omit<DecoderByteSourceOptions, "range">;
+export type FiniteDecoderByteSourceFactory = (options: FiniteDecoderByteSourceOptions) => DecoderByteSource;
 
 function sourceFailure(operation: DecoderByteSourceError["operation"], cause: unknown): DecoderByteSourceError {
   if (cause instanceof DecoderByteSourceError) return cause;
@@ -66,7 +71,9 @@ export function makeDecoderByteSource(options: DecoderByteSourceOptions): Decode
   let expectedFrames = 0;
   let totalPcmBytes = 0;
   const range = (phase: "probe" | "metadata" | "audio", start: number, end: number, operation: DecoderByteSourceError["operation"]) =>
-    options.range(phase, start, end).pipe(Effect.mapError(cause => sourceFailure(operation, cause)));
+    (options.range === undefined
+      ? Effect.fail(new DecoderByteSourceError({ operation, message: "FLAC decoder source has no ranged delivery" }))
+      : options.range(phase, start, end).pipe(Effect.mapError(cause => sourceFailure(operation, cause))));
   const release = (borrowed: { readonly release: () => void }) => {
     if (options.borrow === undefined) borrowed.release();
     else options.borrow.release();

@@ -518,11 +518,14 @@ test("private chunk output borrows the shared queue and returns credit only on r
     createWorker: () => worker, hardwareConcurrency: 2,
     wholeSourceIdentity: IDENTITY,
     chunk: { expected, pcmSha256: createHash("sha256").update(pcm).digest("hex") },
-    sourceFactory: () => syntheticSource({
+    sourceFactory: options => {
+      assert.equal("range" in options, false);
+      return syntheticSource({
       prepare: Effect.succeed({ streamInfo: syntheticStreamInfo(), expectedFrames: 2, totalPcmBytes: 4 }),
       read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
       finish: Effect.sync(() => {}),
-    }),
+      });
+    },
   });
   const { output } = await resolver.resolve();
   const reader = output.getReader();
@@ -591,6 +594,109 @@ test("private output capacity includes the checked-out block until its release",
   assert.equal(worker.terminated, true);
   first.value?.release();
   assert.equal(worker.posted.filter(message => message.type === "output-credit").length, 0);
+});
+
+test("private output blocks a repeated pull and cancellation suppresses a late release credit", async () => {
+  const expected = {
+    sampleRateHz: 44_100, channels: 1 as const, bitDepth: 16 as const,
+    frames: 2, canonicalBytes: 4,
+  };
+  const worker = new ScriptedWorker((physical, requestId) => {
+    physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+    queueMicrotask(() => physical.emit({ type: "pcm", requestId, bytes: new Uint8Array([1, 2]).buffer, frames: 1, totalPcmBytes: 4 }));
+  });
+  const resolver = createFlacStemChunkResolver({
+    createWorker: () => worker, hardwareConcurrency: 2,
+    wholeSourceIdentity: IDENTITY,
+    chunk: { expected, pcmSha256: "0".repeat(64) },
+    sourceFactory: () => syntheticSource({
+      prepare: Effect.succeed({ streamInfo: syntheticStreamInfo(), expectedFrames: 2, totalPcmBytes: 4 }),
+      read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
+      finish: Effect.sync(() => {}),
+    }),
+  });
+  const reader = (await resolver.resolve()).output.getReader();
+  const first = await reader.read();
+  const requestId = worker.posted.find((message): message is Extract<FlacWorkerRequest, { type: "start" }> => message.type === "start")!.requestId;
+  worker.emit({ type: "pcm", requestId, bytes: new Uint8Array([3, 4]).buffer, frames: 1, totalPcmBytes: 4 });
+  const repeated = reader.read();
+  let settled = false;
+  void repeated.then(() => { settled = true; }, () => { settled = true; });
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
+  assert.equal(settled, false);
+  await reader.cancel("cancel while first output is borrowed");
+  first.value!.release();
+  assert.equal(worker.posted.filter(message => message.type === "output-credit").length, 0);
+});
+
+test("private completion checks host PCM hash and strict final counts", async () => {
+  for (const problem of ["hash", "count"] as const) {
+    const expected = {
+      sampleRateHz: 44_100, channels: 1 as const, bitDepth: 16 as const,
+      frames: 2, canonicalBytes: 4,
+    };
+    const pcm = new Uint8Array([9, 8, 7, 6]);
+    const worker = new ScriptedWorker((physical, requestId) => {
+      physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+      queueMicrotask(() => physical.emit({ type: "pcm", requestId, bytes: pcm.slice().buffer, frames: 2, totalPcmBytes: 4 }));
+    });
+    const resolver = createFlacStemChunkResolver({
+      createWorker: () => worker, hardwareConcurrency: 2,
+      wholeSourceIdentity: IDENTITY,
+      chunk: { expected, pcmSha256: problem === "hash" ? "0".repeat(64) : createHash("sha256").update(pcm).digest("hex") },
+      sourceFactory: () => syntheticSource({
+        prepare: Effect.succeed({ streamInfo: syntheticStreamInfo(), expectedFrames: 2, totalPcmBytes: 4 }),
+        read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
+        finish: Effect.sync(() => {}),
+      }),
+    });
+    const reader = (await resolver.resolve()).output.getReader();
+    const first = await reader.read();
+    first.value!.release();
+    const requestId = worker.posted.find((message): message is Extract<FlacWorkerRequest, { type: "start" }> => message.type === "start")!.requestId;
+    worker.emit({ type: "complete", requestId, pcmBytes: 4, frames: problem === "count" ? 1 : 2 });
+    await assert.rejects(reader.read(), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+    assert.equal(worker.terminated, true);
+  }
+});
+
+test("private output waits for delayed encoded finish before ending", async () => {
+  const finishGate = deferred<void>();
+  let finishStarted = false;
+  const expected = {
+    sampleRateHz: 44_100, channels: 1 as const, bitDepth: 16 as const,
+    frames: 2, canonicalBytes: 4,
+  };
+  const pcm = new Uint8Array([9, 8, 7, 6]);
+  const worker = new ScriptedWorker((physical, requestId) => {
+    physical.emit({ type: "input-credit", requestId, maximumBytes: 1, phase: "audio", phaseBytesRemaining: 0 });
+    queueMicrotask(() => physical.emit({ type: "pcm", requestId, bytes: pcm.slice().buffer, frames: 2, totalPcmBytes: 4 }));
+  });
+  const resolver = createFlacStemChunkResolver({
+    createWorker: () => worker, hardwareConcurrency: 2,
+    wholeSourceIdentity: IDENTITY,
+    chunk: { expected, pcmSha256: createHash("sha256").update(pcm).digest("hex") },
+    sourceFactory: () => syntheticSource({
+      prepare: Effect.succeed({ streamInfo: syntheticStreamInfo(), expectedFrames: 2, totalPcmBytes: 4 }),
+      read: () => Effect.succeed({ bytes: new Uint8Array([1]), end: true, release() {} }),
+      finish: Effect.promise(() => { finishStarted = true; return finishGate.promise; }),
+    }),
+  });
+  const reader = (await resolver.resolve()).output.getReader();
+  const first = await reader.read();
+  const requestId = worker.posted.find((message): message is Extract<FlacWorkerRequest, { type: "start" }> => message.type === "start")!.requestId;
+  worker.emit({ type: "complete", requestId, pcmBytes: 4, frames: 2 });
+  const ending = reader.read();
+  for (let index = 0; index < 100 && !finishStarted; index += 1) await new Promise<void>(resolve => setTimeout(resolve, 0));
+  assert.equal(finishStarted, true);
+  let settled = false;
+  void ending.then(() => { settled = true; });
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
+  assert.equal(settled, false);
+  first.value!.release();
+  finishGate.resolve();
+  assert.equal((await ending).done, true);
+  assert.equal(worker.terminated, true);
 });
 
 test("input lane refuses invalid credits and bounded-command overflow before source access", async () => {
