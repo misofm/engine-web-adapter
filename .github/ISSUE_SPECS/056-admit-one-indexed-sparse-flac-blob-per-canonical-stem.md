@@ -1,6 +1,6 @@
 # Admit one indexed sparse FLAC blob per canonical stem
 
-Status: Astra medium scope-approved; matching GitHub issue is misofm/engine-web-adapter#56. Base: accepted adapter #54 at 001208f81a2b95fffa8f67ecebe06070d49fb8df. User explicitly approved one ordinary indexed Walrus blob PER STEM with a 16-byte header, variable canonical JSON manifest and payload-relative offsets. This supersedes unreleased recording-wide MISOSPC1 and the unimplemented native-quilt proposal. Luna xhigh implements; Astra medium adversarially reviews, maximum five coherent attempts. Engine #744 received attempt-2 PASS with upstream evidence bb316c8e and is closed; PR #745 is in CI. This is now the sole active implementation tranche.
+Status: implementation attempt 2 PASS (independent Astra medium); matching GitHub issue is misofm/engine-web-adapter#56. Base: accepted adapter #54 at 001208f81a2b95fffa8f67ecebe06070d49fb8df. User explicitly approved one ordinary indexed Walrus blob PER STEM with a 16-byte header, variable canonical JSON manifest and payload-relative offsets. This supersedes unreleased recording-wide MISOSPC1 and the unimplemented native-quilt proposal. Luna xhigh implements; Astra medium adversarially reviews, maximum five coherent attempts. Engine #744 is closed and merged through PR #745 with required qualification passed; no runtime ABI or SDK release was required.
 
 ## Smallest closable outcome
 
@@ -138,3 +138,28 @@ Focused command:
 Result: 17 tests passed, 0 failed. The build and test TypeScript compilers
 completed successfully. The broader adapter/package gates remain as recorded
 for attempt 1 and were not rerun for this bounded arithmetic-only revision.
+
+
+## Attempt 2 adversarial verdict — PASS (Astra medium, 2026-09-11)
+
+Reviewed clean pushed implementation `9474ed6a34175e78c8be2d3c9b42cb60b211a855`.
+The shared admission check now enforces header + exact canonical manifest +
+declared payload <=8 GiB with and without a known payload length. Exact
+payload equality remains required. The original 256 ×32 MiB reproduction
+rejects through streaming admission and index serialization; boundary tests
+accept max−1/exact-max and reject max+1 without allocating large payloads.
+
+Independent `npm run check` passed: 208 tests, formatting, TypeScript, source
+policy, decoder resource check and package check. A fresh packed consumer
+passed under Node22.23.2 and Bun1.4.2: normal package imports without browser
+globals, singular serialize/parse/stream admission, source binding, interval
+derivation/gap reads and original R1 rejection. Retained tarball SHA256 is
+`0853e885453ce5751191a3350e4f51852037d7bb91e6355546b35f7eca4fbcc8`.
+This is an unpublished 0.3.5 candidate, not registry availability.
+
+Reviewer used the independent non-implementing planning thread, not a fresh
+context; this limitation is unchanged and disclosed. No remaining blocking
+finding. PASS proves the format/index slice; sparse persistence, delivery
+installation, CLI preparation, publication and deployed offline playback
+remain successor work. Root retains review, standalone consumer, exact logs
+and candidate provenance outside the disposable worktree.
