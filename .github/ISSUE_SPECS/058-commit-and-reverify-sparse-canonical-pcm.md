@@ -122,3 +122,40 @@ failure/browser evidence. Independent Astra review will issue one verdict
 against the full brief before the next bounded correction. Full package and
 OPFS/browser gates have not run on this tranche. No registry release or app
 adoption is authorized from this unaccepted checkpoint.
+
+## Attempt 1 independent verdict — FAIL
+
+Astra medium independently reviewed pushed implementation59b7b47 using the
+existing non-implementing planning/review thread (not fresh context). The four
+focused tests passed independently. The reviewer demonstrated a late complete
+commit after store.close with a caller signal, an owned partial marker surviving
+write failure, cancellation stuck behind iterator.next, unsupported-rate work
+before rejection, absent quota estimates, and overwrite of a pre-existing
+generation when instanceId repeats. No full/browser gates were run around these
+known defects. Full review is retained outside the worktree by root.
+
+Attempt 2 is one bounded correction of this same persistence contract:
+
+- Compose actual Effect services/programs, scoped source coordination and resource
+  finalizers. Combine caller and runtime interruption into physical cancellation;
+  close must wait for teardown and forbid late commits. Preserve the single shared
+  historical lock registry and public error facade.
+- Settle writer creation/write/close and iterator ownership before deleting owned
+  files or releasing locks. Respect OPFS-owned deadlines, track marker ownership
+  from acquisition, use real cooperative hash yields, and report cleanup failures.
+  Random-backed generations must also refuse existing-name collisions; never
+  overwrite or remove an ambiguous pre-existing orphan.
+- Admit supported shape/products/options and known indexes before resolver/writer
+  work. Apply strict new Schemas after hard preflight; enforce incremental interval
+  and complete marker budgets before writes. Add known/rolling active-space quota
+  admission and exact final-marker admission. Remove the unjustified metadata-
+  derived8GiB active-PCM cap; the compressed transport cap is a separate boundary.
+- Add discriminating regressions for those findings, service-layer/TestClock and
+  writer-stage failures, dense isolation, and the required small existing real
+  OPFS close/reopen/marker-failure case before one final attempt-2 verdict.
+
+Intermediate compiling/focused-green correction tranches must pause for exact-path
+root checkpoints. Such checkpoints do not substitute for the final complete
+contract review or create additional attempts. Pump, session lifecycle and
+acquisition implementation remain paused until this issue passes. Maximum five
+coherent attempts remains unchanged; one has received FAIL.
