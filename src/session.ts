@@ -1,6 +1,6 @@
 import { bindIngestDiagnostics, inheritFlacRegistration } from "./stems/ingest-diagnostics.js";
 import { ABI_LAYOUT } from "@misofm/engine";
-import { Cause, Effect, Exit, Scope } from "effect";
+import { Cause, Effect, Exit, Scope, Schema } from "effect";
 import type { BrowserBootPolicy } from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
 import { createEngine, createDefaultHost, scratchBootOptions, MSB1_CONTROL, Msb1RingObserver } from "@misofm/engine/browser";
@@ -45,6 +45,22 @@ import type {
 import type { SparsePcmSessionLease, SparsePcmSessionOptions, SparsePcmSessionSource } from "./stems/sparse-store.js";
 
 const PREFILL_TIMEOUT_MS = 2_000;
+
+class SparseSessionAcquisitionError extends Schema.TaggedError<SparseSessionAcquisitionError>()("SparseSessionAcquisitionError", {
+  message: Schema.String,
+  cause: Schema.optionalKey(Schema.Unknown),
+}) {}
+class SparseSessionCancellationError extends Schema.TaggedError<SparseSessionCancellationError>()("SparseSessionCancellationError", {
+  message: Schema.String,
+  cause: Schema.optionalKey(Schema.Unknown),
+}) {}
+
+function sparseSessionAcquisitionError(message: string, cause: unknown): SparseSessionAcquisitionError {
+  return cause === undefined ? new SparseSessionAcquisitionError({ message }) : new SparseSessionAcquisitionError({ message, cause });
+}
+function sparseSessionCancellationError(cause: unknown): SparseSessionCancellationError {
+  return cause === undefined ? new SparseSessionCancellationError({ message: "Sparse session opening was cancelled" }) : new SparseSessionCancellationError({ message: "Sparse session opening was cancelled", cause });
+}
 
 export async function openEngineWebSession(options: EngineWebSessionOptions): Promise<EngineWebSession> {
   const { flac, resolver, store, createPump, ingestDiagnostics, assets, onProgress } = options;
@@ -470,10 +486,10 @@ const acquireSparseSources = Effect.fn("Session.acquireSparseSources")(function*
     // escaping before its finalizer can be registered below.
     const lease = yield* Effect.uninterruptible(Effect.tryPromise({
       try: () => store.openSession(sessionOptions),
-      catch: (cause) => cause,
+      catch: (cause) => sparseSessionAcquisitionError("Sparse session acquisition failed", cause),
     }));
     yield* Scope.addFinalizer(acquisitionScope, Effect.promise(() => lease.close()));
-    if (input.signal.aborted) return yield* Effect.fail(input.signal.reason ?? new DOMException("Sparse session opening was cancelled", "AbortError"));
+    if (input.signal.aborted) return yield* Effect.fail(sparseSessionCancellationError(input.signal.reason));
     return { scope: acquisitionScope, lease };
   })));
   if (Exit.isFailure(acquired)) {
@@ -526,7 +542,7 @@ function mapSparseSessionCause(cause: Cause.Cause<unknown>): unknown {
     );
   }
   const values = reasons.map((reason) => {
-    if (Cause.isFailReason(reason)) return reason.error;
+    if (Cause.isFailReason(reason)) return unwrapSparseSessionCause(reason.error);
     if (Cause.isDieReason(reason)) return reason.defect;
     const interrupted = new Error("Sparse session operation was interrupted", { cause: reason });
     interrupted.name = "AbortError";
@@ -541,6 +557,12 @@ function mapSparseSessionCause(cause: Cause.Cause<unknown>): unknown {
     ? values[0]
     : new AggregateError(values, "Sparse session operation failed");
   return new EngineWebAdapterError("session.open", "Sparse session operation failed", {}, preserved);
+}
+
+function unwrapSparseSessionCause(value: unknown): unknown {
+  return value instanceof SparseSessionAcquisitionError || value instanceof SparseSessionCancellationError
+    ? value.cause
+    : value;
 }
 
 function sparseSessionSources(
