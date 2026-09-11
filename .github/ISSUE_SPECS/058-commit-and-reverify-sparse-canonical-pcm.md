@@ -103,3 +103,22 @@ validators/error facade and the single shared historical lock registry. New
 operations, resource scopes, boundary schemas and lifecycle state follow the
 skill. This is attempt 1 against the amended contract; no failed attempt is
 being relabeled. The existing substantive integrity and teardown gates remain.
+
+
+## Attempt 1 compiling checkpoint — not accepted
+
+Luna xhigh supplied the first storage implementation with shared canonical JSON
+and historical lock helpers. `npm run typecheck -- --pretty false`, build,
+test TypeScript compilation, four focused sparse-store tests and
+`git diff --check` passed. Focused cases cover silent/active install, warm
+no-resolve, gaps/tamper, malformed span/index disagreement, and same-backend
+coalescing. Root checkpoints this exact tranche before further edits.
+
+This is not completion evidence. Luna disclosed that main storage loops remain
+async functions inside broad Effect.tryPromise wrappers, contrary to the
+amended Effect-first contract. Root inspection also finds no active-space
+estimate admission, unqualified outer writer deadline races, and insufficient
+failure/browser evidence. Independent Astra review will issue one verdict
+against the full brief before the next bounded correction. Full package and
+OPFS/browser gates have not run on this tranche. No registry release or app
+adoption is authorized from this unaccepted checkpoint.

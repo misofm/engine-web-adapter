@@ -6,6 +6,7 @@ import { flacResult } from "./flac-result.js";
 import type { BoundedStemAdmission } from "./flac-admission.js";
 import { ownsOpfsWriteDeadlines, OpfsStorageBackend } from "./storage.js";
 import type { StemStorageBackend, StemStorageWriter } from "./storage.js";
+import { sharedFor, withNamedLock, type SharedLockState, type WebLockProvider } from "./lock.js";
 import type {
   StemIdentity,
   StemProgress,
@@ -23,29 +24,7 @@ const INDEX_VERSION = 1;
 
 interface IndexRow { bytes: number; pins: string[]; lastUsedAt: number }
 interface StoreIndex { version: 1; stems: Record<string, IndexRow> }
-interface SharedState { locks: Map<string, Promise<void>> }
-const SHARED = new WeakMap<object, SharedState>();
-
-function sharedFor(backend: StemStorageBackend): SharedState {
-  let shared = SHARED.get(backend as object);
-  if (shared === undefined) {
-    shared = { locks: new Map() };
-    SHARED.set(backend as object, shared);
-  }
-  return shared;
-}
-
-export interface WebLockProvider {
-  request<T>(
-    name: string,
-    options: { readonly mode: "exclusive"; readonly signal?: AbortSignal },
-    callback: () => Promise<T>,
-  ): Promise<T>;
-  query?(): Promise<{
-    readonly held?: readonly { readonly name?: string }[];
-    readonly pending?: readonly { readonly name?: string }[];
-  }>;
-}
+export type { WebLockProvider } from "./lock.js";
 
 export interface VerifiedStemStoreOptions {
   readonly backend?: StemStorageBackend;
@@ -65,7 +44,7 @@ export class VerifiedStemStore implements StemStore {
   readonly #now: () => number;
   readonly #instanceId: string;
   readonly #readDeadlineMs: number;
-  readonly #shared: SharedState;
+  readonly #shared: SharedLockState;
   readonly #folderName: string;
   #opened: Promise<void> | undefined;
 
@@ -554,8 +533,8 @@ export class VerifiedStemStore implements StemStore {
     // Fixed order: prior adapter global resource, then historical app folder resource.
     // Stem work may enter index work; index work never acquires a stem lock.
     const historical = name === "index" ? "index" : `ingest:${name.slice("stem:".length)}`;
-    return this.#withNamedLock(`miso:engine-web:v1:${name}`, signal, () =>
-      this.#withNamedLock(`miso:stem-store:v1:${this.#folderName}:${historical}`, signal, work));
+    return withNamedLock(this.#locks, this.#shared, `miso:engine-web:v1:${name}`, signal, () =>
+      withNamedLock(this.#locks, this.#shared, `miso:stem-store:v1:${this.#folderName}:${historical}`, signal, work));
   }
 
   #hasLiveStem(names: ReadonlySet<string>, file: string): boolean {
@@ -570,7 +549,7 @@ export class VerifiedStemStore implements StemStore {
     let release!: () => void;
     const ready = new Promise<void>((resolve, reject) => { acquired = resolve; failed = reject; });
     const hold = new Promise<void>((resolve) => { release = resolve; });
-    const request = this.#withNamedLock(`miso:stem-store:v1:${this.#folderName}:pin:${pin}`, signal, async () => {
+    const request = withNamedLock(this.#locks, this.#shared, `miso:stem-store:v1:${this.#folderName}:pin:${pin}`, signal, async () => {
       acquired();
       await hold;
     });
@@ -579,21 +558,6 @@ export class VerifiedStemStore implements StemStore {
     return async () => { release(); await request; };
   }
 
-  async #withNamedLock<T>(name: string, signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
-    signal?.throwIfAborted();
-    if (this.#locks !== undefined) return this.#locks.request(
-      name, { mode: "exclusive", ...(signal === undefined ? {} : { signal }) },
-      async () => { signal?.throwIfAborted(); return work(); },
-    );
-    const prior = this.#shared.locks.get(name) ?? Promise.resolve();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const tail = prior.then(() => gate);
-    this.#shared.locks.set(name, tail);
-    await prior;
-    try { signal?.throwIfAborted(); return await work(); }
-    finally { release(); if (this.#shared.locks.get(name) === tail) this.#shared.locks.delete(name); }
-  }
 }
 
 export class OpfsStemStore extends VerifiedStemStore {
