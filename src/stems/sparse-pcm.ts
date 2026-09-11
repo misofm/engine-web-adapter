@@ -1,9 +1,6 @@
 import { EngineWebAdapterError } from "../errors.js";
-import {
-  preflightSparseStemSource,
-  validateSparseStemSource,
-  type SparseStemSource,
-} from "./sparse-format.js";
+import { validateSparseStemManifest, type SparseStemManifest } from "./sparse-format.js";
+import type { StemIdentity } from "./types.js";
 
 export const SPARSE_PCM_FORMAT = "miso_sparse_pcm_v1" as const;
 export const SPARSE_PCM_MAX_WINDOW_FRAMES = 8192;
@@ -18,7 +15,7 @@ export interface SparsePcmInterval {
 
 export interface SparsePcmIndex {
   readonly format: typeof SPARSE_PCM_FORMAT;
-  readonly identity: SparseStemSource["identity"];
+  readonly identity: StemIdentity;
   readonly sampleRateHz: number;
   readonly channels: 1 | 2;
   readonly bitDepth: 16 | 24;
@@ -36,7 +33,7 @@ export interface SparsePcmDerivation {
 
 export interface SparsePcmIndexDraft {
   readonly format: typeof SPARSE_PCM_FORMAT;
-  readonly identity: SparseStemSource["identity"];
+  readonly identity: StemIdentity;
   readonly sampleRateHz: number;
   readonly channels: 1 | 2;
   readonly bitDepth: 16 | 24;
@@ -57,7 +54,7 @@ function integer(value: unknown, path: string, minimum: number): number {
   return value;
 }
 
-function bytesPerFrame(source: Pick<SparseStemSource, "channels" | "bitDepth">): number {
+function bytesPerFrame(source: Pick<SparseStemManifest, "channels" | "bitDepth">): number {
   return source.channels * (source.bitDepth / 8);
 }
 
@@ -77,39 +74,30 @@ function packedSize(value: PackedSize): number {
   throw corrupt("Packed PCM input must be a Blob or byte buffer");
 }
 
-function sourceManifest(source: SparseStemSource): SparseStemSource {
-  const baseOffset = preflightSparseStemSource(source);
-  const rebased: SparseStemSource = baseOffset === 0
-    ? source
-    : {
-        ...source,
-        units: source.units.map((unit) => ({ ...unit, offset: unit.offset - baseOffset })),
-      };
-  return validateSparseStemSource(rebased);
-}
-
-/** Derive packed PCM offsets from frame shape; compressed unit offsets are ignored. */
-export function deriveSparsePcmIndex(source: SparseStemSource, packed: PackedSize = 0): SparsePcmDerivation {
-  const valid = sourceManifest(source);
+/** Derive packed PCM offsets from timeline intervals; FLAC chunks are ignored. */
+export function deriveSparsePcmIndex(source: SparseStemManifest, packed: PackedSize = 0): SparsePcmDerivation {
+  const valid = validateSparseStemManifest(source);
   const frameBytes = bytesPerFrame(valid);
   const canonicalBytes = valid.frames * frameBytes;
   if (!Number.isSafeInteger(canonicalBytes)) throw corrupt("Canonical PCM byte count is unsafe", { frames: valid.frames });
   const intervals: SparsePcmInterval[] = [];
   let activeBytes = 0;
-  for (const unit of valid.units) {
-    const byteCount = unit.frames * frameBytes;
+  for (const interval of valid.intervals) {
+    const byteCount = interval.frames * frameBytes;
     if (!Number.isSafeInteger(byteCount) || !Number.isSafeInteger(activeBytes + byteCount)) {
-      throw corrupt("Packed PCM byte arithmetic is unsafe", { unit: unit.startFrame });
+      throw corrupt("Packed PCM byte arithmetic is unsafe", { interval: interval.startFrame });
     }
     const previous = intervals[intervals.length - 1];
-    if (previous !== undefined && previous.startFrame + previous.frames === unit.startFrame) {
+    const byteOffset = interval.packedFrameOffset * frameBytes;
+    if (!Number.isSafeInteger(byteOffset)) throw corrupt("Packed PCM offset arithmetic is unsafe");
+    if (previous !== undefined && previous.startFrame + previous.frames === interval.startFrame) {
       intervals[intervals.length - 1] = Object.freeze({
         startFrame: previous.startFrame,
-        frames: previous.frames + unit.frames,
+        frames: previous.frames + interval.frames,
         byteOffset: previous.byteOffset,
       });
     } else {
-      intervals.push(Object.freeze({ startFrame: unit.startFrame, frames: unit.frames, byteOffset: activeBytes }));
+      intervals.push(Object.freeze({ startFrame: interval.startFrame, frames: interval.frames, byteOffset }));
     }
     activeBytes += byteCount;
   }
@@ -150,20 +138,22 @@ export function validateSparsePcmIndex(value: unknown, packed?: PackedSize): Spa
   if (!isRecord(value)) throw corrupt("Packed PCM index must be an object");
   exactKeys(value, PCM_INDEX_KEYS, ["bitDepth", "channels", "format", "frames", "identity", "intervals", "sampleRateHz"], "index");
   if (value.format !== SPARSE_PCM_FORMAT) throw corrupt("Packed PCM index format tag is unsupported");
-  const identity = value.identity as SparseStemSource["identity"];
+  const identity = value.identity as StemIdentity;
   const sampleRateHz = value.sampleRateHz as number;
   const channels = value.channels as 1 | 2;
   const bitDepth = value.bitDepth as 16 | 24;
   const frames = value.frames as number;
-  const source: SparseStemSource = {
+  const source: SparseStemManifest = {
+    format: "miso_sparse_stem_v1",
     identity,
     sampleRateHz,
     channels,
     bitDepth,
     frames,
-    units: [],
+    intervals: [],
+    chunks: [],
   };
-  sourceManifest(source);
+  validateSparseStemManifest(source);
   const frameBytes = bytesPerFrame(source);
   const canonicalBytes = frames * frameBytes;
   if (!Number.isSafeInteger(canonicalBytes)) throw corrupt("Packed PCM canonical byte count is unsafe");

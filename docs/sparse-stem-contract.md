@@ -1,21 +1,48 @@
-# Sparse stem delivery contract
+# Indexed sparse stem delivery contract
 
-Issue #54 admits a bounded `MISOSPC1` object: a 16-byte header, a canonical
-UTF-8 JSON index tagged `miso_sparse_stems_v1`, then concatenated native FLAC
-units. The index is validated at fixed depth before canonical serialization;
-source identities are sorted, unit offsets cover the payload exactly, and an
-empty unit list means an all-silent source. Parsing reads only the header and
-index. It does not verify FLAC or decoded PCM digests.
+Issue #56 replaces the unreleased recording-wide MISOSPC1 package with one
+ordinary blob per canonical stem. The object is exactly:
 
-The derived `miso_sparse_pcm_v1` index is independent metadata. Its interval
-offsets are packed canonical PCM offsets computed from channel and bit depth,
-never copied from compressed units. `readSparsePcmWindow` returns one
-zero-filled logical window of at most 8192 frames. It binary-searches the first
-active interval, performs one contiguous packed Blob read for all intersections,
-and performs no read for an all-gap window. A short read is an error. Callers
-own generation checks, cancellation and physical-read admission; this helper
-does not create a pump or background concurrency state machine. A PCM index is
-admitted once by the module's private identity proof, with at most 65536
-intervals and 8 MiB of fixed-depth metadata; repeated reads perform only O(1)
-size/request checks plus interval binary search. A structured-cloned index must
-be admitted again in its receiving worker.
+MISOSTM1 header (16 bytes) || canonical manifest || packed FLAC payload.
+
+The header stores a little-endian manifest length in bytes 8..11; bytes 12..15
+are zero. The manifest is bounded to 8 MiB, the object to 8 GiB, and the
+payload begins immediately after the manifest. Old MISOSPC1 and unknown
+magics are rejected. The parser reads exactly the header and manifest slices;
+the payload remains a Blob view and no FLAC bytes are authenticated here.
+
+The manifest has one source shape and the fixed format tag
+miso_sparse_stem_v1. Its recursively lexicographic canonical JSON contains
+the identity, rate, channels, bit depth, total frames, timeline intervals and
+packed FLAC chunks. Intervals are sorted, non-overlapping and maximal. Their
+packedFrameOffset values cover active frames from zero. Chunks have
+independent FLAC and decoded PCM digests, contiguous payload offsets and
+packed-frame offsets. Chunk records may cross interval boundaries and are
+bounded to 30 seconds and 32 MiB. Empty intervals and chunks represent a
+valid all-silent stem with an empty payload. Admission proves metadata and
+extent arithmetic; it does not verify FLAC, STREAMINFO, decoded PCM, or the
+whole-source digest.
+
+admitSparseStemHeader admits only the exact 16-byte header and returns the
+bounded manifest length and payload start. admitSparseStemManifest admits
+exactly the manifest bytes and can check a known payload length. These pure
+seams let a later sequential GET consumer stream the header and manifest
+without a whole-blob read. parseSparseStemPackage provides the bounded local
+Blob qualification path, and serializeSparseStemPackage emits the same exact
+envelope.
+
+assertSparseStemSessionBinding compares one admitted manifest with one
+canonical session identity and native shape. The session remains authoritative;
+manifest metadata cannot override it. Source aliases are handled later by
+consumer normalization using identity and shape, while recording-level source
+readiness remains outside this format helper.
+
+deriveSparsePcmIndex uses only the interval timeline and packed frame offsets.
+It computes canonical PCM byte offsets from channels and bit depth; FLAC chunk
+boundaries and hashes never enter the PCM index. The existing
+miso_sparse_pcm_v1 admission and readSparsePcmWindow helper retain their
+private one-time brand, 65,536-interval and 8 MiB metadata bounds, binary
+search, one contiguous packed read per window, exact zero fill, and 8,192-frame
+window cap. Preparation must later verify each FLAC hash, exact STREAMINFO,
+decoded chunk length/hash, and the full canonical source hash before cache
+readiness.
