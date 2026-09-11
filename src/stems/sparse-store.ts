@@ -36,15 +36,33 @@ export interface SparsePcmResolved { readonly spans: AsyncIterable<SparsePcmSpan
 export interface SparsePcmDescriptor { readonly kind: "sparse-pcm"; readonly data: Blob; readonly index: SparsePcmIndex }
 export interface SparsePcmInstallOptions { readonly resolve: (signal: AbortSignal) => Promise<SparsePcmResolved>; readonly signal?: AbortSignal }
 export interface SparsePcmStoreOptions { readonly backend?: StemStorageBackend; readonly locks?: WebLockProvider; readonly instanceId?: string; readonly readDeadlineMs?: number }
+export interface SparsePcmSessionSource extends SparsePcmExpectation { readonly sourceId: string }
+export interface SparsePcmSessionOptions {
+  readonly leaseId: string;
+  readonly sources: readonly SparsePcmSessionSource[];
+  readonly maximumMetadataBytes?: number;
+  readonly resolve?: (expected: SparsePcmExpectation, signal: AbortSignal) => Promise<SparsePcmResolved>;
+  readonly signal?: AbortSignal;
+}
+export interface SparsePcmSessionLease {
+  readonly leaseId: string;
+  readonly sources: readonly SparsePcmSessionSource[];
+  read(identity: StemIdentity): Promise<SparsePcmDescriptor>;
+  close(): Promise<void>;
+}
+export type SparsePcmPresence =
+  | { readonly status: "missing" }
+  | { readonly status: "present"; readonly activeBytes: number };
 
 class SparseBoundaryError extends Schema.TaggedError<SparseBoundaryError>()("SparseBoundaryError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
 class SparseCorruptError extends Schema.TaggedError<SparseCorruptError>()("SparseCorruptError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
+class SparseNotFoundError extends Schema.TaggedError<SparseNotFoundError>()("SparseNotFoundError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
 class SparseCancelledError extends Schema.TaggedError<SparseCancelledError>()("SparseCancelledError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
 class SparseDeadlineError extends Schema.TaggedError<SparseDeadlineError>()("SparseDeadlineError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
 class SparseQuotaError extends Schema.TaggedError<SparseQuotaError>()("SparseQuotaError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
 class SparseConflictError extends Schema.TaggedError<SparseConflictError>()("SparseConflictError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
 class SparseIoError extends Schema.TaggedError<SparseIoError>()("SparseIoError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
-type SparseFailure = SparseBoundaryError | SparseCorruptError | SparseCancelledError | SparseDeadlineError | SparseQuotaError | SparseConflictError | SparseIoError;
+type SparseFailure = SparseBoundaryError | SparseCorruptError | SparseNotFoundError | SparseCancelledError | SparseDeadlineError | SparseQuotaError | SparseConflictError | SparseIoError;
 
 const ExpectedSchema = Schema.Struct({
   identity: Schema.String,
@@ -56,6 +74,22 @@ const ExpectedSchema = Schema.Struct({
 });
 const SpanSchema = Schema.Struct({ startFrame: Schema.Number, bytes: Schema.Uint8Array });
 const InstallOptionsSchema = Schema.Struct({ resolve: Schema.Unknown, signal: Schema.optionalKey(Schema.Unknown) });
+const SessionSourceSchema = Schema.Struct({
+  bitDepth: Schema.Literals([16, 24]),
+  canonicalBytes: Schema.Number,
+  channels: Schema.Literals([1, 2]),
+  frames: Schema.Number,
+  identity: Schema.String,
+  sampleRateHz: Schema.Number,
+  sourceId: Schema.String,
+});
+const SessionOptionsSchema = Schema.Struct({
+  leaseId: Schema.String,
+  sources: Schema.Array(SessionSourceSchema),
+  maximumMetadataBytes: Schema.optionalKey(Schema.Number),
+  resolve: Schema.optionalKey(Schema.Unknown),
+  signal: Schema.optionalKey(Schema.Unknown),
+});
 const MarkerSchema = Schema.Struct({
   activeBytes: Schema.Number,
   bitDepth: Schema.Literals([16, 24]),
@@ -282,6 +316,8 @@ interface OperationState { readonly ref: Ref.Ref<Lifecycle>; readonly signal: Ab
 class SparseProgram extends Context.Service<SparseProgram, {
   readonly openSource: (expected: unknown, callerSignal?: AbortSignal) => Effect.Effect<SparsePcmDescriptor | undefined, SparseFailure, ScopeRequirement>;
   readonly installSource: (expected: unknown, options: SparsePcmInstallOptions) => Effect.Effect<SparsePcmDescriptor, SparseFailure, ScopeRequirement>;
+  readonly openSession: (options: unknown) => Effect.Effect<SparsePcmSessionLease, SparseFailure, ScopeRequirement>;
+  readonly inspectSourcePresence: (expected: unknown, callerSignal?: AbortSignal) => Effect.Effect<SparsePcmPresence, SparseFailure, ScopeRequirement>;
 }>()("engine-web/SparseProgram") {
   static layer: Layer.Layer<SparseProgram, never, SparseBackend | SparseCoordination | SparseLifecycle> = Layer.effect(this, Effect.gen(function*() {
     const backend = yield* SparseBackend;
@@ -344,7 +380,50 @@ class SparseProgram extends Context.Service<SparseProgram, {
       operation.dispose();
       return descriptor;
     });
-    return SparseProgram.of({ openSource, installSource });
+    const inspectSourcePresence = Effect.fn("SparseProgram.inspectSourcePresence")(function*(input: unknown, callerSignal?: AbortSignal) {
+      const expected = yield* decodeExpected(input);
+      const operation = yield* makeOperation(lifecycle.signal, callerSignal);
+      const lease = yield* Effect.acquireRelease(coordination.acquire(expected.identity, operation.signal), (held) => Effect.promise(() => held.release()), { interruptible: true });
+      yield* backend.open;
+      const marker = markerName(expected.identity);
+      if (!(yield* backend.exists(marker))) {
+        yield* checkSignal(operation.signal);
+        operation.dispose();
+        return { status: "missing" } as const;
+      }
+      const record = yield* readMarker(backend, marker, operation.signal);
+      const admitted = yield* admitMarkerMetadata(backend, record, expected, operation.signal);
+      yield* checkSignal(operation.signal);
+      operation.dispose();
+      return { status: "present", activeBytes: admitted.marker.activeBytes } as const;
+    });
+    const openSession = Effect.fn("SparseProgram.openSession")(function*(input: unknown) {
+      const checked = yield* decodeSessionOptions(input);
+      const operation = yield* makeOperation(lifecycle.signal, checked.signal);
+      const descriptors = new Map<StemIdentity, SparsePcmDescriptor>();
+      let retainedMetadataBytes = checked.declarationMetadataBytes;
+      for (const unique of checked.unique) {
+        yield* checkSignal(operation.signal);
+        const descriptor = checked.resolve === undefined
+          ? yield* Effect.scoped(openSource(unique, operation.signal))
+          : yield* Effect.scoped(installSource(unique, {
+            resolve: (signal) => checked.resolve!(unique, signal),
+            signal: operation.signal,
+          }));
+        if (descriptor === undefined) return yield* new SparseNotFoundError({ message: `Sparse PCM source is not committed: ${unique.identity}` });
+        const charge = retainedDescriptorMetadataBytes(descriptor.index);
+        if (charge === undefined) return yield* new SparseBoundaryError({ message: "Sparse descriptor metadata charge is outside its safe bound" });
+        const next = safeAdd(retainedMetadataBytes, charge);
+        if (next === undefined || next > checked.maximumMetadataBytes) return yield* new SparseBoundaryError({ message: "Sparse session metadata budget is exhausted" });
+        retainedMetadataBytes = next;
+        descriptors.set(unique.identity, descriptor);
+      }
+      yield* checkSignal(operation.signal);
+      const lease = new SparsePcmSessionLeaseImpl(checked.leaseId, checked.sources, descriptors, lifecycle.signal, checked.signal);
+      operation.dispose();
+      return lease;
+    });
+    return SparseProgram.of({ openSource, installSource, openSession, inspectSourcePresence });
   }));
 }
 
@@ -381,6 +460,25 @@ export class VerifiedSparsePcmStore {
     return this.run(Effect.scoped(SparseProgram.use((program) => program.installSource(expected, options))));
   }
 
+  openSession(options: SparsePcmSessionOptions): Promise<SparsePcmSessionLease> {
+    this.assertOpen();
+    return this.run(Effect.scoped(SparseProgram.use((program) => program.openSession(options)))).then(async (lease) => {
+      if (!(lease instanceof SparsePcmSessionLeaseImpl)) return lease;
+      try {
+        lease.assertHandoff();
+        return lease;
+      } catch (error) {
+        await lease.close();
+        throw error;
+      }
+    });
+  }
+
+  inspectSourcePresence(expected: SparsePcmExpectation, options: { readonly signal?: AbortSignal } = {}): Promise<SparsePcmPresence> {
+    this.assertOpen();
+    return this.run(Effect.scoped(SparseProgram.use((program) => program.inspectSourcePresence(expected, options.signal))));
+  }
+
   async close(): Promise<void> {
     if (this.#closing !== undefined) return this.#closing;
     if (this.#closed) return;
@@ -408,6 +506,44 @@ export class VerifiedSparsePcmStore {
   private assertOpen(): void { if (this.#closed) throw new EngineWebAdapterError("session.closed", "Sparse PCM store is closed"); }
 }
 
+class SparsePcmSessionLeaseImpl implements SparsePcmSessionLease {
+  readonly leaseId: string;
+  readonly sources: readonly SparsePcmSessionSource[];
+  readonly #state: Ref.Ref<ReadonlyMap<StemIdentity, SparsePcmDescriptor> | undefined>;
+
+  readonly #storeSignal: AbortSignal;
+  readonly #callerSignal: AbortSignal | undefined;
+
+  constructor(leaseId: string, sources: readonly SparsePcmSessionSource[], descriptors: ReadonlyMap<StemIdentity, SparsePcmDescriptor>, storeSignal: AbortSignal, callerSignal: AbortSignal | undefined) {
+    this.leaseId = leaseId;
+    this.sources = sources;
+    this.#state = Ref.makeUnsafe<ReadonlyMap<StemIdentity, SparsePcmDescriptor> | undefined>(descriptors);
+    this.#storeSignal = storeSignal;
+    this.#callerSignal = callerSignal;
+    Object.freeze(this);
+  }
+
+  assertHandoff(): void {
+    if (this.#storeSignal.aborted || this.#callerSignal?.aborted) {
+      throw new EngineWebAdapterError("stem.cancelled", "Sparse PCM session open was cancelled", {}, this.#callerSignal?.reason ?? this.#storeSignal.reason);
+    }
+  }
+
+  async read(identity: StemIdentity): Promise<SparsePcmDescriptor> {
+    const map = Effect.runSync(Ref.get(this.#state));
+    if (map === undefined) throw new EngineWebAdapterError("session.closed", "Sparse PCM session lease is closed");
+    if (typeof identity !== "string") throw new EngineWebAdapterError("stem.invalid_declaration", "Sparse PCM identity is invalid");
+    assertStemIdentity(identity);
+    const descriptor = map.get(identity);
+    if (descriptor === undefined) throw new EngineWebAdapterError("stem.not_found", "Sparse PCM source is not part of this lease", { identity });
+    return descriptor;
+  }
+
+  async close(): Promise<void> {
+    Effect.runSync(Ref.modify(this.#state, () => [undefined, undefined] as const));
+  }
+}
+
 function decodeExpected(input: unknown): Effect.Effect<SparsePcmExpectation, SparseBoundaryError> {
   return Effect.gen(function*() {
     yield* preflightExpected(input);
@@ -433,6 +569,136 @@ function preflightExpected(input: unknown): Effect.Effect<void, SparseBoundaryEr
     const product = frames * channels * (bitDepth / 8);
     if (!Number.isSafeInteger(product) || product < 1) throw new Error("canonical PCM product is outside its bound");
   }, catch: (cause) => new SparseBoundaryError({ message: "Sparse expectation failed bounded preflight", cause }) });
+}
+
+const DEFAULT_SESSION_METADATA_BYTES = 64 * 1024 * 1024;
+const SESSION_SOURCE_DECLARATION_BYTES = 256;
+
+interface CheckedSparsePcmSession {
+  readonly leaseId: string;
+  readonly sources: readonly SparsePcmSessionSource[];
+  readonly unique: readonly SparsePcmExpectation[];
+  readonly maximumMetadataBytes: number;
+  readonly declarationMetadataBytes: number;
+  readonly resolve: SparsePcmSessionOptions["resolve"];
+  readonly signal: AbortSignal | undefined;
+}
+
+function decodeSessionOptions(input: unknown): Effect.Effect<CheckedSparsePcmSession, SparseBoundaryError> {
+  return Effect.gen(function*() {
+    const budget = yield* preflightSessionOptions(input);
+    const value = yield* Schema.decodeUnknownEffect(SessionOptionsSchema, { onExcessProperty: "error" })(input).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse PCM session options schema is invalid", cause })));
+    if (value.resolve !== undefined && typeof value.resolve !== "function") return yield* new SparseBoundaryError({ message: "Sparse PCM session resolver is invalid" });
+    if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) return yield* new SparseBoundaryError({ message: "Sparse PCM session signal is invalid" });
+    const declarations: SparsePcmSessionSource[] = [];
+    const unique: SparsePcmExpectation[] = [];
+    const identities = new Map<StemIdentity, SparsePcmExpectation>();
+    const sourceIds = new Set<string>();
+    for (const raw of value.sources) {
+      const expected = yield* decodeExpected({
+        identity: raw.identity,
+        sampleRateHz: raw.sampleRateHz,
+        channels: raw.channels,
+        bitDepth: raw.bitDepth,
+        frames: raw.frames,
+        canonicalBytes: raw.canonicalBytes,
+      });
+      if (sourceIds.has(raw.sourceId)) return yield* new SparseBoundaryError({ message: "Sparse PCM session source IDs must be unique" });
+      sourceIds.add(raw.sourceId);
+      const prior = identities.get(expected.identity);
+      if (prior !== undefined && !sameExpectationShape(prior, expected)) return yield* new SparseBoundaryError({ message: "Sparse PCM session aliases disagree about an identity" });
+      if (prior === undefined) {
+        identities.set(expected.identity, expected);
+        unique.push(expected);
+      }
+      declarations.push(Object.freeze({ ...expected, sourceId: raw.sourceId }));
+    }
+    return {
+      leaseId: value.leaseId,
+      sources: Object.freeze(declarations),
+      unique: Object.freeze(unique),
+      maximumMetadataBytes: budget.maximumMetadataBytes,
+      declarationMetadataBytes: budget.declarationMetadataBytes,
+      resolve: value.resolve as SparsePcmSessionOptions["resolve"],
+      signal: value.signal as AbortSignal | undefined,
+    };
+  });
+}
+
+interface SessionPreflight {
+  readonly maximumMetadataBytes: number;
+  readonly declarationMetadataBytes: number;
+}
+
+function preflightSessionOptions(input: unknown): Effect.Effect<SessionPreflight, SparseBoundaryError> {
+  return Effect.try({
+    try: () => {
+      if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0) throw new Error("session options must be a plain object");
+      const keys = Object.keys(input).sort();
+      const allowed = ["leaseId", "maximumMetadataBytes", "resolve", "signal", "sources"];
+      if (keys.some((key) => !allowed.includes(key)) || keys.length < 2 || keys.length > allowed.length) throw new Error("session options contain unknown keys");
+      const candidate = input as Record<string, unknown>;
+      const maximumMetadataBytes = candidate.maximumMetadataBytes === undefined ? DEFAULT_SESSION_METADATA_BYTES : candidate.maximumMetadataBytes;
+      if (typeof maximumMetadataBytes !== "number" || !Number.isSafeInteger(maximumMetadataBytes) || maximumMetadataBytes <= 0) throw new Error("maximumMetadataBytes must be a positive safe integer");
+      if (typeof candidate.leaseId !== "string" || candidate.leaseId.length === 0) throw new Error("leaseId must be a non-empty string");
+      const labelBytes = safeMultiply(2, candidate.leaseId.length);
+      if (labelBytes === undefined || labelBytes > maximumMetadataBytes) throw new Error("leaseId exceeds the metadata budget");
+      if (!Array.isArray(candidate.sources)) throw new Error("sources must be an array");
+      const sourceCount = candidate.sources.length;
+      if (!Number.isSafeInteger(sourceCount) || sourceCount > Math.floor(maximumMetadataBytes / SESSION_SOURCE_DECLARATION_BYTES)) throw new Error("source count exceeds the metadata budget");
+      let declarationMetadataBytes = labelBytes;
+      for (let index = 0; index < sourceCount; index += 1) {
+        const source = candidate.sources[index];
+        preflightSessionSource(source);
+        const sourceId = (source as Record<string, unknown>).sourceId as string;
+        const sourceIdBytes = safeMultiply(2, sourceId.length);
+        if (sourceIdBytes === undefined) throw new Error("sourceId length is outside its bound");
+        const next = safeAdd(declarationMetadataBytes, SESSION_SOURCE_DECLARATION_BYTES + sourceIdBytes);
+        if (next === undefined || next > maximumMetadataBytes) throw new Error("source declarations exceed the metadata budget");
+        declarationMetadataBytes = next;
+      }
+      const resolve = candidate.resolve;
+      if (resolve !== undefined && typeof resolve !== "function") throw new Error("session resolver must be a function");
+      if (candidate.signal !== undefined && !(candidate.signal instanceof AbortSignal)) throw new Error("session signal is invalid");
+      return { maximumMetadataBytes, declarationMetadataBytes };
+    },
+    catch: (cause) => new SparseBoundaryError({ message: "Sparse PCM session options failed bounded preflight", cause }),
+  });
+}
+
+function preflightSessionSource(input: unknown): void {
+  if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0) throw new Error("session source must be a plain object");
+  const keys = Object.keys(input).sort();
+  const expected = ["bitDepth", "canonicalBytes", "channels", "frames", "identity", "sampleRateHz", "sourceId"];
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) throw new Error("session source keys are not exact");
+  const candidate = input as Record<string, unknown>;
+  if (typeof candidate.sourceId !== "string" || candidate.sourceId.length === 0) throw new Error("sourceId must be non-empty");
+  if (typeof candidate.identity !== "string" || candidate.identity.length > 71) throw new Error("identity is outside its bound");
+  for (const key of ["sampleRateHz", "channels", "bitDepth", "frames", "canonicalBytes"]) {
+    if (typeof candidate[key] !== "number" || !Number.isSafeInteger(candidate[key])) throw new Error(`${key} is not a safe integer`);
+  }
+  const product = (candidate.frames as number) * (candidate.channels as number) * ((candidate.bitDepth as number) / 8);
+  if (!Number.isSafeInteger(product) || product < 1) throw new Error("canonical PCM product is outside its bound");
+}
+
+function sameExpectationShape(left: SparsePcmExpectation, right: SparsePcmExpectation): boolean {
+  return left.identity === right.identity && left.sampleRateHz === right.sampleRateHz && left.channels === right.channels && left.bitDepth === right.bitDepth && left.frames === right.frames && left.canonicalBytes === right.canonicalBytes;
+}
+
+function safeMultiply(left: number, right: number): number | undefined {
+  const product = left * right;
+  return Number.isSafeInteger(product) && product >= 0 ? product : undefined;
+}
+
+function safeAdd(left: number, right: number): number | undefined {
+  const sum = left + right;
+  return Number.isSafeInteger(sum) && sum >= 0 ? sum : undefined;
+}
+
+function retainedDescriptorMetadataBytes(index: SparsePcmIndex): number | undefined {
+  const variable = safeMultiply(128, index.intervals.length);
+  const charge = variable === undefined ? undefined : safeAdd(512, variable);
+  return charge;
 }
 
 function decodeInstallOptions(input: unknown): Effect.Effect<SparsePcmInstallOptions, SparseBoundaryError> {
@@ -775,12 +1041,26 @@ function prospectiveMarkerBytes(expected: SparsePcmExpectation, generation: stri
   // the base plus the encoded interval contents.
   return base + intervalBytes;
 }
-function verifyMarker(backend: BackendShape, marker: Marker, expected: SparsePcmExpectation, signal: AbortSignal): Effect.Effect<SparsePcmDescriptor, SparseFailure> {
-  return Effect.fn("SparseProgram.verifyMarker")(function*() {
+interface AdmittedSparseMetadata { readonly marker: Marker; readonly data: Blob }
+function admitMarkerMetadata(backend: BackendShape, marker: Marker, expected: SparsePcmExpectation, signal: AbortSignal): Effect.Effect<AdmittedSparseMetadata, SparseFailure> {
+  return Effect.fn("SparseProgram.admitMarkerMetadata")(function*() {
     if (marker.format !== MARKER_TAG || marker.identity !== expected.identity || marker.sampleRateHz !== expected.sampleRateHz || marker.channels !== expected.channels || marker.bitDepth !== expected.bitDepth || marker.frames !== expected.frames || marker.canonicalBytes !== expected.canonicalBytes || marker.activeBytes !== marker.index.activeBytes || marker.payloadName !== payloadName(expected.identity, marker.generation)) return yield* new SparseCorruptError({ message: "Sparse marker conflicts with the expectation" });
     compareIndexShape(marker.index, expected);
-    const data = yield* backend.read(marker.payloadName);
+    if (!(yield* backend.exists(marker.payloadName))) return yield* new SparseCorruptError({ message: "Sparse payload generation is missing" });
+    const data = yield* backend.read(marker.payloadName).pipe(
+      Effect.catchTag("SparseIoError", (error): Effect.Effect<never, SparseFailure> => isNotFound(error.cause)
+        ? Effect.fail(new SparseCorruptError({ message: "Sparse payload generation is missing", cause: error.cause }))
+        : Effect.fail(error)),
+    );
     if (data.size !== marker.activeBytes) return yield* new SparseCorruptError({ message: "Sparse payload length conflicts with its index" });
+    yield* checkSignal(signal);
+    return { marker, data };
+  })();
+}
+function verifyMarker(backend: BackendShape, marker: Marker, expected: SparsePcmExpectation, signal: AbortSignal): Effect.Effect<SparsePcmDescriptor, SparseFailure> {
+  return Effect.fn("SparseProgram.verifyMarker")(function*() {
+    const admitted = yield* admitMarkerMetadata(backend, marker, expected, signal);
+    const data = admitted.data;
     const hash = new IncrementalSha256();
     let payloadCursor = 0;
     let frameCursor = 0;
@@ -857,6 +1137,7 @@ function mapPublicError(error: unknown): unknown {
   if (error instanceof SparseDeadlineError) return new EngineWebAdapterError("stem.read_deadline", error.message, {}, error.cause);
   if (error instanceof SparseQuotaError) return new EngineWebAdapterError("stem.quota", error.message, {}, error.cause);
   if (error instanceof SparseBoundaryError) return new EngineWebAdapterError("stem.invalid_declaration", error.message, {}, error.cause);
+  if (error instanceof SparseNotFoundError) return new EngineWebAdapterError("stem.not_found", error.message, {}, error.cause);
   if (error instanceof SparseConflictError || error instanceof SparseCorruptError) return new EngineWebAdapterError("stem.corrupt", error.message, {}, error.cause);
   if (error instanceof SparseIoError) return new EngineWebAdapterError("stem.corrupt", error.message, {}, error.cause);
   return isAbort(error) ? new EngineWebAdapterError("stem.cancelled", "Sparse operation was cancelled", {}, error) : error;
@@ -869,4 +1150,7 @@ function nestedAdapterError(error: unknown): EngineWebAdapterError | undefined {
     current = (current as { readonly cause?: unknown }).cause;
   }
   return current instanceof EngineWebAdapterError ? current : undefined;
+}
+function isNotFound(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && (error as { readonly name?: unknown }).name === "NotFoundError";
 }

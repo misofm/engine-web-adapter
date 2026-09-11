@@ -811,4 +811,75 @@ describe("VerifiedSparsePcmStore", () => {
     };
     for (const phase of ["undefined", "getter", "capability"] as const) await runCase(phase);
   });
+
+  it("opens a complete detached descriptor map with identity deduplication", async () => {
+    const firstBytes = new Uint8Array([1, 2, 3, 4]);
+    const secondBytes = new Uint8Array([9, 8, 7, 6]);
+    const first = expectation(firstBytes, 2);
+    const second = expectation(secondBytes, 2);
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "session-map" });
+    const resolved: string[] = [];
+    const lease = await store.openSession({
+      leaseId: "map",
+      sources: [
+        { ...first, sourceId: "first" },
+        { ...first, sourceId: "first-alias" },
+        { ...second, sourceId: "second" },
+      ],
+      resolve: async (expected) => {
+        resolved.push(expected.identity);
+        const bytes = expected.identity === first.identity ? firstBytes : secondBytes;
+        return { spans: spans({ startFrame: 0, bytes }) };
+      },
+    });
+    assert.deepEqual(lease.sources.map((source) => source.sourceId), ["first", "first-alias", "second"]);
+    assert.equal(Object.isFrozen(lease.sources), true);
+    assert.equal(Object.isFrozen(lease.sources[0]), true);
+    assert.deepEqual(resolved, [first.identity, second.identity]);
+    assert.equal((await lease.read(first.identity)).data.size, firstBytes.byteLength);
+    await store.close();
+    assert.equal((await lease.read(second.identity)).data.size, secondBytes.byteLength);
+    await lease.close();
+    await assert.rejects(lease.read(first.identity), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed");
+  });
+
+  it("keeps presence metadata-only and distinguishes missing from warm silent content", async () => {
+    const bytes = new Uint8Array(8);
+    const expected = expectation(bytes, 4);
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "presence" });
+    assert.deepEqual(await store.inspectSourcePresence(expected), { status: "missing" });
+    await store.installSource(expected, { resolve: async () => ({ spans: spans() }) });
+    assert.deepEqual(await store.inspectSourcePresence(expected), { status: "present", activeBytes: 0 });
+    await store.close();
+  });
+
+  it("preflights session declarations and charges retained indexes after commit", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const expected = expectation(bytes, 1);
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "session-budget" });
+    const late = [] as unknown[];
+    Object.defineProperty(late, "0", { get: () => { throw new Error("late getter must not run"); }, enumerable: true });
+    Object.defineProperty(late, "length", { value: 2 });
+    await assert.rejects(store.openSession({ leaseId: "x", sources: late as never[], maximumMetadataBytes: 256 }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    await assert.rejects(store.openSession({
+      leaseId: "x",
+      sources: [{ ...expected, sourceId: "one" }],
+      maximumMetadataBytes: 2 + 256 + 2 * "one".length,
+      resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }),
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    assert.equal((await backend.list()).some((name) => name.startsWith("sparse-pcm-v1-commit-")), true);
+    await store.close();
+  });
+
+  it("refuses a cancelled final handoff without exposing an empty-session lease", async () => {
+    const controller = new AbortController();
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "handoff" });
+    const opening = store.openSession({ leaseId: "handoff", sources: [], signal: controller.signal });
+    queueMicrotask(() => controller.abort(new DOMException("handoff cancelled", "AbortError")));
+    await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    await store.close();
+  });
 });
