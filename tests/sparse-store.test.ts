@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { inspect } from "node:util";
 import { Effect, Exit, Fiber } from "effect";
 import { TestClock } from "effect/testing";
 
@@ -594,5 +595,52 @@ describe("VerifiedSparsePcmStore", () => {
     assert.ok(events.indexOf("write-settled") >= 0);
     const firstRemove = events.findIndex((event) => event.startsWith("remove:"));
     assert.ok(firstRemove > events.indexOf("write-settled"), events.join(","));
+  });
+
+  it("preserves async and sync iterator cleanup failures beside public primary errors", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    for (const phase of ["span", "write", "early"] as const) {
+      for (const cleanupMode of ["async", "sync"] as const) {
+        const sentinel = new Error(`RETURN_CLEANUP_${phase}_${cleanupMode}`);
+        let returns = 0;
+        class CleanupBackend extends MemoryStemStorageBackend {
+          override async createWriter(name: string, signal?: AbortSignal) {
+            const writer = await super.createWriter(name, signal);
+            if (phase !== "write" || !name.startsWith("sparse-pcm-v1-data-")) return writer;
+            return {
+              write: async () => { throw new Error("WRITE_PRIMARY_FAILURE"); },
+              close: () => writer.close(),
+              abort: (reason?: unknown) => writer.abort(reason),
+            };
+          }
+        }
+        const backend = new CleanupBackend();
+        const store = new VerifiedSparsePcmStore({ backend, instanceId: `cleanup-${phase}-${cleanupMode}` });
+        const source = {
+          [Symbol.asyncIterator]() {
+            return {
+              next: async () => ({ done: phase === "early", value: phase === "span" ? { startFrame: 0, bytes: new Uint8Array([1]) } : { startFrame: 0, bytes } }),
+              return: () => {
+                returns += 1;
+                if (cleanupMode === "sync") throw sentinel;
+                return Promise.reject(sentinel);
+              },
+              [Symbol.asyncIterator]() { return this; },
+            };
+          },
+        } as AsyncIterable<{ readonly startFrame: number; readonly bytes: Uint8Array }>;
+        const expected = expectation(bytes, 1);
+        const options = phase === "early"
+          ? { resolve: async () => ({ index: { format: "miso_sparse_pcm_v1", identity: expected.identity, sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 2, intervals: [], activeBytes: 0, canonicalBytes: 2 } as never, spans: source }) }
+          : { resolve: async () => ({ spans: source }) };
+        let error: unknown;
+        await store.installSource(expected, options).catch((value: unknown) => { error = value; });
+        assert.ok(error instanceof EngineWebAdapterError);
+        assert.match(inspect(error, { depth: 12 }), new RegExp(sentinel.message));
+        assert.equal(returns, 1, `${phase}/${cleanupMode}: iterator.return exactly once`);
+        assert.deepEqual(await backend.list(), []);
+        await store.close();
+      }
+    }
   });
 });

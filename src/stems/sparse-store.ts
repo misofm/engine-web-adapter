@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
+import { Cause, Context, Effect, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
 
 import { EngineWebAdapterError } from "../errors.js";
 import { assertStemIdentity } from "./identity.js";
@@ -301,19 +301,21 @@ class SparseProgram extends Context.Service<SparseProgram, {
         (lease) => Effect.promise(() => lease.close()),
         { interruptible: true },
       );
-      const asserted = yield* admitOptionalIndex(resolved.index, expected);
-      const generation = yield* uniqueGeneration(backend, expected.identity);
-      const dataName = payloadName(expected.identity, generation);
-      if (asserted !== undefined) {
-        const knownMarker = canonicalJsonBytes(makeMarker(expected, asserted, dataName, generation));
-        if (knownMarker.byteLength > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse known index marker exceeds its bound" });
-        yield* quotaCheck(backend, asserted.activeBytes + knownMarker.byteLength);
-      }
-      const committed = yield* ingestAndCommit(backend, expected, source, asserted, dataName, generation, operation);
-      const descriptor = Object.freeze({ kind: "sparse-pcm" as const, data: committed.data, index: committed.marker.index });
-      yield* Ref.set(operation.ref, { _tag: "committed" } as Lifecycle);
-      operation.dispose();
-      return descriptor;
+      return yield* withSourceLease(source, Effect.gen(function*() {
+        const asserted = yield* admitOptionalIndex(resolved.index, expected);
+        const generation = yield* uniqueGeneration(backend, expected.identity);
+        const dataName = payloadName(expected.identity, generation);
+        if (asserted !== undefined) {
+          const knownMarker = canonicalJsonBytes(makeMarker(expected, asserted, dataName, generation));
+          if (knownMarker.byteLength > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse known index marker exceeds its bound" });
+          yield* quotaCheck(backend, asserted.activeBytes + knownMarker.byteLength);
+        }
+        const committed = yield* ingestAndCommit(backend, expected, source, asserted, dataName, generation, operation);
+        const descriptor = Object.freeze({ kind: "sparse-pcm" as const, data: committed.data, index: committed.marker.index });
+        yield* Ref.set(operation.ref, { _tag: "committed" } as Lifecycle);
+        operation.dispose();
+        return descriptor;
+      }));
     });
     return SparseProgram.of({ openSource, installSource });
   }));
@@ -564,7 +566,7 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
       previousEnd = span.startFrame + spanFrames;
     });
     const stream = sourceStream(source, backend.readDeadlineMs);
-    yield* Stream.runForEach(stream, processSpan);
+    yield* withSourceLease(source, Stream.runForEach(stream, processSpan));
     yield* hashZeros(hash, (expected.frames - previousEnd) * frameBytes, operation.signal);
     const index = yield* Effect.try({ try: () => validateSparsePcmIndex({ format: SPARSE_PCM_FORMAT, identity: expected.identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth, frames: expected.frames, intervals, activeBytes, canonicalBytes: expected.canonicalBytes }, activeBytes), catch: (cause) => new SparseCorruptError({ message: "Derived sparse index is invalid", cause }) });
     if (asserted !== undefined) compareIndexes(asserted, index);
@@ -610,6 +612,7 @@ interface SourceLease {
   readonly markEof: () => void;
   readonly abortPending: () => Promise<void>;
   readonly close: () => Promise<void>;
+  readonly takeCleanupFailure: () => unknown | undefined;
 }
 
 function makeSourceLease(source: AsyncIterable<SparsePcmSpan>, controller: AbortController): SourceLease {
@@ -618,6 +621,9 @@ function makeSourceLease(source: AsyncIterable<SparsePcmSpan>, controller: Abort
   let closed = false;
   let pending: Promise<IteratorResult<SparsePcmSpan>> | undefined;
   let closing: Promise<void> | undefined;
+  let cleanupFailed = false;
+  let cleanupFailure: unknown;
+  let cleanupReported = false;
   const next = (): Promise<IteratorResult<SparsePcmSpan>> => {
     if (closed) return Promise.reject(new DOMException("Sparse resolver stream is closed", "AbortError"));
     let read: Promise<IteratorResult<SparsePcmSpan>>;
@@ -639,15 +645,28 @@ function makeSourceLease(source: AsyncIterable<SparsePcmSpan>, controller: Abort
     if (closing !== undefined) return closing;
     closed = true;
     closing = (async () => {
-      await abortPending();
-      if (!normalEof && iterator.return !== undefined) {
-        const returned = Promise.resolve(iterator.return());
-        await settlePhysical(returned);
+      try {
+        await abortPending();
+        if (!normalEof && iterator.return !== undefined) {
+          const returned = Promise.resolve(iterator.return());
+          // A return rejection/throw is part of the operation result. Unlike a
+          // pending pull, it has no other observer and must reach the facade.
+          await returned;
+        }
+      } catch (cause) {
+        cleanupFailed = true;
+        cleanupFailure = cause;
+        throw cause;
       }
     })();
     return closing;
   };
-  return { next, markEof: () => { normalEof = true; }, abortPending, close };
+  const takeCleanupFailure = (): unknown | undefined => {
+    if (!cleanupFailed || cleanupReported) return undefined;
+    cleanupReported = true;
+    return cleanupFailure;
+  };
+  return { next, markEof: () => { normalEof = true; }, abortPending, close, takeCleanupFailure };
 }
 
 function sourceStream(source: SourceLease, deadlineMs: number): Stream.Stream<SparsePcmSpan, SparseFailure> {
@@ -672,7 +691,40 @@ function sourceStream(source: SourceLease, deadlineMs: number): Stream.Stream<Sp
     }
     return [[result.value], Option.some(undefined)] as const;
   });
-  return Stream.paginate(undefined, () => pull()).pipe(Stream.ensuring(Effect.promise(() => source.close())));
+  return Stream.paginate(undefined, () => pull());
+}
+
+function withSourceLease<A>(source: SourceLease, effect: Effect.Effect<A, SparseFailure, ScopeRequirement>): Effect.Effect<A, SparseFailure, ScopeRequirement> {
+  const close = Effect.tryPromise({ try: () => source.close(), catch: (cause) => cause });
+  return Effect.matchCauseEffect(effect, {
+    onSuccess: (value) => Effect.gen(function*() {
+      const cleanup = yield* Effect.result(close);
+      if (cleanup._tag === "Failure") {
+        const failure = source.takeCleanupFailure();
+        if (failure !== undefined) return yield* new SparseIoError({ message: "Sparse source cleanup failed", cause: failure });
+      }
+      return value;
+    }),
+    onFailure: (cause) => Effect.gen(function*() {
+      const cleanup = yield* Effect.result(close);
+      if (cleanup._tag === "Failure") {
+        const failure = source.takeCleanupFailure();
+        if (failure !== undefined) {
+          const primary = cause.reasons.find(Cause.isFailReason)?.error;
+          if (primary !== undefined) return yield* Effect.fail(attachCleanupFailure(primary, failure));
+          return yield* Effect.failCause(Cause.combine(cause, Cause.die(failure)));
+        }
+      }
+      return yield* Effect.failCause(cause);
+    }),
+  });
+}
+
+function attachCleanupFailure(primary: SparseFailure, cleanup: unknown): SparseFailure {
+  const existing = primary.cause;
+  const aggregate = new AggregateError(existing === undefined ? [cleanup] : [existing, cleanup], "Sparse source cleanup failed");
+  Object.defineProperty(primary, "cause", { value: aggregate, configurable: true, enumerable: true, writable: true });
+  return primary;
 }
 
 /** Internal node-test seam; intentionally omitted from the `/stems` barrel. */
@@ -683,7 +735,7 @@ export function sparseSourceProgramForTest(source: AsyncIterable<SparsePcmSpan>,
       (value) => Effect.promise(() => value.close()),
       { interruptible: true },
     );
-    return yield* Stream.runCollect(sourceStream(lease, deadlineMs));
+    return yield* withSourceLease(lease, Stream.runCollect(sourceStream(lease, deadlineMs)));
   }));
 }
 

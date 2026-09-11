@@ -286,3 +286,15 @@ public-boundary test. Keep all accepted cancellation, normal EOF and store tests
 Checkpoint the coherent correction, rerun proportional package/browser gates on
 that source, then obtain one independent Astra medium attempt3 verdict. Two
 attempts have received FAIL; the maximum remains five.
+
+## Attempt 3 local checkpoint — independent review pending
+
+Luna stopped discarding return rejection and added local Cause-aware source
+cleanup handling that retains cleanup errors with primary sparse failures.
+The new public-API regression covers synchronous throws and asynchronous
+rejections after span admission, writer failure and early index admission;
+iterator.return runs once. The focused suite passes25 cases (root rerun retained),
+and Luna reports the full233-test package check passing. The independent reviewer
+must assess the completed error policy and final physical ordering before a
+verdict; this checkpoint is not acceptance. The existing macOS workflow will
+recheck the same packed storage fixture against this corrected source.
