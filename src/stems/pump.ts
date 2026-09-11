@@ -1,6 +1,9 @@
 import { EngineWebAdapterError } from "../errors.js";
 import type { StemIdentity, StemSessionLease } from "./types.js";
 import { Msb1RingWriter, msb1RingBytes } from "./ring.js";
+import { readSparsePcmWindow, validateSparsePcmIndex } from "./sparse-pcm.js";
+import type { SparsePcmIndex } from "./sparse-pcm.js";
+import type { SparsePcmDescriptor } from "./sparse-store.js";
 
 export interface PcmPumpSource {
   readonly sourceId: string;
@@ -11,15 +14,32 @@ export interface PcmPumpSource {
   readonly ring: SharedArrayBuffer;
 }
 
+export interface SparsePcmPumpSource extends PcmPumpSource {
+  readonly sampleRateHz: number;
+}
+
+export interface SparsePcmPumpOptions {
+  readonly assets: readonly SparsePcmDescriptor[];
+  readonly sources: readonly SparsePcmPumpSource[];
+  readonly windowFrames?: number;
+  readonly generation?: bigint;
+}
+
 interface PcmWindow { readonly bytes: Uint8Array; readonly start: number; }
 interface SourceState extends PcmPumpSource {
   readonly writer: Msb1RingWriter;
+  readonly sparse: SparseReadable | undefined;
   cursor: number;
   blob: Blob | undefined;
   window: PcmWindow | undefined;
   next: PcmWindow | undefined;
   reading: Promise<void> | undefined;
   finished: boolean;
+}
+
+interface SparseReadable {
+  readonly data: Blob;
+  readonly index: SparsePcmIndex;
 }
 
 export interface PcmPumpOutcome {
@@ -35,7 +55,7 @@ export const PCM_DRIVE_PASSES = 8;
 
 /** Bounded current/next windows and a shared four-read local I/O scheduler. */
 export class CanonicalPcmPump {
-  readonly #lease: Pick<StemSessionLease, "read">;
+  readonly #lease: Pick<StemSessionLease, "read"> | undefined;
   readonly #states: SourceState[];
   readonly #windowFrames: number;
   readonly #reads = new Set<Promise<void>>();
@@ -46,6 +66,7 @@ export class CanonicalPcmPump {
   #failure: unknown;
 
   readonly maximumWindowBytes: number;
+  readonly maximumReadScratchBytes: number;
   readonly ringBytes: number;
 
   constructor(options: {
@@ -53,28 +74,70 @@ export class CanonicalPcmPump {
     readonly sources: readonly PcmPumpSource[];
     readonly windowFrames?: number;
     readonly generation?: bigint;
+  });
+  constructor(options: SparsePcmPumpOptions);
+  constructor(options: {
+    readonly lease?: Pick<StemSessionLease, "read">;
+    readonly sources: readonly PcmPumpSource[];
+    readonly assets?: readonly SparsePcmDescriptor[];
+    readonly windowFrames?: number;
+    readonly generation?: bigint;
   }) {
-    if (typeof options.lease?.read !== "function") throw new TypeError("PCM pump needs a verified lease");
+    const sparseAssets = options.assets;
+    const sparse = sparseAssets !== undefined;
+    if (!sparse && options.lease === undefined) throw new TypeError("Dense PCM pump needs a verified lease");
+    if (!sparse && typeof options.lease?.read !== "function") throw new TypeError("PCM pump needs a verified lease");
     this.#lease = options.lease;
     this.#windowFrames = positive(options.windowFrames ?? PCM_WINDOW_FRAMES, "windowFrames");
+    if (sparse && this.#windowFrames > PCM_WINDOW_FRAMES) throw new RangeError("Sparse PCM windowFrames cannot exceed 8192");
     this.#generation = options.generation ?? 1n;
+    if (typeof this.#generation !== "bigint" || this.#generation < 0n) throw new RangeError("generation must be a nonnegative bigint");
+    const sparseMap = sparse ? admitSparseAssets(sparseAssets!) : undefined;
+    const sourceIds = new Set<string>();
     this.#states = options.sources.map((source) => {
+      if (sourceIds.has(source.sourceId)) throw new RangeError("PCM pump source IDs must be unique");
+      sourceIds.add(source.sourceId);
+      if (typeof source.sourceId !== "string" || source.sourceId.length === 0) throw new RangeError("PCM pump source IDs must be nonempty");
       if (!positive(source.frames, "frames") || source.channels < 1 || source.channels > 2 ||
           (source.bitDepth !== 16 && source.bitDepth !== 24)) throw new RangeError("Invalid PCM pump source shape");
+      const sparseReadable = sparseMap === undefined ? undefined : sparseMap.get(source.identity);
+      if (sparse && sparseReadable === undefined) throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM asset is missing for a source");
+      if (sparseReadable !== undefined) {
+        const sampleRateHz = (source as SparsePcmPumpSource).sampleRateHz;
+        if (!Number.isSafeInteger(sampleRateHz) || sampleRateHz !== sparseReadable.index.sampleRateHz || source.channels !== sparseReadable.index.channels ||
+            source.bitDepth !== sparseReadable.index.bitDepth || source.frames !== sparseReadable.index.frames ||
+            source.identity !== sparseReadable.index.identity) {
+          throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM source shape disagrees with its asset");
+        }
+      }
       const writer = new Msb1RingWriter(source.ring);
       if (writer.channels !== source.channels) throw new RangeError("PCM source channels do not match its ring");
       if (this.#windowFrames < writer.frameCapacity) throw new RangeError("windowFrames must cover one render quantum");
-      return { ...source, writer, cursor: 0, blob: undefined, window: undefined, next: undefined, reading: undefined, finished: false };
+      return { ...source, writer, sparse: sparseReadable, cursor: 0, blob: undefined, window: undefined, next: undefined, reading: undefined, finished: false };
     });
+    if (sparseMap !== undefined && sparseMap.size !== new Set(this.#states.map((state) => state.identity)).size) {
+      throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM assets contain an unreferenced descriptor");
+    }
     // A pending read owns its destination slot even across seek; that source
     // cannot start another read until the old operation physically settles.
-    this.maximumWindowBytes = this.#states.reduce(
-      (sum, state) => sum + 2 * this.#windowFrames * state.channels * (state.bitDepth / 8), 0,
+    this.maximumWindowBytes = safeByteSum(
+      this.#states.map((state) => 2 * this.#windowFrames * state.channels * (state.bitDepth / 8)),
+      "PCM window bound",
     );
-    this.ringBytes = this.#states.reduce(
-      (sum, state) => sum + msb1RingBytes(state.channels, state.writer.frameCapacity, state.writer.capacity), 0,
+    const scratchBounds = this.#states
+      .map((state) => this.#windowFrames * state.channels * (state.bitDepth / 8))
+      .sort((left, right) => right - left);
+    this.maximumReadScratchBytes = sparse ? safeByteSum(scratchBounds.slice(0, 4), "Sparse PCM read scratch bound") : 0;
+    this.ringBytes = safeByteSum(
+      this.#states.map((state) => msb1RingBytes(state.channels, state.writer.frameCapacity, state.writer.capacity)),
+      "PCM ring bound",
     );
+    safeByteSum([this.maximumWindowBytes, this.maximumReadScratchBytes], "PCM allocation bound");
     for (const state of this.#states) state.writer.engage(this.#generation);
+  }
+
+  static createSparse(options: SparsePcmPumpOptions): CanonicalPcmPump {
+    return new CanonicalPcmPump(options);
   }
 
   get finished(): boolean { return this.#states.every((state) => state.finished); }
@@ -191,13 +254,21 @@ export class CanonicalPcmPump {
     }, READ_DEADLINE_MS);
     this.#readTimers.add(timer);
     try {
-      const blob = state.blob ?? await this.#lease.read(state.identity);
       if (this.#stopped || generation !== this.#generation) return;
-      state.blob = blob;
       const frameBytes = state.channels * (state.bitDepth / 8);
       const alignedFrames = Math.floor(this.#windowFrames / state.writer.frameCapacity) * state.writer.frameCapacity;
       const count = Math.min(alignedFrames, state.frames - start) * frameBytes;
-      const bytes = new Uint8Array(await blob.slice(start * frameBytes, start * frameBytes + count).arrayBuffer());
+      let bytes: Uint8Array;
+      if (state.sparse === undefined) {
+        const lease = this.#lease;
+        if (lease === undefined) throw new TypeError("Dense PCM pump has no verified lease");
+        const blob = state.blob ?? await lease.read(state.identity);
+        if (this.#stopped || generation !== this.#generation) return;
+        state.blob = blob;
+        bytes = new Uint8Array(await blob.slice(start * frameBytes, start * frameBytes + count).arrayBuffer());
+      } else {
+        bytes = await readSparsePcmWindow(state.sparse.index, state.sparse.data, start, count / frameBytes);
+      }
       if (this.#stopped || generation !== this.#generation) return;
       if (bytes.byteLength !== count) throw new Error("PCM playback window has an invalid byte count");
       const window = { bytes, start };
@@ -309,5 +380,26 @@ export function deinterleaveCanonicalPcm(
   }
 }
 
+function admitSparseAssets(assets: readonly SparsePcmDescriptor[]): Map<StemIdentity, SparseReadable> {
+  const admitted = new Map<StemIdentity, SparseReadable>();
+  for (const asset of assets) {
+    if (asset.kind !== "sparse-pcm" || !(asset.data instanceof Blob)) {
+      throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM asset descriptor is invalid");
+    }
+    const index = validateSparsePcmIndex(asset.index, asset.data);
+    if (admitted.has(index.identity)) throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM assets contain a duplicate identity");
+    admitted.set(index.identity, { data: asset.data, index });
+  }
+  return admitted;
+}
+
 function positive(value: number, label: string): number { if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${label} must be positive`); return value; }
 function nonnegative(value: number, label: string): number { if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${label} must be nonnegative`); return value; }
+function safeByteSum(values: readonly number[], label: string): number {
+  let total = 0;
+  for (const value of values) {
+    if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(total + value)) throw new RangeError(`${label} is unsafe`);
+    total += value;
+  }
+  return total;
+}
