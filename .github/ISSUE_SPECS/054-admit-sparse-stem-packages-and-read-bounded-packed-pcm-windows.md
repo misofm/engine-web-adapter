@@ -37,3 +37,28 @@ Future pump integration may keep one current and next destination per source plu
 ## Decision/evidence record
 
 Astra approves this bounded foundation and deterministic format as the first slice. It deliberately avoids research ZIP parsing while preserving independently decodable native FLAC units. A 1024-source resource ceiling applies only to an admitted delivery object, not the Rust graph/track model. Current research transport units can later be repackaged without codec retuning, but this issue uses synthetic fixtures exclusively. Luna records touched files, commands/results, any deviations and unresolved risks; Astra records one adversarial PASS/FAIL. Root commits exact paths once green, publishes evidence according to active delivery mode, synchronizes remote issue state, and only then starts the next implementation tranche.
+
+## Attempt 1 implementation evidence (Luna)
+
+Implemented the first bounded foundation in `src/stems/sparse-format.ts` and
+`src/stems/sparse-pcm.ts`, with exports from `src/stems/index.ts`. Added the
+focused synthetic tests in `tests/sparse-stems.test.ts` and the short contract
+at `docs/sparse-stem-contract.md`. The parser performs separate header and
+index Blob reads and returns a frozen manifest; package validation checks fixed
+schema depth, canonical UTF-8 JSON, checked offsets and object bounds. PCM
+derivation computes packed offsets from source shape, and the public validator
+admits independently constructed interval indexes. The window helper binary
+searches intervals, zero-fills gaps, performs at most one active contiguous
+Blob read, and rejects short reads.
+
+Evidence from the clean worktree:
+
+- `npm test`: 197 tests passed.
+- `npm run typecheck`: passed.
+- `npm run format:check`: passed.
+- `node scripts/check-source-policy.mjs`: passed.
+- `npm run check:package`: passed.
+
+No network, store, session, worker, Rust, version, or artist-data behavior was
+changed. Decoder and PCM content-hash verification remain outside this slice.
+Astra's fresh adversarial verdict and root's checkpoint/push remain pending.
