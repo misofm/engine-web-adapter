@@ -187,6 +187,48 @@ function sourceShape(value: unknown, index: number, offsetBase = 0): SparseStemS
   });
 }
 
+/** Internal bounded source preflight used before any caller-owned unit list is normalized. */
+export function preflightSparseStemSource(value: unknown, index = 0): number {
+  const path = `sources[${index}]`;
+  const source = exactObject(value, ["bitDepth", "channels", "frames", "identity", "sampleRateHz", "units"], path);
+  if (!Array.isArray(source.units)) throw corrupt(`${path}.units must be an array`, { path });
+  if (source.units.length > SPARSE_STEM_MAX_UNITS) {
+    throw corrupt(`${path}.units exceeds the package unit limit`, { limit: SPARSE_STEM_MAX_UNITS });
+  }
+  let expectedOffset = 0;
+  if (source.units.length > 0) {
+    const first = exactObject(source.units[0], ["bytes", "flacSha256", "frames", "offset", "pcmSha256", "startFrame"], `${path}.units[0]`);
+    expectedOffset = integer(first.offset, `${path}.units[0].offset`, 0);
+  }
+  const baseOffset = expectedOffset;
+  for (let unitIndex = 0; unitIndex < source.units.length; unitIndex += 1) {
+    const unitPath = `${path}.units[${unitIndex}]`;
+    const raw = exactObject(
+      source.units[unitIndex],
+      ["bytes", "flacSha256", "frames", "offset", "pcmSha256", "startFrame"],
+      unitPath,
+    );
+    const offset = integer(raw.offset, `${unitPath}.offset`, 0);
+    const bytes = positiveInteger(raw.bytes, `${unitPath}.bytes`);
+    if (offset !== expectedOffset) throw corrupt(`${unitPath}.offset does not exactly cover the packed payload`, { offset, expectedOffset });
+    const nextOffset = offset + bytes;
+    if (!Number.isSafeInteger(nextOffset)) throw corrupt(`${unitPath} offset arithmetic is unsafe`, { path: unitPath });
+    const normalizedOffset = offset - baseOffset;
+    const normalizedEnd = nextOffset - baseOffset;
+    if (!Number.isSafeInteger(normalizedOffset) || normalizedOffset < 0 || !Number.isSafeInteger(normalizedEnd) || normalizedEnd < normalizedOffset) {
+      throw corrupt(`${unitPath} offset normalization is unsafe`, { path: unitPath });
+    }
+    expectedOffset = nextOffset;
+  }
+  return baseOffset;
+}
+
+/** Internal fixed-depth source admission shared by package and cache helpers. */
+export function validateSparseStemSource(value: unknown, index = 0, offsetBase = 0): SparseStemSource {
+  preflightSparseStemSource(value, index);
+  return sourceShape(value, index, offsetBase);
+}
+
 function normalizeManifest(value: unknown, payloadBytes?: number): SparseStemManifest {
   const root = exactObject(value, ["format", "sources"], "index");
   if (root.format !== SPARSE_STEM_FORMAT) throw corrupt("Sparse package format tag is unsupported", { format: root.format });

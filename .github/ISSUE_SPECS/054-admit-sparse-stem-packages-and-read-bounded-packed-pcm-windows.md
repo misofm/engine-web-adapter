@@ -142,3 +142,24 @@ Do not alter the wire format, enlarge limits, add a public API family, or
 start cache/network integration. Reuse bounded internal source validation
 where practical. One coherent correction receives the next independent
 Astra verdict.
+
+## Attempt 3 implementation evidence (Luna)
+
+Attempt 3 adds a bounded internal source preflight before derivation rebases or
+clones units. It rejects oversized raw unit arrays before element access,
+checks raw offset/end arithmetic before subtracting a base, and preserves
+valid nonzero global bases (including a later source). The contracted raw-wire
+and window-boundary cases are included in the focused suite.
+
+Evidence from this worktree:
+
+- Focused `node --test .test-dist/tests/sparse-stems.test.js`: 14 tests passed.
+- `npm run typecheck`: passed.
+- `npm test`: 205 tests passed.
+- `npm run format:check`: passed.
+- `node scripts/check-source-policy.mjs`: passed.
+- `npm run check:package`: passed.
+
+No network, store, session, worker, Rust, mono-conversion, version, or
+artist-data behavior changed. Root's attempt-3 checkpoint and the independent
+Astra verdict remain pending.

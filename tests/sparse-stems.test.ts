@@ -5,6 +5,7 @@ import {
   SPARSE_PCM_FORMAT,
   SPARSE_PCM_MAX_INTERVALS,
   SPARSE_STEM_HEADER_BYTES,
+  SPARSE_STEM_MAX_INDEX_BYTES,
   SPARSE_STEM_MAGIC,
   assertSparseStemSessionBinding,
   deriveSparsePcmIndex,
@@ -126,6 +127,19 @@ test("table-driven raw wire corpus rejects malformed admission before payload us
   const cases: Array<[string, Blob]> = [
     ["bad magic", rawPackage(validIndex, new Uint8Array(21), (header) => { header[0] = 0; })],
     ["reserved", rawPackage(validIndex, new Uint8Array(21), (header) => { header[12] = 1; })],
+    ["bad format tag", rawPackage(validIndex.replace("miso_sparse_stems_v1", "miso_sparse_stems_v2"), new Uint8Array(21))],
+    ["declared index over limit", (() => {
+      const header = new Uint8Array(SPARSE_STEM_HEADER_BYTES);
+      header.set(new TextEncoder().encode(SPARSE_STEM_MAGIC));
+      new DataView(header.buffer).setUint32(8, SPARSE_STEM_MAX_INDEX_BYTES + 1, true);
+      return new Blob([header]);
+    })()],
+    ["declared index beyond Blob", (() => {
+      const header = new Uint8Array(SPARSE_STEM_HEADER_BYTES);
+      header.set(new TextEncoder().encode(SPARSE_STEM_MAGIC));
+      new DataView(header.buffer).setUint32(8, 4, true);
+      return new Blob([header]);
+    })()],
     ["invalid utf8", (() => {
       const bytes = new Uint8Array(new TextEncoder().encode(validIndex));
       bytes[0] = 0xff;
@@ -164,6 +178,38 @@ test("transport unit budget is preflighted before walking or cloning unit elemen
   const source = { ...manifest.sources[0]!, units };
   assert.throws(() => validateSparseStemManifest({ format: "miso_sparse_stems_v1", sources: [source] }), /too many/u);
   assert.equal(touched, false);
+});
+
+test("derivation preflights oversized zero and nonzero-base unit arrays", () => {
+  for (const base of [0, 1]) {
+    let touched = false;
+    const target = new Array(65_537);
+    target[0] = unit(0, 1, base, 1, "a");
+    const units = new Proxy(target, {
+      get(target, property, receiver) {
+        if (property !== "length") touched = true;
+        if (property !== "length") throw new Error("derivation unit element was touched");
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const source = { ...manifest.sources[0]!, units };
+    assert.throws(() => deriveSparsePcmIndex(source, 0), /unit limit/u);
+    assert.equal(touched, false, `base ${base} accessed a unit before count refusal`);
+  }
+});
+
+test("derivation rejects invalid raw bases/endpoints and preserves an admitted global base", async () => {
+  const negative = { ...manifest.sources[0]!, units: [unit(0, 1, -1, 1, "a")] };
+  assert.throws(() => deriveSparsePcmIndex(negative, 0), /safe integer/u);
+  const unsafeEnd = { ...manifest.sources[0]!, units: [unit(0, 1, Number.MAX_SAFE_INTEGER, 2, "a")] };
+  assert.throws(() => deriveSparsePcmIndex(unsafeEnd, 0), /arithmetic/u);
+
+  const packageBlob = serializeSparseStemPackage(manifest, new Uint8Array(21));
+  const parsed = await parseSparseStemPackage(packageBlob);
+  const second = parsed.manifest.sources[1]!;
+  const derived = deriveSparsePcmIndex(second, new Uint8Array(second.units[0]!.frames * second.channels * (second.bitDepth / 8)));
+  assert.equal(derived.activeBytes, 18);
+  assert.deepEqual(derived.index.intervals, [{ startFrame: 1, frames: 3, byteOffset: 0 }]);
 });
 
 test("session binding is exact by identity and shape", async () => {
@@ -306,6 +352,15 @@ test("all-silent and all-gap windows do not read the packed Blob", async () => {
   const gapBlob = new SpyBlob([new Uint8Array(2)]);
   await readSparsePcmWindow(sparse.index, gapBlob, 0, 8192);
   assert.deepEqual(gapBlob.slices, []);
+});
+
+test("windows reject empty, oversized, and out-of-source requests", async () => {
+  const source = pcmSource();
+  const derived = deriveSparsePcmIndex(source, new Uint8Array(30));
+  const packed = new Blob([new Uint8Array(30)]);
+  await assert.rejects(readSparsePcmWindow(derived.index, packed, 0, 0), /at least 1/u);
+  await assert.rejects(readSparsePcmWindow(derived.index, packed, 0, 8193), /bounded/u);
+  await assert.rejects(readSparsePcmWindow(derived.index, packed, source.frames, 1), /outside/u);
 });
 
 test("wrong payload size and short active slices reject", async () => {

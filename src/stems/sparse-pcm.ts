@@ -1,7 +1,7 @@
 import { EngineWebAdapterError } from "../errors.js";
 import {
-  SPARSE_STEM_FORMAT,
-  validateSparseStemManifest,
+  preflightSparseStemSource,
+  validateSparseStemSource,
   type SparseStemSource,
 } from "./sparse-format.js";
 
@@ -78,15 +78,14 @@ function packedSize(value: PackedSize): number {
 }
 
 function sourceManifest(source: SparseStemSource): SparseStemSource {
-  const baseOffset = source.units[0]?.offset ?? 0;
+  const baseOffset = preflightSparseStemSource(source);
   const rebased: SparseStemSource = baseOffset === 0
     ? source
     : {
         ...source,
         units: source.units.map((unit) => ({ ...unit, offset: unit.offset - baseOffset })),
       };
-  const manifest = validateSparseStemManifest({ format: SPARSE_STEM_FORMAT, sources: [rebased] });
-  return manifest.sources[0]!;
+  return validateSparseStemSource(rebased);
 }
 
 /** Derive packed PCM offsets from frame shape; compressed unit offsets are ignored. */
