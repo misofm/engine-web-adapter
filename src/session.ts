@@ -1,5 +1,6 @@
 import { bindIngestDiagnostics, inheritFlacRegistration } from "./stems/ingest-diagnostics.js";
 import { ABI_LAYOUT } from "@misofm/engine";
+import { Cause, Effect, Exit, Scope, Schema } from "effect";
 import type { BrowserBootPolicy } from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
 import { createEngine, createDefaultHost, scratchBootOptions, MSB1_CONTROL, Msb1RingObserver } from "@misofm/engine/browser";
@@ -20,6 +21,7 @@ import type {
   EngineWebSession,
   EngineWebSessionOptions,
   EngineWebSessionState,
+  SparseEngineWebSessionOptions,
   SourceObservation,
 } from "./session-types.js";
 import {
@@ -28,23 +30,43 @@ import {
 } from "./stems/flac-admission.js";
 import { createFlacStemResolver } from "./stems/flac-resolver.js";
 import { canonicalPcmBytes } from "./stems/identity.js";
+import { OpfsStorageBackend, VerifiedSparsePcmStore } from "./stems/index.js";
 import { OpfsStemStore } from "./stems/store.js";
 import { PcmPumpWorkerClient } from "./stems/worker-client.js";
-import type { PcmPumpSource } from "./stems/pump.js";
+import type { PcmPumpSource, SparsePcmPumpSource } from "./stems/pump.js";
 import type {
   CanonicalPcmExpectation,
   DeclaredStemSource,
   StemRequirement,
   StemResolver,
   StemSessionLease,
+  StemStore,
 } from "./stems/types.js";
+import type { SparsePcmSessionLease, SparsePcmSessionOptions, SparsePcmSessionSource } from "./stems/sparse-store.js";
 
 const PREFILL_TIMEOUT_MS = 2_000;
 
+class SparseSessionAcquisitionError extends Schema.TaggedError<SparseSessionAcquisitionError>()("SparseSessionAcquisitionError", {
+  message: Schema.String,
+  cause: Schema.optionalKey(Schema.Unknown),
+}) {}
+class SparseSessionCancellationError extends Schema.TaggedError<SparseSessionCancellationError>()("SparseSessionCancellationError", {
+  message: Schema.String,
+  cause: Schema.optionalKey(Schema.Unknown),
+}) {}
+
+function sparseSessionAcquisitionError(message: string, cause: unknown): SparseSessionAcquisitionError {
+  return cause === undefined ? new SparseSessionAcquisitionError({ message }) : new SparseSessionAcquisitionError({ message, cause });
+}
+function sparseSessionCancellationError(cause: unknown): SparseSessionCancellationError {
+  return cause === undefined ? new SparseSessionCancellationError({ message: "Sparse session opening was cancelled" }) : new SparseSessionCancellationError({ message: "Sparse session opening was cancelled", cause });
+}
+
 export async function openEngineWebSession(options: EngineWebSessionOptions): Promise<EngineWebSession> {
-  bindIngestDiagnostics(options.ingestDiagnostics);
-  const hasFlac = options.flac !== undefined;
-  const hasResolver = options.resolver !== undefined;
+  const { flac, resolver, store, createPump, ingestDiagnostics, assets, onProgress } = options;
+  bindIngestDiagnostics(ingestDiagnostics);
+  const hasFlac = flac !== undefined;
+  const hasResolver = resolver !== undefined;
   if (hasFlac === hasResolver) {
     throw new EngineWebAdapterError(
       "session.input_path",
@@ -52,11 +74,66 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       { hasFlac, hasResolver },
     );
   }
+  return openSessionCommon(options, (input) => prepareDenseSources({
+    ...input, flac, resolver: resolver as StemResolver, store, createPump, ingestDiagnostics, assets, onProgress,
+  }));
+}
+
+export async function openSparseEngineWebSession(options: SparseEngineWebSessionOptions): Promise<EngineWebSession> {
+  const { store, resolver, maximumMetadataBytes, createPump, assets } = options;
+  // This entry point has one source contract. Refuse dense/FLAC-shaped input
+  // before capability checks, scratch compilation, or any store work can run.
+  const candidate = options as unknown as { readonly flac?: unknown };
+  if (candidate.flac !== undefined || (resolver !== undefined && typeof resolver !== "function")) {
+    throw new EngineWebAdapterError(
+      "session.input_path",
+      "Sparse sessions accept only the sparse PCM resolver path",
+      { hasFlac: candidate.flac !== undefined, hasDenseResolver: resolver !== undefined && typeof resolver !== "function" },
+    );
+  }
+  return openSessionCommon(options, (input) => prepareSparseSources({
+    ...input, store, resolver, maximumMetadataBytes, createPump, assets,
+  }));
+}
+
+interface PreparedSources {
+  close(): Promise<void>;
+  createPump(sources: readonly PcmPumpSource[], signal: AbortSignal): Promise<EnginePump>;
+}
+
+interface SourcePreparationInput {
+  readonly orderedSources: readonly DeclaredStemSource[];
+  readonly compiledShape: import("@misofm/engine").SessionShape;
+  readonly leaseId: string;
+  readonly signal: AbortSignal;
+}
+
+type PrepareSources = (input: SourcePreparationInput) => Promise<PreparedSources>;
+type SessionOpenOptions = EngineWebSessionOptions | SparseEngineWebSessionOptions;
+
+interface DenseSourcePreparationInput extends SourcePreparationInput {
+  readonly flac: EngineWebSessionOptions["flac"];
+  readonly resolver: StemResolver;
+  readonly store: StemStore | undefined;
+  readonly createPump: EngineWebSessionOptions["createPump"];
+  readonly ingestDiagnostics: import("./stems/ingest-diagnostics.js").IngestDiagnostics | undefined;
+  readonly assets: EngineWebSessionOptions["assets"];
+  readonly onProgress: EngineWebSessionOptions["onProgress"];
+}
+
+interface SparseSourcePreparationInput extends SourcePreparationInput {
+  readonly store: SparseEngineWebSessionOptions["store"];
+  readonly resolver: SparseEngineWebSessionOptions["resolver"];
+  readonly maximumMetadataBytes: number | undefined;
+  readonly createPump: SparseEngineWebSessionOptions["createPump"];
+  readonly assets: SparseEngineWebSessionOptions["assets"];
+}
+
+async function openSessionCommon(options: SessionOpenOptions, prepareSources: PrepareSources): Promise<EngineWebSession> {
   assertEngineWebCapabilities(options.capabilityScope);
   const abort = new AbortController();
   const detachAbort = forwardAbort(options.signal, abort);
   const cleanup: Array<() => void | Promise<void>> = [];
-  let lease: StemSessionLease | undefined;
   let engine: BrowserEngine<EngineAudioContext> | undefined;
   let feed: EngineFeed | undefined;
   let pump: EnginePump | undefined;
@@ -85,7 +162,6 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       : snapshotSources(options.sources);
     const leaseId = options.leaseId ?? crypto.randomUUID();
     const policy = bootPolicy(options);
-    const requirements = requirementsFor(leaseId, sources);
     const engineWasmUrl = options.assets?.engineWasmUrl ?? BUNDLED_ENGINE_ASSETS.wasm;
     const engineWorkletUrl = options.assets?.engineWorkletModuleUrl ?? BUNDLED_ENGINE_ASSETS.workletModule;
     const engineHostUrl = options.assets?.engineHostModuleUrl ?? BUNDLED_ENGINE_ASSETS.hostModule;
@@ -98,51 +174,14 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
     const compiledShape = prepared.shape;
     const orderedSources = crossSessionDeclarations(compiledShape, documentDeclaration, sources);
 
-    let resolver: StemResolver;
-    let admission: BoundedStemAdmission | undefined;
-    let verificationAdmission: BoundedStemAdmission | undefined;
-    if (options.flac !== undefined) {
-      const widths = flacPipelineWidths(options.flac);
-      admission = options.flac.admission ?? new BoundedStemAdmission(widths.processing);
-      verificationAdmission = options.flac.processing === undefined ? admission : new BoundedStemAdmission(widths.verification);
-      const expectations = expectationsFor(orderedSources, compiledShape.sampleRateHz);
-      const flacResolver = createFlacStemResolver({
-        ...options.flac,
-        assets: { ...options.assets, ...options.flac.assets },
-        admission,
-      });
-      const withExpectations = (producer: StemResolver): StemResolver => ({
-        resolve(identity, resolveOptions = {}) {
-          const expected = expectations.get(identity);
-          if (expected === undefined) {
-            return Promise.reject(new EngineWebAdapterError(
-              "session.declaration_mismatch",
-              "FLAC resolver received an undeclared stem identity",
-              { identity },
-            ));
-          }
-          return producer.resolve(identity, { ...resolveOptions, expected });
-        },
-      });
-      resolver = withExpectations(flacResolver);
-      inheritFlacRegistration(resolver, flacResolver, withExpectations);
-    } else {
-      resolver = options.resolver;
-    }
-    const store = options.store
-      ?? new OpfsStemStore(options.assets === undefined ? {} : { assets: options.assets });
-    options.onProgress?.({ stage: "loading", sourcesTotal: requirements.length });
-    lease = await store.openSession({
+    options.onProgress?.({ stage: "loading", sourcesTotal: sources.length });
+    const preparedSources = await prepareSources({
+      orderedSources,
+      compiledShape,
       leaseId,
-      stems: requirements,
-      resolver,
-      ...(options.ingestDiagnostics === undefined ? {} : { ingestDiagnostics: options.ingestDiagnostics }),
-      ...(admission === undefined ? {} : { admission }),
-      ...(verificationAdmission === undefined ? {} : { verificationAdmission }),
       signal: abort.signal,
-      ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
     });
-    cleanup.push(() => lease!.close());
+    cleanup.push(() => preparedSources.close());
 
     const reuseScratchBoot = async () => compiledShape;
     const createHost: NonNullable<CreateEngineOptions["createHost"]> = async (request) => {
@@ -185,13 +224,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       frames: exactFrames(source.spec.frames),
       ring: feed!.rings[index]!,
     }));
-    pump = await (options.createPump?.({ lease, sources: pumpSources, signal: abort.signal }) ??
-      PcmPumpWorkerClient.create({
-        lease,
-        sources: pumpSources,
-        signal: abort.signal,
-        ...(options.assets === undefined ? {} : { assets: options.assets }),
-      }));
+    pump = await preparedSources.createPump(pumpSources, abort.signal);
     cleanup.push(() => pump!.close());
     void pump.failure?.then(notifyPumpFailure, notifyPumpFailure);
     options.onProgress?.({ stage: "prefilling", sourcesTotal: pumpSources.length });
@@ -364,6 +397,203 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
   }
 }
 
+async function prepareDenseSources(input: DenseSourcePreparationInput): Promise<PreparedSources> {
+  let lease: StemSessionLease | undefined;
+  try {
+    let resolver: StemResolver;
+    let admission: BoundedStemAdmission | undefined;
+    let verificationAdmission: BoundedStemAdmission | undefined;
+    if (input.flac !== undefined) {
+      const widths = flacPipelineWidths(input.flac);
+      admission = input.flac.admission ?? new BoundedStemAdmission(widths.processing);
+      verificationAdmission = input.flac.processing === undefined ? admission : new BoundedStemAdmission(widths.verification);
+      const expectations = expectationsFor(input.orderedSources, input.compiledShape.sampleRateHz);
+      const flacResolver = createFlacStemResolver({
+        ...input.flac,
+        assets: { ...input.assets, ...input.flac.assets },
+        admission,
+      });
+      const withExpectations = (producer: StemResolver): StemResolver => ({
+        resolve(identity, resolveOptions = {}) {
+          const expected = expectations.get(identity);
+          if (expected === undefined) {
+            return Promise.reject(new EngineWebAdapterError(
+              "session.declaration_mismatch",
+              "FLAC resolver received an undeclared stem identity",
+              { identity },
+            ));
+          }
+          return producer.resolve(identity, { ...resolveOptions, expected });
+        },
+      });
+      resolver = withExpectations(flacResolver);
+      inheritFlacRegistration(resolver, flacResolver, withExpectations);
+    } else {
+      resolver = input.resolver;
+    }
+    const store = input.store
+      ?? new OpfsStemStore(input.assets === undefined ? {} : { assets: input.assets });
+    lease = await store.openSession({
+      leaseId: input.leaseId,
+      stems: requirementsFor(input.leaseId, input.orderedSources),
+      resolver,
+      ...(input.ingestDiagnostics === undefined ? {} : { ingestDiagnostics: input.ingestDiagnostics }),
+      ...(admission === undefined ? {} : { admission }),
+      ...(verificationAdmission === undefined ? {} : { verificationAdmission }),
+      signal: input.signal,
+      ...(input.onProgress === undefined ? {} : { onProgress: input.onProgress }),
+    });
+    const ownedLease = lease as StemSessionLease;
+    return {
+      close: () => ownedLease.close(),
+      createPump: (sources, signal) => input.createPump?.({ lease: ownedLease, sources, signal }) ?? PcmPumpWorkerClient.create({
+        lease: ownedLease,
+        sources,
+        signal,
+        ...(input.assets === undefined ? {} : { assets: input.assets }),
+      }),
+    };
+  } catch (error) {
+    await lease?.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+const acquireSparseSources = Effect.fn("Session.acquireSparseSources")(function*(input: SparseSourcePreparationInput) {
+  const acquisitionScope = yield* Scope.make("sequential");
+  const acquired = yield* Effect.exit(Scope.provide(acquisitionScope)(Effect.gen(function*() {
+    const backend = input.store === undefined
+      ? yield* Effect.sync(() => new OpfsStorageBackend(input.assets === undefined ? {} : { assets: input.assets }))
+      : undefined;
+    if (backend !== undefined) {
+      yield* Scope.addFinalizer(acquisitionScope, Effect.sync(() => backend.close()));
+    }
+    const store = input.store ?? (yield* Effect.sync(() => new VerifiedSparsePcmStore({ backend: backend! })));
+    const ownStore = input.store === undefined ? store as VerifiedSparsePcmStore : undefined;
+    if (ownStore !== undefined) {
+      yield* Scope.addFinalizer(acquisitionScope, Effect.promise(() => ownStore.close()));
+    }
+    const sources = sparseSessionSources(input.orderedSources, input.compiledShape.sampleRateHz);
+    const sessionOptions: SparsePcmSessionOptions = {
+      leaseId: input.leaseId,
+      sources,
+      signal: input.signal,
+      ...(input.resolver === undefined ? {} : { resolve: input.resolver }),
+      ...(input.maximumMetadataBytes === undefined ? {} : { maximumMetadataBytes: input.maximumMetadataBytes }),
+    };
+    // The store owns cancellation and waits for its opening Promise to settle;
+    // keeping this acquisition uninterruptible prevents a late lease from
+    // escaping before its finalizer can be registered below.
+    const lease = yield* Effect.uninterruptible(Effect.tryPromise({
+      try: () => store.openSession(sessionOptions),
+      catch: (cause) => sparseSessionAcquisitionError("Sparse session acquisition failed", cause),
+    }));
+    yield* Scope.addFinalizer(acquisitionScope, Effect.promise(() => lease.close()));
+    if (input.signal.aborted) return yield* Effect.fail(sparseSessionCancellationError(input.signal.reason));
+    return { scope: acquisitionScope, lease };
+  })));
+  if (Exit.isFailure(acquired)) {
+    const cleanup = yield* Effect.exit(Scope.close(acquisitionScope, acquired));
+    return yield* Effect.failCause(cleanup._tag === "Failure" ? Cause.combine(acquired.cause, cleanup.cause) : acquired.cause);
+  }
+  const { scope, lease } = acquired.value;
+  let closing: Promise<void> | undefined;
+  return {
+    async close() {
+      closing ??= Effect.runPromiseExit(Scope.close(scope, Exit.void)).then((exit) => {
+        if (Exit.isFailure(exit)) throw mapSparseSessionCause(exit.cause);
+      });
+      return closing;
+    },
+    createPump: (pumpSources: readonly PcmPumpSource[], signal: AbortSignal) => {
+      const sparseSources = pumpSources.map((source): SparsePcmPumpSource => Object.freeze({
+        ...source,
+        sampleRateHz: input.compiledShape.sampleRateHz,
+      }));
+      return input.createPump?.({ lease, sources: sparseSources, signal }) ?? PcmPumpWorkerClient.createSparse({
+        lease,
+        sources: sparseSources,
+        signal,
+        ...(input.assets === undefined ? {} : { assets: input.assets }),
+      });
+    },
+  };
+});
+
+async function prepareSparseSources(input: SparseSourcePreparationInput): Promise<PreparedSources> {
+  const exit = await Effect.runPromiseExit(acquireSparseSources(input));
+  if (Exit.isFailure(exit)) throw mapSparseSessionCause(exit.cause);
+  return exit.value;
+}
+
+/**
+ * A sparse opening owns more than one resource, so a Promise rejection must
+ * retain every Effect failure. Cause.squash intentionally selects one defect
+ * and would hide a later lease/store/backend cleanup failure.
+ */
+function mapSparseSessionCause(cause: Cause.Cause<unknown>): unknown {
+  const reasons = cause.reasons;
+  if (reasons.length === 0) {
+    return new EngineWebAdapterError(
+      "session.open",
+      "Sparse session operation failed without a cause",
+      {},
+      new Error("Sparse session operation failed without a cause"),
+    );
+  }
+  const values = reasons.map((reason) => {
+    if (Cause.isFailReason(reason)) return unwrapSparseSessionCause(reason.error);
+    if (Cause.isDieReason(reason)) return reason.defect;
+    const interrupted = new Error("Sparse session operation was interrupted", { cause: reason });
+    interrupted.name = "AbortError";
+    return interrupted;
+  });
+  const primary = values[0];
+  if (primary instanceof EngineWebAdapterError) {
+    if (values.length === 1) return primary;
+    return new EngineWebAdapterError(primary.code, primary.message, primary.details, new AggregateError(values, "Sparse session operation failed"));
+  }
+  const preserved = values.length === 1 && values[0] !== undefined
+    ? values[0]
+    : new AggregateError(values, "Sparse session operation failed");
+  return new EngineWebAdapterError("session.open", "Sparse session operation failed", {}, preserved);
+}
+
+function unwrapSparseSessionCause(value: unknown): unknown {
+  return value instanceof SparseSessionAcquisitionError || value instanceof SparseSessionCancellationError
+    ? value.cause
+    : value;
+}
+
+function sparseSessionSources(
+  sources: readonly DeclaredStemSource[],
+  sampleRateHz: number,
+): readonly SparsePcmSessionSource[] {
+  return sources.map((source) => {
+    if (source.spec.bitDepth !== 16 && source.spec.bitDepth !== 24) {
+      throw declarationMismatch("Sparse PCM sessions require integer PCM source declarations", {
+        sourceId: source.id,
+        bitDepth: source.spec.bitDepth,
+      });
+    }
+    if (source.spec.channels !== 1 && source.spec.channels !== 2) {
+      throw declarationMismatch("Sparse PCM sessions require mono or stereo source declarations", {
+        sourceId: source.id,
+        channels: source.spec.channels,
+      });
+    }
+    return Object.freeze({
+      sourceId: source.id,
+      identity: source.spec.content as `sha256:${string}`,
+      sampleRateHz,
+      channels: source.spec.channels,
+      bitDepth: source.spec.bitDepth,
+      frames: exactFrames(source.spec.frames),
+      canonicalBytes: canonicalPcmBytes(source.spec),
+    });
+  });
+}
+
 /**
  * The boot policy both boots read.
  *
@@ -374,7 +604,7 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
  * own invention -- unless the caller asked for a playback-only session, and any
  * console word the caller states wins field by field.
  */
-function bootPolicy(options: EngineWebSessionOptions): BrowserBootPolicy {
+function bootPolicy(options: SessionOpenOptions): BrowserBootPolicy {
   if (options.console === false) {
     const { console: _opted, ...rest } = options.policy ?? {};
     return rest;

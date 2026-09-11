@@ -3,18 +3,22 @@ import { createIngestDiagnostics } from "../src/index.js";
 import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { MemoryStemStorageBackend } from "../src/stems/storage.js";
+import { OpfsStorageBackend, VerifiedSparsePcmStore } from "../src/stems/index.js";
 import { BrowserBootError, Msb1RingWriter, PcmFeedError } from "@misofm/engine/browser";
 import { scratchBootWithWorker, prepareBrowserSessionWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { BrowserEngine } from "@misofm/engine/browser";
-import { EngineWebAdapterError, openEngineWebSession } from "../src/index.js";
+import { EngineWebAdapterError, openEngineWebSession, openSparseEngineWebSession } from "../src/index.js";
 import { assertEngineWebCapabilities } from "../src/capabilities.js";
 import { MSB1_CONTROL } from "../src/stems/ring.js";
-import type { EngineAudioContext, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
+import type { EngineAudioContext, EnginePump, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
 import type { FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
 import type { DeclaredStemSource, StemResolver, StemSessionLease, StemStore } from "../src/stems/types.js";
+import type { SparsePcmExpectation, SparsePcmSessionLease, SparsePcmSessionOptions } from "../src/stems/sparse-store.js";
+import type { SparsePcmPumpSource } from "../src/stems/pump.js";
+import type { OpfsWorkerLike, OpfsWorkerRequest, OpfsWorkerResponse } from "../src/stems/opfs-worker-protocol.js";
 
 const IDENTITY = `sha256:${"a".repeat(64)}` as const;
 const IDENTITY_Z = `sha256:${"b".repeat(64)}` as const;
@@ -312,6 +316,444 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
   ]);
   await assert.rejects(hungPlay, (error: unknown) => error instanceof DOMException && error.name === "AbortError");
 });
+
+test("sparse session prepares complete authoritative sources through the shared controller", async () => {
+  const events: string[] = [];
+  const context = fakeContext(events);
+  const sources: DeclaredStemSource[] = [
+    { id: "source-z", spec: { channels: 2, bitDepth: 24, frames: 8, content: IDENTITY_Z } },
+    { id: "source-a", spec: { channels: 1, bitDepth: 16, frames: 8, content: IDENTITY } },
+    { id: "source-alias", spec: { channels: 1, bitDepth: 16, frames: 8, content: IDENTITY } },
+  ];
+  const compiled = [sources[1]!, sources[2]!, sources[0]!];
+  let request: SparsePcmSessionOptions | undefined;
+  let pumpSources: readonly SparsePcmPumpSource[] | undefined;
+  let leaseClosed = 0;
+  let storeClosed = 0;
+  const lease: SparsePcmSessionLease = {
+    leaseId: "sparse-lease",
+    sources: [],
+    async read() { throw new Error("custom pump does not read descriptors"); },
+    async close() { leaseClosed += 1; events.push("sparse.map.close"); },
+  };
+  const store = {
+    async openSession(options: SparsePcmSessionOptions) { request = options; events.push("sparse.open"); return lease; },
+    async close() { storeClosed += 1; },
+  };
+  const host = {
+    node: { connect() {}, disconnect() {} },
+    async dispose() { events.push("host.dispose"); },
+  } as unknown as BrowserEngine["host"];
+  const session = await openSparseEngineWebSession({
+    document: documentFor(sources), sources, leaseId: "sparse-lease", console: false,
+    capabilityScope: capabilities(), store,
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: compiled.map((source) => ({ id: source.id, channels: source.spec.channels, frames: BigInt(source.spec.frames) })) }),
+    createContext: () => context,
+    createHost: async () => host,
+    createAttachNode: () => {
+      const port = { onmessage: null as ((event: MessageEvent) => void) | null, postMessage(message: unknown) {
+        const value = message as { op: string; rings?: SharedArrayBuffer[] };
+        if (value.op === "attach") for (const ring of value.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+        else if (value.op === "prepare-seek") port.onmessage?.({ data: { ...value, op: "seek-prepared", kind: "confirmed" } } as MessageEvent);
+      } };
+      return { port, disconnect() {} };
+    },
+    createPump: async ({ lease: receivedLease, sources: receivedSources }) => {
+      assert.equal(receivedLease, lease);
+      pumpSources = receivedSources;
+      for (const source of receivedSources) fillRing(source.ring, source.frames);
+      return {
+        async seekFrames(frame) {
+          for (const source of receivedSources) {
+            const writer = new Msb1RingWriter(source.ring);
+            writer.seek(2n, BigInt(frame));
+            const control = new Int32Array(source.ring);
+            Atomics.store(control, MSB1_CONTROL.READ_INDEX, Atomics.load(control, MSB1_CONTROL.WRITE_INDEX));
+            writer.reserve(4);
+            writer.commit({ generation: 2n, startFrame: BigInt(frame), frames: 4, endOfRegion: false });
+            writer.reserve(2);
+            writer.commit({ generation: 2n, startFrame: BigInt(frame) + 4n, frames: 2, endOfRegion: true });
+          }
+          return 2n;
+        },
+        close() { events.push("pump.close"); },
+      };
+    },
+    createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+  });
+  assert.equal(request?.resolve, undefined, "omitted resolver remains preinstalled-only");
+  assert.deepEqual(request?.sources.map((source) => ({
+    sourceId: source.sourceId, identity: source.identity, sampleRateHz: source.sampleRateHz,
+    channels: source.channels, bitDepth: source.bitDepth, frames: source.frames, canonicalBytes: source.canonicalBytes,
+  })), [
+    { sourceId: "source-a", identity: IDENTITY, sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 8, canonicalBytes: 16 },
+    { sourceId: "source-alias", identity: IDENTITY, sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 8, canonicalBytes: 16 },
+    { sourceId: "source-z", identity: IDENTITY_Z, sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: 8, canonicalBytes: 48 },
+  ]);
+  assert.deepEqual(pumpSources?.map((source) => ({ sourceId: source.sourceId, sampleRateHz: source.sampleRateHz })), [
+    { sourceId: "source-a", sampleRateHz: 48_000 },
+    { sourceId: "source-alias", sampleRateHz: 48_000 },
+    { sourceId: "source-z", sampleRateHz: 48_000 },
+  ]);
+  await session.seekFrames(2);
+  await session.close();
+  await session.close();
+  assert.equal(leaseClosed, 1);
+  assert.equal(storeClosed, 0, "injected sparse stores remain caller-owned");
+  assert.ok(events.indexOf("pump.close") < events.indexOf("sparse.map.close"));
+});
+
+test("sparse entry refuses dense and FLAC-shaped paths before any boot or store work", async () => {
+  let scratches = 0;
+  let stores = 0;
+  const common = {
+    ...baseOptions(), resolver: undefined,
+    capabilityScope: { ...capabilities(), crossOriginIsolated: false },
+    scratchBoot: async () => { scratches += 1; throw new Error("scratch must not run"); },
+    store: { async openSession() { stores += 1; throw new Error("store must not run"); } },
+  };
+  await assert.rejects(
+    openSparseEngineWebSession({ ...common, flac: {} } as unknown as Parameters<typeof openSparseEngineWebSession>[0]),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.input_path",
+  );
+  await assert.rejects(
+    openSparseEngineWebSession({ ...common, resolver: { async resolve() { throw new Error("resolver must not run"); } } } as unknown as Parameters<typeof openSparseEngineWebSession>[0]),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.input_path",
+  );
+  assert.equal(scratches, 0);
+  assert.equal(stores, 0);
+});
+
+test("sparse acquisition maps primary, lease, store and OPFS cleanup failures together", async (t) => {
+  const primary = new EngineWebAdapterError("capability.opfs", "caller cancelled", { discriminator: "typed-primary" });
+  const leaseFailure = new Error("lease cleanup failed");
+  const storeFailure = new Error("store cleanup failed");
+  const backendFailure = new Error("backend cleanup failed");
+  const controller = new AbortController(); controller.abort(primary);
+  const lease: SparsePcmSessionLease = {
+    leaseId: "abandoned", sources: [],
+    async read() { throw new Error("unreachable"); },
+    async close() { throw leaseFailure; },
+  };
+  t.mock.method(VerifiedSparsePcmStore.prototype, "openSession", async () => lease);
+  t.mock.method(VerifiedSparsePcmStore.prototype, "close", async () => { throw storeFailure; });
+  t.mock.method(OpfsStorageBackend.prototype, "close", () => { throw backendFailure; });
+  const denseBase = baseOptions();
+  const sparseBase = { document: denseBase.document, sources: denseBase.sources!, leaseId: denseBase.leaseId! };
+  await assert.rejects(
+    openSparseEngineWebSession({
+      ...sparseBase, resolver: undefined, signal: controller.signal, capabilityScope: capabilities(),
+      scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+        backend: "simd128", tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }] }),
+    }),
+    (error: unknown) => {
+      if (!(error instanceof EngineWebAdapterError) || !(error.cause instanceof AggregateError)) return false;
+      const causes = error.cause.errors;
+      return error.code === "capability.opfs" && error.details.discriminator === "typed-primary"
+        && causes.includes(primary) && causes.includes(leaseFailure)
+        && causes.includes(storeFailure) && causes.includes(backendFailure);
+    },
+  );
+});
+
+test("sparse opening settles a cancelled map before closing a late lease", async () => {
+  const opened = deferred<void>();
+  const late = deferred<SparsePcmSessionLease>();
+  const controller = new AbortController();
+  let observedSignal: AbortSignal | undefined;
+  let leaseClosed = 0;
+  const lease: SparsePcmSessionLease = {
+    leaseId: "late", sources: [],
+    async read() { throw new Error("unreachable"); },
+    async close() { leaseClosed += 1; },
+  };
+  const denseBase = baseOptions();
+  const opening = openSparseEngineWebSession({
+    document: denseBase.document, sources: denseBase.sources!, leaseId: "late", resolver: undefined,
+    signal: controller.signal, capabilityScope: capabilities(),
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }] }),
+    store: { async openSession(options) { observedSignal = options.signal; opened.resolve(); return late.promise; } },
+  });
+  await opened.promise;
+  const reason = new Error("opening cancelled"); controller.abort(reason);
+  assert.equal(observedSignal?.aborted, true);
+  late.resolve(lease);
+  await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.open");
+  assert.equal(leaseClosed, 1, "a lease that settled after cancellation is closed exactly once");
+});
+
+test("sparse pump cancellation closes a pump that settles after opening is abandoned", async () => {
+  const pumpReady = deferred<EnginePump>();
+  const pumpCalled = deferred<void>();
+  const controller = new AbortController();
+  let leaseClosed = 0;
+  const lease: SparsePcmSessionLease = {
+    leaseId: "late-pump", sources: [],
+    async read() { throw new Error("custom pump does not read descriptors"); },
+    async close() { leaseClosed += 1; },
+  };
+  const events: string[] = [];
+  const context = fakeContext(events);
+  const denseBase = baseOptions();
+  const opening = openSparseEngineWebSession({
+    document: denseBase.document, sources: denseBase.sources!, leaseId: "late-pump", resolver: undefined,
+    signal: controller.signal, console: false, capabilityScope: capabilities(),
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }] }),
+    store: { async openSession() { return lease; } },
+    createContext: () => context,
+    createHost: async () => ({ node: { connect() {}, disconnect() {} }, async dispose() {} } as unknown as BrowserEngine["host"]),
+    createAttachNode: () => ({ port: { postMessage(message: unknown) {
+      const request = message as { op: string; rings?: SharedArrayBuffer[] };
+      if (request.op === "attach") for (const ring of request.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+    } }, disconnect() {} }),
+    createPump: async () => { pumpCalled.resolve(); return pumpReady.promise; },
+    createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+  });
+  await pumpCalled.promise;
+  const reason = new Error("pump opening cancelled"); controller.abort(reason);
+  let pumpClosed = 0;
+  pumpReady.resolve({ async seekFrames() { return 0n; }, close() { pumpClosed += 1; } });
+  await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.open");
+  assert.equal(pumpClosed, 1, "a late pump is closed after the prefill observes cancellation");
+  assert.equal(leaseClosed, 1);
+});
+
+test("sparse default ownership activates and releases its OPFS Worker on normal close", async (t) => {
+  const events: string[] = [];
+  const root = new SessionOpfsDirectory();
+  const storage = { getDirectory: async () => root };
+  const seed = sparseOwnedExpected();
+  const seedBackend = new OpfsStorageBackend({ storage: storage as never, createWorker: () => sessionOpfsWorker(root, events) });
+  const seedStore = new VerifiedSparsePcmStore({ backend: seedBackend, instanceId: "session-seed" });
+  await seedStore.installSource(seed, { resolve: async () => sparseOwnedSpans(seed) });
+  await seedStore.close(); seedBackend.close();
+  const workers: Array<SessionOpfsWorkerState> = [];
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { storage }, configurable: true, writable: true });
+  t.after(() => restoreNavigator(previousNavigator));
+  const sources: DeclaredStemSource[] = [{ id: "owned-source", spec: {
+    channels: seed.channels, bitDepth: seed.bitDepth, frames: seed.frames, content: seed.identity,
+  } }];
+  const context = fakeContext(events);
+  const session = await openOwnedSparseSession({
+    sources, context,
+    assets: { createWorker: () => {
+      const worker = sessionOpfsWorker(root, events); workers.push(worker); return worker as unknown as Worker;
+    } },
+  });
+  assert.equal(workers.length, 1, "the default sparse backend must activate one write Worker");
+  assert.equal(workers[0]!.terminated, false);
+  await session.close();
+  await session.close();
+  assert.equal(workers[0]!.terminated, true, "session close must release the owned backend Worker");
+  assert.equal(workers[0]!.terminations, 1);
+});
+
+test("sparse map cleanup failure still closes the owned store and OPFS Worker", async (t) => {
+  const events: string[] = [];
+  const root = new SessionOpfsDirectory();
+  const storage = { getDirectory: async () => root };
+  const seed = sparseOwnedExpected();
+  const seedBackend = new OpfsStorageBackend({ storage: storage as never, createWorker: () => sessionOpfsWorker(root, events) });
+  const seedStore = new VerifiedSparsePcmStore({ backend: seedBackend, instanceId: "session-seed-failure" });
+  await seedStore.installSource(seed, { resolve: async () => sparseOwnedSpans(seed) });
+  await seedStore.close(); seedBackend.close();
+  events.length = 0;
+  const workers: Array<SessionOpfsWorkerState> = [];
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { storage }, configurable: true, writable: true });
+  t.after(() => restoreNavigator(previousNavigator));
+  const originalOpen = VerifiedSparsePcmStore.prototype.openSession;
+  const originalClose = VerifiedSparsePcmStore.prototype.close;
+  let storeCloseCalls = 0;
+  const mapFailure = new Error("map cleanup failed");
+  t.mock.method(VerifiedSparsePcmStore.prototype, "openSession", async function (this: VerifiedSparsePcmStore, options: SparsePcmSessionOptions) {
+    const lease = await originalOpen.call(this, options);
+    return { ...lease, async close() { events.push("map"); throw mapFailure; } };
+  });
+  t.mock.method(VerifiedSparsePcmStore.prototype, "close", async function (this: VerifiedSparsePcmStore) {
+    storeCloseCalls += 1; events.push("store"); return originalClose.call(this);
+  });
+  const sources: DeclaredStemSource[] = [{ id: "owned-source", spec: {
+    channels: seed.channels, bitDepth: seed.bitDepth, frames: seed.frames, content: seed.identity,
+  } }];
+  const session = await openOwnedSparseSession({
+    sources, context: fakeContext(events),
+    assets: { createWorker: () => {
+      const worker = sessionOpfsWorker(root, events); workers.push(worker); return worker as unknown as Worker;
+    } },
+  });
+  assert.equal(workers.length, 1);
+  const closing = session.close(); assert.equal(session.close(), closing);
+  await assert.rejects(closing, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.open");
+  assert.equal(storeCloseCalls, 1);
+  assert.equal(workers[0]!.terminated, true, "backend release must run after a rejected map close");
+  assert.deepEqual(events.filter((event) => ["map", "store", "backend"].includes(event)), ["map", "store", "backend"]);
+});
+
+test("sparse opening releases the owned OPFS Worker when write support fails before ready", async (t) => {
+  const events: string[] = [];
+  const root = new SessionOpfsDirectory();
+  const storage = { getDirectory: async () => root };
+  const workers: Array<SessionOpfsWorkerState> = [];
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { storage }, configurable: true, writable: true });
+  t.after(() => restoreNavigator(previousNavigator));
+  const sources: DeclaredStemSource[] = [{ id: "unready-source", spec: {
+    channels: 1, bitDepth: 16, frames: 1, content: IDENTITY,
+  } }];
+  await assert.rejects(openSparseEngineWebSession({
+    document: documentFor(sources), sources, console: false, capabilityScope: capabilities(),
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: [{ id: "unready-source", channels: 1, frames: 1n }] }),
+    assets: { createWorker: () => {
+      const worker = sessionOpfsWorker(root, events, "error"); workers.push(worker); return worker as unknown as Worker;
+    } },
+  }), (error: unknown) => error instanceof EngineWebAdapterError);
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0]!.terminated, true, "a failed handshake must terminate the owned Worker");
+});
+
+const SPARSE_OWNED_BYTES = new Uint8Array([1, 2]);
+
+function sparseOwnedExpected(): SparsePcmExpectation {
+  return {
+    identity: `sha256:${createHash("sha256").update(SPARSE_OWNED_BYTES).digest("hex")}`,
+    sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 1, canonicalBytes: 2,
+  };
+}
+
+function sparseOwnedSpans(_expected: SparsePcmExpectation): { readonly spans: AsyncIterable<{ readonly startFrame: number; readonly bytes: Uint8Array }> } {
+  return { spans: (async function*() { yield { startFrame: 0, bytes: SPARSE_OWNED_BYTES }; })() };
+}
+
+async function openOwnedSparseSession(input: {
+  readonly sources: readonly DeclaredStemSource[];
+  readonly context: EngineAudioContext;
+  readonly assets: NonNullable<EngineWebSessionOptions["assets"]>;
+}): Promise<import("../src/session-types.js").EngineWebSession> {
+  return openSparseEngineWebSession({
+    document: documentFor(input.sources), sources: input.sources, console: false, capabilityScope: capabilities(), assets: input.assets,
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: input.sources.map((source) => ({ id: source.id, channels: source.spec.channels, frames: BigInt(source.spec.frames) })) }),
+    createContext: () => input.context,
+    createHost: async () => ({ node: { connect() {}, disconnect() {} }, async dispose() {} } as unknown as BrowserEngine["host"]),
+    createAttachNode: () => ({ port: { postMessage(message: unknown) {
+      const request = message as { readonly op: string; readonly rings?: readonly SharedArrayBuffer[] };
+      if (request.op === "attach") for (const ring of request.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+    } }, disconnect() {} }),
+    createPump: async ({ sources }) => {
+      for (const source of sources) fillRing(source.ring, source.frames);
+      return { async seekFrames() { return 0n; }, close() {} };
+    },
+    createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+  });
+}
+
+function restoreNavigator(previous: PropertyDescriptor | undefined): void {
+  if (previous === undefined) delete (globalThis as { navigator?: unknown }).navigator;
+  else Object.defineProperty(globalThis, "navigator", previous);
+}
+
+class SessionOpfsDirectory {
+  readonly kind = "directory" as const;
+  readonly files = new Map<string, Uint8Array>();
+  readonly directories = new Map<string, SessionOpfsDirectory>();
+
+  async getDirectoryHandle(name: string, options: { readonly create?: boolean } = {}): Promise<SessionOpfsDirectory> {
+    const existing = this.directories.get(name);
+    if (existing !== undefined) return existing;
+    if (options.create !== true) throw sessionOpfsNotFound(name);
+    const created = new SessionOpfsDirectory(); this.directories.set(name, created); return created;
+  }
+  async getFileHandle(name: string, options: { readonly create?: boolean } = {}): Promise<SessionOpfsFileHandle> {
+    if (!this.files.has(name) && options.create !== true) throw sessionOpfsNotFound(name);
+    if (!this.files.has(name)) this.files.set(name, new Uint8Array());
+    return new SessionOpfsFileHandle(this, name);
+  }
+  async removeEntry(name: string): Promise<void> { this.files.delete(name); this.directories.delete(name); }
+  async *entries(): AsyncIterableIterator<[string, { readonly kind: "file" | "directory" }]> {
+    for (const name of this.files.keys()) yield [name, { kind: "file" }];
+    for (const name of this.directories.keys()) yield [name, { kind: "directory" }];
+  }
+}
+
+class SessionOpfsFileHandle {
+  readonly kind = "file" as const;
+  constructor(private readonly directory: SessionOpfsDirectory, private readonly name: string) {}
+  async getFile(): Promise<Blob> { return new Blob([(this.directory.files.get(this.name) ?? new Uint8Array()).buffer as ArrayBuffer]); }
+  async move(directory: unknown, name: string): Promise<void> {
+    const target = directory as SessionOpfsDirectory;
+    const bytes = this.directory.files.get(this.name);
+    if (bytes === undefined) throw sessionOpfsNotFound(this.name);
+    target.files.set(name, bytes); this.directory.files.delete(this.name);
+  }
+}
+
+function sessionOpfsNotFound(name: string): DOMException { return new DOMException(`${name} was not found`, "NotFoundError"); }
+
+interface SessionOpfsWorkerState extends OpfsWorkerLike {
+  readonly terminated: boolean;
+  readonly terminations: number;
+}
+
+function sessionOpfsWorker(root: SessionOpfsDirectory, events: string[], mode: "ready" | "error" = "ready"): SessionOpfsWorkerState {
+  const messages = new Set<(event: MessageEvent<OpfsWorkerResponse>) => void>();
+  const errors = new Set<(event: ErrorEvent) => void>();
+  const messageErrors = new Set<() => void>();
+  const writers = new Map<number, { readonly directory: SessionOpfsDirectory; readonly name: string; bytes: Uint8Array }>();
+  let dead = false;
+  let terminations = 0;
+  const emit = (message: OpfsWorkerResponse) => { if (!dead) for (const listener of messages) listener({ data: message } as MessageEvent<OpfsWorkerResponse>); };
+  const worker: SessionOpfsWorkerState = {
+    get terminated() { return dead; },
+    get terminations() { return terminations; },
+    postMessage(message: OpfsWorkerRequest) {
+      if (dead) return;
+      queueMicrotask(async () => {
+        if (dead) return;
+        if (message.type === "write-open") {
+          const directory = await root.getDirectoryHandle(message.folderName, { create: true });
+          await directory.getFileHandle(message.name, { create: true });
+          writers.set(message.writerId, { directory, name: message.name, bytes: new Uint8Array() });
+        } else {
+          const writer = writers.get(message.writerId);
+          if (writer === undefined) return;
+          if (message.type === "write") {
+            const bytes = new Uint8Array(writer.bytes.byteLength + message.chunk.byteLength);
+            bytes.set(writer.bytes); bytes.set(message.chunk, writer.bytes.byteLength); writer.bytes = bytes;
+          } else if (message.type === "write-close") {
+            writer.directory.files.set(writer.name, writer.bytes); writers.delete(message.writerId);
+          } else { writer.directory.files.delete(writer.name); writers.delete(message.writerId); }
+        }
+        emit({ type: "opfs-started", requestId: message.requestId });
+        emit({ type: "opfs-ok", requestId: message.requestId });
+      });
+    },
+    terminate() { if (!dead) { dead = true; terminations += 1; events.push("backend"); writers.clear(); } },
+    addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
+      if (type === "message") messages.add(listener as (event: MessageEvent<OpfsWorkerResponse>) => void);
+      else if (type === "error") errors.add(listener as (event: ErrorEvent) => void);
+      else messageErrors.add(listener as () => void);
+    },
+    removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void) {
+      if (type === "message") messages.delete(listener as (event: MessageEvent<OpfsWorkerResponse>) => void);
+      else if (type === "error") errors.delete(listener as (event: ErrorEvent) => void);
+      else messageErrors.delete(listener as () => void);
+    },
+  };
+  queueMicrotask(() => {
+    if (mode === "ready") emit({ type: "worker-ready", writeSupport: true });
+    else {
+      const error = new Error("intentional OPFS Worker startup failure");
+      for (const listener of errors) listener({ error, message: error.message } as ErrorEvent);
+    }
+  });
+  return worker;
+}
 
 test("session snapshots document and source declarations before deferred scratch work", async () => {
   const originalSources = [{
