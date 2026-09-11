@@ -106,6 +106,7 @@ try {
       assert.equal(result.sparse.warmPayloadBytes, 8, `${label}: sparse close/reopen payload size`);
       assert.equal(result.sparse.warmResolverCalls, 0, `${label}: sparse warm reopen must not resolve again`);
       assert.equal(result.sparse.markerFailureClean, true, `${label}: sparse marker failure must clean owned files`);
+      assert.equal(result.sparse.lateCancelClean, true, `${label}: late quota cancellation must clean owned sparse files`);
       assert.equal(result.physicalLocks.sameExistingFileReacquired, true);
       assert.equal(result.cleanup.stagingRemoved, true);
       assert.deepEqual(consoleErrors, [], `${label}: console errors`);
@@ -253,7 +254,38 @@ async function sparseGate() {
   const remaining = (await failureBackend.list()).filter((name) => name.startsWith("sparse-pcm-v1-"));
   await failed.close();
   failureBackend.close();
-  return { coldCommitted: true, warmPayloadBytes, warmResolverCalls, markerFailureClean: remaining.length === 0 };
+
+  const lateCancelBackend = new OpfsStorageBackend({ folderName: "opfs-sparse-late-cancel-v1", assets: { createWorker: (url, options) => new Worker(url, options) }, readDeadlineMs: 1_500 });
+  const originalEstimate = lateCancelBackend.estimate.bind(lateCancelBackend);
+  const lateController = new AbortController();
+  let lateDataSeenAtAbort = false;
+  lateCancelBackend.estimate = async () => {
+    const estimate = await originalEstimate();
+    lateDataSeenAtAbort = (await lateCancelBackend.list()).some((name) => name.startsWith("sparse-pcm-v1-data-" + identity.slice(7) + "-"));
+    lateController.abort(new DOMException("quota observation cancelled", "AbortError"));
+    return estimate;
+  };
+  const lateCancel = new VerifiedSparsePcmStore({ backend: lateCancelBackend, instanceId: "sparse-late-cancel", readDeadlineMs: 1_500 });
+  let lateCancelError;
+  await lateCancel.installSource(expected, {
+    signal: lateController.signal,
+    resolve: async () => ({ spans: resolver().spans }),
+  }).then(
+    () => { throw new Error("sparse late quota cancellation unexpectedly committed"); },
+    error => { lateCancelError = error; },
+  );
+  expect(lateCancelError?.code === "stem.cancelled", "late quota cancellation remains stem.cancelled");
+  expect(lateDataSeenAtAbort, "late quota cancellation observes the owned data generation before cleanup");
+  await lateCancel.close();
+  const lateRemaining = (await lateCancelBackend.list()).filter((name) => name.startsWith("sparse-pcm-v1-"));
+  lateCancelBackend.close();
+  return {
+    coldCommitted: true,
+    warmPayloadBytes,
+    warmResolverCalls,
+    markerFailureClean: remaining.length === 0,
+    lateCancelClean: lateRemaining.length === 0,
+  };
 }
 
 function expect(value: unknown, label: string): asserts value {

@@ -371,3 +371,17 @@ error/Cause, writer/source lifecycle, quota, canonical and coexistence cases.
 Run the complete package check and exact-source macOS gate, then obtain ONE
 independent Astra medium attempt5 verdict. A fifth FAIL stops this implementation
 shape; preserve evidence and rebrief a smaller scope rather than retrying it.
+
+## Attempt 5 local checkpoint — final independent verdict pending
+
+The physical writer bridge now refuses an already-cancelled operation and handles
+cancellation during synchronous startup while retaining actual mutation/abort
+settlement. Metadata observations keep their Effect Clock deadlines independently
+of OPFS writer-owned deadlines. Luna reports the complete237-test package check
+passing; root independently reran29 focused cases. The packed Chromium151 fixture
+observes the real OPFS data generation before rolling quota cancels the write,
+then verifies cancellation classification and removal after close. Its resolver
+has no upfront index, so it exercises the reviewed post-acquisition race.
+Linux WebKit retains the documented missing-storage limitation. Acceptance still
+requires the exact-source macOS gate and one independent Astra medium attempt5
+verdict. No subsequent feature, release or deployment is claimed.

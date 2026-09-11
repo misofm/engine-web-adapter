@@ -9,6 +9,7 @@ import { EngineWebAdapterError } from "../src/errors.js";
 import {
   MemoryStemStorageBackend,
   MemoryStemResolver,
+  OpfsStorageBackend,
   VerifiedSparsePcmStore,
   VerifiedStemStore,
   validateSparsePcmIndex,
@@ -641,6 +642,117 @@ describe("VerifiedSparsePcmStore", () => {
         assert.deepEqual(await backend.list(), []);
         await store.close();
       }
+    }
+  });
+
+  it("does not start a physical write after quota observation aborts the operation", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const controller = new AbortController();
+    let writes = 0;
+    class AbortAtQuotaBackend extends MemoryStemStorageBackend {
+      override async estimate(): Promise<{ readonly quota?: number; readonly usage?: number }> {
+        controller.abort(new DOMException("quota observation cancelled", "AbortError"));
+        return super.estimate();
+      }
+      override async createWriter(name: string, _signal?: AbortSignal) {
+        const writer = await super.createWriter(name);
+        if (!name.startsWith("sparse-pcm-v1-data-")) return writer;
+        return {
+          write: async (chunk: Uint8Array | string) => { writes += 1; return writer.write(chunk); },
+          close: () => writer.close(),
+          abort: (reason?: unknown) => writer.abort(reason),
+        };
+      }
+    }
+    const backend = new AbortAtQuotaBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "quota-abort-before-write", readDeadlineMs: 200 });
+    await assert.rejects(
+      store.installSource(expectation(bytes, 1), { signal: controller.signal, resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }),
+      (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled",
+    );
+    assert.equal(writes, 0, "quota cancellation must prevent a new physical write");
+    assert.deepEqual(await backend.list(), []);
+    await store.close();
+  });
+
+  it("settles a synchronous physical-start abort before cleanup", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const controller = new AbortController();
+    const gate = deferred();
+    const writeStarted = deferred();
+    const events: string[] = [];
+    class AbortDuringWriteBackend extends MemoryStemStorageBackend {
+      override async createWriter(name: string, _signal?: AbortSignal) {
+        const writer = await super.createWriter(name);
+        if (!name.startsWith("sparse-pcm-v1-data-")) return writer;
+        return {
+          write: async (chunk: Uint8Array | string) => {
+            events.push("write-start");
+            writeStarted.resolve();
+            controller.abort(new DOMException("write startup cancelled", "AbortError"));
+            await gate.promise;
+            events.push("write-settled");
+            return writer.write(chunk);
+          },
+          close: () => writer.close(),
+          abort: async (reason?: unknown) => { events.push("abort"); await writer.abort(reason); },
+        };
+      }
+    }
+    const backend = new AbortDuringWriteBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "sync-write-abort", readDeadlineMs: 200 });
+    const installing = store.installSource(expectation(bytes, 1), { signal: controller.signal, resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+    await writeStarted.promise;
+    gate.resolve();
+    await assert.rejects(installing, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.equal(events[0], "write-start");
+    assert.ok(events.includes("abort"), "physical abort runs after synchronous cancellation");
+    assert.ok(events.indexOf("write-settled") > events.indexOf("abort"), "physical abort precedes write settlement");
+    assert.deepEqual(await backend.list(), []);
+    await store.close();
+  });
+
+  it("keeps metadata deadlines when the OPFS backend owns writer deadlines", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const expected = expectation(bytes, 1);
+    const index = {
+      format: "miso_sparse_pcm_v1" as const,
+      identity: expected.identity,
+      sampleRateHz: expected.sampleRateHz,
+      channels: expected.channels,
+      bitDepth: expected.bitDepth,
+      frames: expected.frames,
+      intervals: [{ startFrame: 0, frames: 1, byteOffset: 0 }],
+      activeBytes: bytes.byteLength,
+      canonicalBytes: bytes.byteLength,
+    };
+    for (const stalled of ["exists", "estimate"] as const) {
+      const backend = new OpfsStorageBackend({
+        storage: { getDirectory: async () => { throw new Error("shadowed open"); } },
+        readDeadlineMs: 5,
+      });
+      backend.open = async () => {};
+      backend.exists = stalled === "exists"
+        ? async () => new Promise<boolean>(() => {})
+        : async () => false;
+      backend.estimate = stalled === "estimate"
+        ? async () => new Promise<{ readonly quota?: number; readonly usage?: number }>(() => {})
+        : async () => ({});
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: `metadata-deadline-${stalled}`, readDeadlineMs: 5 });
+      const outcome = await new Promise<{ readonly tag: "error" | "timeout"; readonly error?: unknown }>((resolve) => {
+        const timer = setTimeout(() => resolve({ tag: "timeout" }), 200);
+        void store.installSource(expected, {
+          resolve: async () => ({ index, spans: spans({ startFrame: 0, bytes }) }),
+        }).then(
+          () => { clearTimeout(timer); resolve({ tag: "timeout" }); },
+          (error: unknown) => { clearTimeout(timer); resolve({ tag: "error", error }); },
+        );
+      });
+      assert.equal(outcome.tag, "error", `${stalled} metadata operation must be bounded`);
+      assert.ok(outcome.error instanceof EngineWebAdapterError);
+      assert.equal(outcome.error.code, "stem.read_deadline");
+      await store.close();
+      backend.close();
     }
   });
 

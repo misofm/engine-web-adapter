@@ -98,36 +98,65 @@ class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engi
     };
     const promise = <A>(operation: string, run: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, SparseFailure> => Effect.tryPromise({ try: run, catch: (cause) => fail(operation, cause) });
     const timed = <A>(operation: string, run: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, SparseFailure> => {
-      // OPFS worker generations own their own write deadline. Racing their
-      // promises here would abandon a physical handle after interruption.
       const base = promise(operation, run);
-      if (ownsOpfsWriteDeadlines(backend, options.readDeadlineMs)) return base;
       return base.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline` }))));
     };
     const physical = <A>(operation: string, writer: StemStorageWriter | undefined, run: () => PromiseLike<A>): Effect.Effect<A, SparseFailure> => {
       const effect = Effect.callback<A, SparseFailure>((resume, effectSignal) => {
-        let pending: Promise<A>;
-        try { pending = Promise.resolve(run()); }
-        catch (cause) { resume(Effect.fail(fail(operation, cause))); return; }
         const requestedSignal = writer === undefined ? undefined : writerSignals.get(writer);
         let settled = false;
+        let mutationStarted = false;
+        let abortRequested = false;
+        let pending: Promise<A> | undefined;
+        let abortPromise: Promise<void> | undefined;
         const finish = (result: Effect.Effect<A, SparseFailure>) => { if (!settled) { settled = true; requestedSignal?.removeEventListener("abort", onAbort); resume(result); } };
         const onAbort = () => {
-          const abortPromise = writer === undefined
-            ? Promise.resolve()
-            : writer.abort(new DOMException("Physical operation interrupted", "AbortError"));
+          abortRequested = true;
+          if (!mutationStarted) {
+            finish(Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled` })));
+            return;
+          }
+          if (pending === undefined) return;
+          if (abortPromise === undefined) {
+            abortPromise = writer === undefined
+              ? Promise.resolve()
+              : Promise.resolve().then(() => writer.abort(new DOMException("Physical operation interrupted", "AbortError")));
+          }
           void Promise.allSettled([pending, abortPromise]).then((results) => {
+            if (settled) return;
             const abortResult = results[1];
             finish(abortResult?.status === "rejected" ? Effect.fail(fail(operation, abortResult.reason)) : Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled` })));
           });
         };
+        if (requestedSignal?.aborted) {
+          finish(Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, cause: requestedSignal.reason })));
+          return Effect.void;
+        }
         requestedSignal?.addEventListener("abort", onAbort, { once: true });
+        if (requestedSignal?.aborted) {
+          onAbort();
+          return Effect.void;
+        }
+        mutationStarted = true;
+        try { pending = Promise.resolve(run()); }
+        catch (cause) {
+          finish(requestedSignal?.aborted || abortRequested ? Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, cause })) : Effect.fail(fail(operation, cause)));
+          return Effect.void;
+        }
+        if (requestedSignal?.aborted || abortRequested) onAbort();
         pending.then(
-          (value) => { if (!effectSignal.aborted && !requestedSignal?.aborted) finish(Effect.succeed(value)); },
-          (cause) => { if (!effectSignal.aborted && !requestedSignal?.aborted) finish(Effect.fail(fail(operation, cause))); },
+          (value) => {
+            if (requestedSignal?.aborted || abortRequested) { onAbort(); return; }
+            if (!effectSignal.aborted) finish(Effect.succeed(value));
+          },
+          (cause) => {
+            if (requestedSignal?.aborted || abortRequested) { onAbort(); return; }
+            if (!effectSignal.aborted) finish(Effect.fail(fail(operation, cause)));
+          },
         );
         return Effect.promise(async () => {
           requestedSignal?.removeEventListener("abort", onAbort);
+          if (!mutationStarted) return;
           let abortFailure: unknown;
           if (writer !== undefined) {
             try { await writer.abort(new DOMException("Physical operation interrupted", "AbortError")); }
