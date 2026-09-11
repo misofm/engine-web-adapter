@@ -1,6 +1,6 @@
 # Admit sparse stem packages and read bounded packed PCM windows
 
-Status: brief approved by Astra (medium); implementation not started. Matching adapter GitHub issue: #54. Luna (xhigh) implements attempt 1; fresh Astra (medium) adversarially verifies. Maximum five coherent attempts. No production delivery claim until the successor cache/network/app issues are complete.
+Status: attempt 1 at `65c023f` received Astra medium FAIL; bounded attempt 2 authorized below. Matching adapter GitHub issue: #54. Luna xhigh implements; an independent Astra medium adversarially verifies. Maximum five coherent attempts. No production delivery claim until the successor cache/network/app issues are complete.
 
 ## Problem and smallest closable capability
 
@@ -61,4 +61,29 @@ Evidence from the clean worktree:
 
 No network, store, session, worker, Rust, version, or artist-data behavior was
 changed. Decoder and PCM content-hash verification remain outside this slice.
-Astra's fresh adversarial verdict and root's checkpoint/push remain pending.
+Root committed/pushed the tranche as `65c023f`; the independent verdict follows.
+
+## Attempt 1 adversarial verdict (Astra medium): FAIL
+
+The non-implementing brief owner reviewed the committed implementation. Two
+attempts to spawn a new reviewer failed with `agent thread limit reached`, so
+this is an independent implementation review, not a fresh-context review.
+
+- R1: `readSparsePcmWindow` revalidates and clones all intervals per read.
+  A one-frame read with an admitted 10,000-interval index made 10,006
+  `Object.freeze` calls. This violates bounded per-window scratch/work.
+- R2: standalone PCM index validation accepts unknown root/interval keys and
+  oversized lists, including 65,537 intervals and a 9,429,084-byte index.
+  Transport object validation also checks the global unit budget after cloning.
+- R3: six new focused tests pass, but the required malformed-wire, binding,
+  nonzero mono, and larger boundary/oracle cases are largely absent. The total
+  197-test pass includes 191 existing tests and does not establish those gates.
+
+Attempt 2 must separate one-time admission from repeated reads using a
+module-owned admission proof, retain constant-time payload/request checks,
+enforce strict known keys and early count/metadata bounds, and add compact
+table-driven wire/binding cases plus independent dense-oracle window tests.
+Include counters proving a small read does not traverse unrelated intervals
+and oversized arrays reject before element access. The wire contract and
+existing resource ceilings remain unchanged. No new harness or integration
+scope is authorized by this revision.
