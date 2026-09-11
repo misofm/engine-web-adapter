@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { EngineWebAdapterError } from "../src/errors.js";
 import { serializeSparseStemIndex, MemoryStemStorageBackend, VerifiedSparsePcmStore, createSparseStemResolver } from "../src/stems/index.js";
 import type { FlacWorkerLike, FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
 import type { SparsePcmExpectation } from "../src/stems/sparse-store.js";
@@ -39,6 +40,8 @@ class DecodeWorker implements FlacWorkerLike {
   #slot: Extract<FlacWorkerRequest, { type: "start" }>['inputSlot'] | undefined;
   #listeners = new Set<(event: { readonly data: FlacWorkerResponse }) => void>();
 
+  constructor(readonly pcm?: Uint8Array) {}
+
   postMessage(message: FlacWorkerRequest): void {
     if (this.terminated) return;
     this.posted.push(message);
@@ -73,13 +76,26 @@ class DecodeWorker implements FlacWorkerLike {
       setTimeout(() => this.poll(requestId, frames, pcmBytes), 0);
       return;
     }
-    this.emit({ type: "pcm", requestId, bytes: new ArrayBuffer(pcmBytes), frames, totalPcmBytes: pcmBytes });
+    if (this.pcm !== undefined && this.pcm.byteLength === pcmBytes && pcmBytes > 384 * 1024) {
+      const firstFrames = Math.floor(frames / 2);
+      const frameBytes = pcmBytes / frames;
+      const firstBytes = firstFrames * frameBytes;
+      this.emit({ type: "pcm", requestId, bytes: this.pcm.slice(0, firstBytes).buffer, frames: firstFrames, totalPcmBytes: pcmBytes });
+      this.emit({ type: "pcm", requestId, bytes: this.pcm.slice(firstBytes).buffer, frames: frames - firstFrames, totalPcmBytes: pcmBytes });
+    } else {
+      this.emit({ type: "pcm", requestId, bytes: this.pcm?.slice().buffer ?? new ArrayBuffer(pcmBytes), frames, totalPcmBytes: pcmBytes });
+    }
     this.emit({ type: "complete", requestId, pcmBytes, frames });
   }
 }
 
-function packageBody(flac: Uint8Array): { readonly body: Uint8Array; readonly expected: SparsePcmExpectation } {
-  const expected = {
+function packageBody(flac: Uint8Array, options: {
+  readonly expected?: SparsePcmExpectation;
+  readonly pcm?: Uint8Array;
+  readonly packedFrames?: number;
+  readonly intervals?: readonly { readonly startFrame: number; readonly frames: number; readonly packedFrameOffset: number }[];
+} = {}): { readonly body: Uint8Array; readonly expected: SparsePcmExpectation } {
+  const expected = options.expected ?? {
     identity: ZERO_IDENTITY,
     sampleRateHz: 48_000,
     channels: 1 as const,
@@ -87,6 +103,10 @@ function packageBody(flac: Uint8Array): { readonly body: Uint8Array; readonly ex
     frames: 2_048,
     canonicalBytes: 4_096,
   };
+  const pcm = options.pcm ?? new Uint8Array(expected.canonicalBytes);
+  const packedFrames = options.packedFrames ?? expected.frames;
+  const intervals = options.intervals ?? [{ startFrame: 0, frames: expected.frames, packedFrameOffset: 0 }];
+  assert.equal(pcm.byteLength, packedFrames * expected.channels * (expected.bitDepth / 8));
   const manifest = {
     format: "miso_sparse_stem_v1" as const,
     identity: expected.identity,
@@ -94,14 +114,14 @@ function packageBody(flac: Uint8Array): { readonly body: Uint8Array; readonly ex
     channels: expected.channels,
     bitDepth: expected.bitDepth,
     frames: expected.frames,
-    intervals: [{ startFrame: 0, frames: expected.frames, packedFrameOffset: 0 }],
+    intervals,
     chunks: [{
       offset: 0,
       bytes: flac.byteLength,
-      frames: expected.frames,
+      frames: packedFrames,
       packedStartFrame: 0,
       flacSha256: createHash("sha256").update(flac).digest("hex"),
-      pcmSha256: createHash("sha256").update(new Uint8Array(expected.canonicalBytes)).digest("hex"),
+      pcmSha256: createHash("sha256").update(pcm).digest("hex"),
     }],
   };
   const encoded = serializeSparseStemIndex(manifest);
@@ -109,6 +129,48 @@ function packageBody(flac: Uint8Array): { readonly body: Uint8Array; readonly ex
   header.set(new TextEncoder().encode("MISOSTM1"));
   new DataView(header.buffer).setUint32(8, encoded.byteLength, true);
   return { body: new Uint8Array([...header, ...encoded, ...flac]), expected };
+}
+
+function multiblockPcm(frames: number): Uint8Array {
+  const output = new Uint8Array(frames * 6);
+  const view = new DataView(output.buffer);
+  for (let frame = 0; frame < frames; frame += 1) {
+    const left = (frame * 7_919) % 16_000_001 - 8_000_000;
+    const right = -Math.trunc(left / 2);
+    for (const [channel, value] of [[0, left], [1, right]] as const) {
+      const unsigned = value < 0 ? value + 0x1_00_00_00 : value;
+      const offset = (frame * 2 + channel) * 3;
+      view.setUint8(offset, unsigned & 0xff);
+      view.setUint8(offset + 1, (unsigned >>> 8) & 0xff);
+      view.setUint8(offset + 2, (unsigned >>> 16) & 0xff);
+    }
+  }
+  return output;
+}
+
+class DeferredFirstWriteBackend extends MemoryStemStorageBackend {
+  writes = 0;
+  #releaseWrite!: () => void;
+  readonly #firstWrite = new Promise<void>(resolve => { this.#releaseWrite = resolve; });
+
+  releaseFirstWrite(): void { this.#releaseWrite(); }
+
+  override async createWriter(name: string, signal?: AbortSignal) {
+    const writer = await super.createWriter(name, signal);
+    let deferred = true;
+    return {
+      write: async (chunk: Uint8Array | string) => {
+        this.writes += 1;
+        if (deferred) {
+          deferred = false;
+          await this.#firstWrite;
+        }
+        await writer.write(chunk);
+      },
+      close: () => writer.close(),
+      abort: (reason?: unknown) => writer.abort(reason),
+    };
+  }
 }
 
 function emptySilentPackage(): { readonly body: Uint8Array; readonly expected: SparsePcmExpectation } {
@@ -168,6 +230,187 @@ test("full-response admission rejects malformed sections, headers, status and tr
     { response: () => new Response(responseBytes(new Uint8Array([...packed.body, 0])), { status: 200 }), code: "stem.delivery.range" },
   ];
   for (const item of cases) await expectFullResponseFailure(packed, item.response, item.code);
+});
+
+test("factory validates locator and decoder deadlines before the first request", () => {
+  const options = { locate: () => "https://fixture.invalid/indexed" };
+  assert.throws(() => createSparseStemResolver({ ...options, locate: null as never }), TypeError);
+  assert.throws(() => createSparseStemResolver({ ...options, readDeadlineMs: 0 }), RangeError);
+  assert.throws(() => createSparseStemResolver({ ...options, decodeNoProgressMs: 0 }), RangeError);
+});
+
+test("operation abort reaches an executing full fetch and waits for its physical settlement", async () => {
+  const packed = emptySilentPackage();
+  let started!: () => void;
+  let settle!: (response: Response) => void;
+  let fetchSignal: AbortSignal | undefined;
+  const fetchStarted = new Promise<void>(resolve => { started = resolve; });
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/pending",
+    fetch: async (_input, init) => {
+      fetchSignal = init?.signal ?? undefined;
+      started();
+      return new Promise<Response>(resolve => { settle = resolve; });
+    },
+    createWorker: () => { throw new Error("pending header must not create a decoder worker"); },
+  });
+  const operation = new AbortController();
+  const iterator = (await resolver(packed.expected, operation.signal)).spans[Symbol.asyncIterator]();
+  let nextSettled = false;
+  const next = iterator.next().finally(() => { nextSettled = true; });
+  await fetchStarted;
+  operation.abort(new Error("caller operation stopped"));
+  await new Promise<void>(resolve => setTimeout(resolve, 30));
+  assert.equal(fetchSignal?.aborted, true);
+  assert.equal(nextSettled, false);
+  settle(new Response(responseBytes(packed.body), { status: 200 }));
+  await assert.rejects(next, (error: unknown) => error instanceof Error && "code" in error &&
+    (error as { readonly code?: unknown }).code === "stem.cancelled");
+});
+
+test("operation abort reaches a pending locator and waits for its settlement", async () => {
+  const packed = emptySilentPackage();
+  let locateSignal: AbortSignal | undefined;
+  let started!: () => void;
+  let settle!: (location: string) => void;
+  const locatorStarted = new Promise<void>(resolve => { started = resolve; });
+  const resolver = createSparseStemResolver({
+    locate: (_identity, { signal }) => {
+      locateSignal = signal;
+      started();
+      return new Promise<string>(resolve => { settle = resolve; });
+    },
+    fetch: async () => { throw new Error("locator should be settled before fetch"); },
+    createWorker: () => { throw new Error("pending locator must not create a decoder worker"); },
+  });
+  const operation = new AbortController();
+  const iterator = (await resolver(packed.expected, operation.signal)).spans[Symbol.asyncIterator]();
+  let nextSettled = false;
+  const next = iterator.next().finally(() => { nextSettled = true; });
+  await locatorStarted;
+  operation.abort(new Error("caller operation stopped before location"));
+  await new Promise<void>(resolve => setTimeout(resolve, 30));
+  assert.equal(locateSignal?.aborted, true);
+  assert.equal(nextSettled, false);
+  settle("https://fixture.invalid/settled");
+  await assert.rejects(next, (error: unknown) => error instanceof Error && "code" in error &&
+    (error as { readonly code?: unknown }).code === "stem.cancelled");
+});
+
+test("return during a pending full fetch retains admission and cancels a late response body", async () => {
+  const packed = emptySilentPackage();
+  let started!: () => void;
+  let settle!: (response: Response) => void;
+  let cancelled = 0;
+  const fetchStarted = new Promise<void>(resolve => { started = resolve; });
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/late",
+    fetch: async () => {
+      started();
+      return new Promise<Response>(resolve => { settle = resolve; });
+    },
+    createWorker: () => { throw new Error("pending header must not create a decoder worker"); },
+  });
+  const iterator = (await resolver(packed.expected, new AbortController().signal)).spans[Symbol.asyncIterator]();
+  const next = iterator.next().catch(() => ({ done: true as const, value: undefined }));
+  await fetchStarted;
+  let returned = false;
+  const returning = iterator.return!().then(() => { returned = true; });
+  await new Promise<void>(resolve => setTimeout(resolve, 30));
+  assert.equal(returned, false);
+  settle(new Response(new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(packed.body); },
+    cancel() { cancelled += 1; },
+  }), { status: 200 }));
+  await returning;
+  await next;
+  assert.equal(cancelled, 1);
+});
+
+test("status refusal owns and cancels the response body before releasing admission", async () => {
+  const packed = emptySilentPackage();
+  let cancelled = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/refused",
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(packed.body); },
+      cancel() { cancelled += 1; },
+    }), { status: 206 }),
+    createWorker: () => { throw new Error("status-refused source must not create a decoder worker"); },
+  });
+  const iterator = (await resolver(packed.expected, new AbortController().signal)).spans[Symbol.asyncIterator]();
+  await assert.rejects(iterator.next(), (error: unknown) => error instanceof Error && "code" in error &&
+    (error as { readonly code?: unknown }).code === "stem.delivery.http");
+  assert.equal(cancelled, 1);
+});
+
+test("asset URL and worker hook are snapshotted together at resolver construction", async () => {
+  const flac = new Uint8Array(readFileSync("tests/fixtures/native-silence.flac"));
+  const packed = packageBody(flac);
+  let seenUrl = "";
+  const mutableAssets = {
+    flacWorkerUrl: "https://fixture.invalid/original-worker",
+    createWorker: (url: string | URL) => {
+      seenUrl = String(url);
+      return new DecodeWorker() as unknown as Worker;
+    },
+  };
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/snapshot",
+    fetch: async () => new Response(responseBytes(packed.body), { status: 200 }),
+    assets: mutableAssets,
+  });
+  mutableAssets.flacWorkerUrl = "https://fixture.invalid/mutated-worker";
+  mutableAssets.createWorker = () => { throw new Error("mutated worker hook was used"); };
+  const result = await resolver(packed.expected, new AbortController().signal);
+  assert.equal((await result.spans[Symbol.asyncIterator]().next()).done, false);
+  assert.equal(seenUrl, "https://fixture.invalid/original-worker");
+});
+
+test("resolver option accessors are read once into the validated snapshot", async () => {
+  const packed = emptySilentPackage();
+  let locateReads = 0;
+  let deadlineReads = 0;
+  let selectedLocate: (() => string) = () => "https://fixture.invalid/accessor";
+  let selectedDeadline = 1000;
+  const options = {
+    get locate() { locateReads += 1; return selectedLocate; },
+    get readDeadlineMs() { deadlineReads += 1; return selectedDeadline; },
+    fetch: async () => new Response(responseBytes(packed.body), { status: 200 }),
+    createWorker: () => { throw new Error("accessor source must remain all-silent"); },
+  };
+  const resolver = createSparseStemResolver(options);
+  selectedLocate = () => { throw new Error("mutated locator was used"); };
+  selectedDeadline = 0;
+  assert.equal(locateReads, 1);
+  assert.equal(deadlineReads, 1);
+  const result = await resolver(packed.expected, new AbortController().signal);
+  assert.equal((await result.spans[Symbol.asyncIterator]().next()).done, true);
+});
+
+test("physical cleanup remains the public primary while the operation cause stays referenced", async () => {
+  const packed = emptySilentPackage();
+  const cleanup = new EngineWebAdapterError("stem.delivery.stall", "physical cleanup sentinel", { cleanup: true, retryable: false });
+  let cancels = 0;
+  const malformed = packed.body.slice();
+  malformed[0] = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/cleanup",
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(malformed); },
+      cancel() { cancels += 1; throw cleanup; },
+    }), { status: 200 }),
+    createWorker: () => { throw new Error("malformed source must not create a decoder worker"); },
+  });
+  const iterator = (await resolver(packed.expected, new AbortController().signal)).spans[Symbol.asyncIterator]();
+  await assert.rejects(iterator.next(), (error: unknown) => {
+    if (!(error instanceof EngineWebAdapterError)) return false;
+    assert.equal(error.code, cleanup.code);
+    assert.deepEqual(error.details, cleanup.details);
+    assert.equal(error.cause instanceof AggregateError, true);
+    return true;
+  });
+  assert.equal(cancels, 1);
 });
 
 test("finite FLAC metadata truncation refuses before the private chunk completes", async () => {
@@ -330,6 +573,72 @@ test("sparse full GET installs an actual FLAC payload cold and resolves warm wit
   assert.equal(fetches, 1);
   assert.equal(locates, 1);
   assert.equal(workers, 1);
+  await store.close();
+});
+
+test("a real stereo24 block stays borrowed across mapper slices and an indexed gap while store write is deferred", async () => {
+  const flac = new Uint8Array(readFileSync("tests/fixtures/native-multiblock-stereo24.flac"));
+  const packedFrames = 72_000;
+  const timelineFrames = 81_600;
+  const packed = multiblockPcm(packedFrames);
+  assert.equal(createHash("sha256").update(packed).digest("hex"), "4b5bc724ea7d855b3b5518b7a5e4da7222a41b9d0c98ca42880ca37e7458654d");
+  const canonical = new Uint8Array(timelineFrames * 6);
+  canonical.set(packed.subarray(0, 86_400), 0);
+  canonical.set(packed.subarray(86_400), 24_000 * 6);
+  const expected: SparsePcmExpectation = {
+    identity: `sha256:${createHash("sha256").update(canonical).digest("hex")}`,
+    sampleRateHz: 48_000,
+    channels: 2,
+    bitDepth: 24,
+    frames: timelineFrames,
+    canonicalBytes: canonical.byteLength,
+  };
+  const packageBytes = packageBody(flac, {
+    expected,
+    pcm: packed,
+    packedFrames,
+    intervals: [
+      { startFrame: 0, frames: 14_400, packedFrameOffset: 0 },
+      { startFrame: 24_000, frames: packedFrames - 14_400, packedFrameOffset: 14_400 },
+    ],
+  });
+  const backend = new DeferredFirstWriteBackend();
+  const store = new VerifiedSparsePcmStore({ backend, instanceId: "sparse-deferred-multiblock" });
+  const workers: DecodeWorker[] = [];
+  let requests = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/multiblock",
+    fetch: async () => {
+      requests += 1;
+      return new Response(responseBytes(packageBytes.body), { status: 200, headers: { "Content-Length": String(packageBytes.body.byteLength) } });
+    },
+    createWorker: () => {
+      const worker = new DecodeWorker(packed);
+      workers.push(worker);
+      return worker;
+    },
+  });
+  const installing = store.installSource(expected, { resolve: signal => resolver(expected, signal) });
+  for (let attempt = 0; attempt < 200 && backend.writes === 0; attempt += 1) {
+    await new Promise<void>(resolve => setTimeout(resolve, 1));
+  }
+  if (backend.writes === 0) await installing;
+  assert.equal(backend.writes, 1);
+  assert.deepEqual(await backend.list(), []);
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0]!.posted.filter(message => message.type === "output-credit").length, 0);
+
+  backend.releaseFirstWrite();
+  const result = await installing;
+  assert.equal(requests, 1);
+  assert.equal(result.index.activeBytes, packed.byteLength);
+  assert.equal(result.index.canonicalBytes, canonical.byteLength);
+  assert.deepEqual(new Uint8Array(await result.data.arrayBuffer()), packed);
+  // Completion was already observed when the final borrowed block is released,
+  // so the controller correctly suppresses a terminal late credit. The
+  // deferred assertion above proves that the original credit was held through
+  // both mapper slices and the indexed gap.
+  assert.equal(workers[0]!.posted.filter(message => message.type === "output-credit").length, 0);
   await store.close();
 });
 

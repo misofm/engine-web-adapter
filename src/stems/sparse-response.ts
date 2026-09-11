@@ -116,28 +116,72 @@ export const openSparseResponse = Effect.fn("SparseResponse.open")(function*(opt
       { interruptible: true },
     );
     const requestController = new AbortController();
+    const transportController = new AbortController();
+    let physicalResponse: Response | undefined;
+    let locatorSettlement: Promise<string | URL | Request> | undefined;
+    let transportSettlement: Promise<Response> | undefined;
+    let bodyClaimed = false;
     const onAbort = () => requestController.abort(options.signal.reason);
     options.signal.addEventListener("abort", onAbort, { once: true });
     yield* Effect.addFinalizer(() => Effect.sync(() => {
       options.signal.removeEventListener("abort", onAbort);
       requestController.abort(new DOMException("Sparse full response scope closed", "AbortError"));
     }));
+    yield* Effect.addFinalizer(() => Effect.promise(async () => {
+      requestController.abort(options.signal.reason ?? new DOMException("Sparse response scope closed", "AbortError"));
+      transportController.abort(options.signal.reason ?? new DOMException("Sparse response scope closed", "AbortError"));
+      const failures: unknown[] = [];
+      if (locatorSettlement !== undefined) {
+        try { await locatorSettlement; }
+        catch (cause) {
+          if (!requestController.signal.aborted) failures.push(cause);
+        }
+      }
+      if (transportSettlement !== undefined) {
+        try { await transportSettlement; }
+        catch (cause) {
+          // Aborting the operation is expected to reject a fetch which honors
+          // its signal. The operation effect already retains that cancellation
+          // cause; cleanup must wait for the physical promise without replacing
+          // it with a generic transport failure.
+          if (!transportController.signal.aborted) failures.push(cause);
+        }
+      }
+      const body = physicalResponse?.body;
+      if (!bodyClaimed && body !== null && body !== undefined && !body.locked) {
+        try { await body.cancel(options.signal.reason); } catch (cause) { failures.push(cause); }
+      }
+      if (failures.length > 0) throw new AggregateError(failures, "Sparse full response physical cleanup failed");
+    }));
+    const locatePromise = Promise.resolve().then(() => options.locate(options.identity, { signal: requestController.signal }));
+    locatorSettlement = locatePromise;
     const location = yield* Effect.tryPromise({
-      try: () => Promise.resolve(options.locate(options.identity, { signal: requestController.signal })),
+      try: () => locatePromise,
       catch: cause => preserveEffectFailure(options.identity, "locator", cause),
-    }).pipe(Effect.timeoutOrElse({ duration: options.readDeadlineMs, orElse: () => Effect.fail(failure("stem.delivery.address", "Sparse locator exceeded its deadline", { identity: options.identity })) }));
+    }).pipe(
+      Effect.timeoutOrElse({ duration: options.readDeadlineMs, orElse: () => Effect.fail(failure("stem.delivery.address", "Sparse locator exceeded its deadline", { identity: options.identity })) }),
+      Effect.raceFirst(abortEffect(options.signal, options.identity)),
+    );
     const normalized = yield* Effect.try({ try: () => requestPolicy(location, requestController, options.abortOperation, options.identity), catch: cause => preserveEffectFailure(options.identity, "request normalization", cause) });
     yield* Effect.addFinalizer(() => Effect.sync(normalized.dispose));
     const http = yield* HttpClient.HttpClient;
-    let physicalResponse: Response | undefined;
-    const physicalFetch: typeof globalThis.fetch = (input, init) => Promise.resolve((options.fetch ?? globalThis.fetch)(input, init)).then(response => {
+    const physicalFetch: typeof globalThis.fetch = (input, init) => {
+      const httpSignal = init?.signal;
+      const onHttpAbort = () => transportController.abort(httpSignal?.reason);
+      if (httpSignal?.aborted) onHttpAbort();
+      else httpSignal?.addEventListener("abort", onHttpAbort, { once: true });
+      const flight = Promise.resolve().then(() => (options.fetch ?? globalThis.fetch)(input, { ...init, signal: transportController.signal })).then(response => {
       physicalResponse = response;
       return response;
-    });
+      });
+      transportSettlement = flight;
+      return flight.finally(() => httpSignal?.removeEventListener("abort", onHttpAbort));
+    };
     const response = yield* HttpClient.withScope(http).execute(normalized.request).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, normalized.fetchInit),
       Effect.provideService(FetchHttpClient.Fetch, physicalFetch),
       Effect.timeoutOrElse({ duration: options.readDeadlineMs, orElse: () => Effect.fail(failure("stem.delivery.stall", "Sparse full response headers exceeded their deadline", { identity: options.identity })) }),
+      Effect.raceFirst(abortEffect(options.signal, options.identity)),
       Effect.mapError((cause) => preserveEffectFailure(options.identity, "response", cause)),
     );
     if (response.status !== 200) return yield* Effect.fail(failure("stem.delivery.http", `Sparse full response returned HTTP ${response.status}`, { identity: options.identity, status: response.status }));
@@ -155,6 +199,7 @@ export const openSparseResponse = Effect.fn("SparseResponse.open")(function*(opt
       if (!(cause instanceof TypeError) || body.locked) return yield* Effect.fail(failure("stem.delivery.http", "Sparse response body reader could not be acquired", { identity: options.identity }, cause));
       reader = body.getReader();
     }
+    bodyClaimed = true;
     let pending: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
     let carry: Uint8Array | undefined;
     let carryOffset = 0;

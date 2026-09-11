@@ -1,4 +1,4 @@
-import { Cause, Channel, Context, Effect, Exit, Fiber, Pull, Scope, Stream } from "effect";
+import { Cause, Channel, Context, Effect, Exit, Fiber, Pull, Schema, Scope, Stream } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { EngineWebAdapterError } from "../errors.js";
@@ -31,6 +31,20 @@ export interface SparseStemDeliveryOptions extends Pick<FlacChunkDecodeOptions,
   "deviceMemory" | "assets" | "createWorker"
 > {
   readonly locate: SparseStemLocator;
+}
+
+const SparseDeliveryOptionsSchema = Schema.Struct({
+  locate: Schema.Unknown,
+  readDeadlineMs: Schema.optionalKey(Schema.Number),
+  decodeNoProgressMs: Schema.optionalKey(Schema.Number),
+});
+
+function validateOptions(options: SparseStemDeliveryOptions): void {
+  const parsed = Schema.decodeUnknownSync(SparseDeliveryOptionsSchema)(options);
+  if (typeof parsed.locate !== "function") throw new TypeError("createSparseStemResolver requires locate");
+  for (const [name, value] of [["readDeadlineMs", parsed.readDeadlineMs], ["decodeNoProgressMs", parsed.decodeNoProgressMs]] as const) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) throw new RangeError(`${name} must be positive`);
+  }
 }
 
 function safeFrameBytes(expected: SparsePcmExpectation): number {
@@ -244,11 +258,34 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
     }
 });
 
+function shallowCleanupPrimary(value: unknown): EngineWebAdapterError | undefined {
+  if (value instanceof EngineWebAdapterError) return value;
+  if (value instanceof AggregateError) return value.errors.find((error): error is EngineWebAdapterError => error instanceof EngineWebAdapterError);
+  if (Cause.isCause(value)) {
+    for (const reason of value.reasons) {
+      const payload = Cause.isFailReason(reason) ? reason.error : Cause.isDieReason(reason) ? reason.defect : undefined;
+      if (payload instanceof EngineWebAdapterError) return payload;
+      if (payload instanceof AggregateError) {
+        const primary = payload.errors.find((error): error is EngineWebAdapterError => error instanceof EngineWebAdapterError);
+        if (primary !== undefined) return primary;
+      }
+    }
+  }
+  return undefined;
+}
+
 function closeFailure(identity: StemIdentity, operation: string, errors: readonly unknown[]): EngineWebAdapterError {
-  return new EngineWebAdapterError("stem.delivery.http", `Sparse ${operation} cleanup failed`, { identity, operation }, new AggregateError([...errors], `Sparse ${operation} cleanup failed`));
+  const primary = errors.map(shallowCleanupPrimary).find((error): error is EngineWebAdapterError => error !== undefined);
+  const details = primary === undefined ? { identity, operation } : primary.details;
+  const code = primary?.code ?? "stem.delivery.http";
+  const message = primary?.message ?? `Sparse ${operation} cleanup failed`;
+  return new EngineWebAdapterError(code, message, details, new AggregateError([...errors], `Sparse ${operation} cleanup failed`));
 }
 
 function operationFailure(identity: StemIdentity, cause: Cause.Cause<unknown>, cleanup?: unknown): EngineWebAdapterError {
+  if (cleanup instanceof EngineWebAdapterError) {
+    return new EngineWebAdapterError(cleanup.code, cleanup.message, cleanup.details, new AggregateError([cleanup, cause], "Sparse stream operation and cleanup failed"));
+  }
   const primary = Cause.squash(cause);
   const details = primary instanceof EngineWebAdapterError ? primary.details : { identity };
   const code = primary instanceof EngineWebAdapterError ? primary.code : "stem.delivery.http";
@@ -341,16 +378,55 @@ function scopedAsyncIterable(stream: Stream.Stream<SparsePcmSpan, EngineWebAdapt
 }
 
 function snapshotOptions(options: SparseStemDeliveryOptions): Omit<SparseStemDeliveryOptions, "locate"> & { readonly locate: SparseStemLocator } {
-  const assets = options.assets === undefined ? undefined : Object.fromEntries(
-    (Object.keys(options.assets) as Array<keyof AdapterAssetOverrides>).map(key => [key, options.assets![key] instanceof URL ? String(options.assets![key]) : options.assets![key]]),
-  ) as AdapterAssetOverrides | undefined;
-  return { ...options, ...(assets === undefined ? {} : { assets }) };
+  const {
+    locate, fetch, readDeadlineMs, decodeNoProgressMs, admission,
+    memoryBudgetBytes, maximumWorkers, hardwareConcurrency, deviceMemory,
+    assets: sourceAssets, createWorker,
+  } = options;
+  const assets = sourceAssets === undefined ? undefined : (() => {
+    const scratchWorkerUrl = sourceAssets.scratchWorkerUrl;
+    const flacWorkerUrl = sourceAssets.flacWorkerUrl;
+    const flacDecoderWasmUrl = sourceAssets.flacDecoderWasmUrl;
+    const opfsWorkerUrl = sourceAssets.opfsWorkerUrl;
+    const pumpWorkerUrl = sourceAssets.pumpWorkerUrl;
+    const feedWorkletModuleUrl = sourceAssets.feedWorkletModuleUrl;
+    const engineWasmUrl = sourceAssets.engineWasmUrl;
+    const engineWorkletModuleUrl = sourceAssets.engineWorkletModuleUrl;
+    const engineHostModuleUrl = sourceAssets.engineHostModuleUrl;
+    const assetCreateWorker = sourceAssets.createWorker;
+    return {
+      ...(scratchWorkerUrl === undefined ? {} : { scratchWorkerUrl: scratchWorkerUrl instanceof URL ? String(scratchWorkerUrl) : scratchWorkerUrl }),
+      ...(flacWorkerUrl === undefined ? {} : { flacWorkerUrl: flacWorkerUrl instanceof URL ? String(flacWorkerUrl) : flacWorkerUrl }),
+      ...(flacDecoderWasmUrl === undefined ? {} : { flacDecoderWasmUrl: flacDecoderWasmUrl instanceof URL ? String(flacDecoderWasmUrl) : flacDecoderWasmUrl }),
+      ...(opfsWorkerUrl === undefined ? {} : { opfsWorkerUrl: opfsWorkerUrl instanceof URL ? String(opfsWorkerUrl) : opfsWorkerUrl }),
+      ...(pumpWorkerUrl === undefined ? {} : { pumpWorkerUrl: pumpWorkerUrl instanceof URL ? String(pumpWorkerUrl) : pumpWorkerUrl }),
+      ...(feedWorkletModuleUrl === undefined ? {} : { feedWorkletModuleUrl: feedWorkletModuleUrl instanceof URL ? String(feedWorkletModuleUrl) : feedWorkletModuleUrl }),
+      ...(engineWasmUrl === undefined ? {} : { engineWasmUrl: engineWasmUrl instanceof URL ? String(engineWasmUrl) : engineWasmUrl }),
+      ...(engineWorkletModuleUrl === undefined ? {} : { engineWorkletModuleUrl: engineWorkletModuleUrl instanceof URL ? String(engineWorkletModuleUrl) : engineWorkletModuleUrl }),
+      ...(engineHostModuleUrl === undefined ? {} : { engineHostModuleUrl: engineHostModuleUrl instanceof URL ? String(engineHostModuleUrl) : engineHostModuleUrl }),
+      ...(assetCreateWorker === undefined ? {} : { createWorker: assetCreateWorker.bind(sourceAssets) }),
+    } as AdapterAssetOverrides;
+  })();
+  return {
+    locate,
+    ...(fetch === undefined ? {} : { fetch }),
+    ...(readDeadlineMs === undefined ? {} : { readDeadlineMs }),
+    ...(decodeNoProgressMs === undefined ? {} : { decodeNoProgressMs }),
+    ...(admission === undefined ? {} : { admission }),
+    ...(memoryBudgetBytes === undefined ? {} : { memoryBudgetBytes }),
+    ...(maximumWorkers === undefined ? {} : { maximumWorkers }),
+    ...(hardwareConcurrency === undefined ? {} : { hardwareConcurrency }),
+    ...(deviceMemory === undefined ? {} : { deviceMemory }),
+    ...(assets === undefined ? {} : { assets }),
+    ...(createWorker === undefined ? {} : { createWorker }),
+  };
 }
 
 export function createSparseStemResolver(
   options: SparseStemDeliveryOptions,
 ): (expected: SparsePcmExpectation, signal: AbortSignal) => Promise<SparsePcmResolved> {
   const snapshot = snapshotOptions(options);
+  validateOptions(snapshot);
   const widths = flacPipelineWidths(snapshot);
   const pool = new FlacWorkerPool({
     ...(snapshot.admission === undefined ? {} : { admission: snapshot.admission }),
