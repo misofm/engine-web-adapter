@@ -1,3 +1,4 @@
+import { Effect, Queue } from "effect";
 import { beginIngestStage, ownRunnableWorker, configureProcessingDiagnostics, recordWorkerProcessing, deliveredRangeOwner, registerFlacResolver, releaseDecoded, retainDecoded, type IngestDiagnostics } from "./ingest-diagnostics.js";
 import { MAXIMUM_CANONICAL_OUTPUT_BYTES } from "./native-flac-decoder.js";
 import { EngineWebAdapterError } from "../errors.js";
@@ -5,14 +6,15 @@ import { ADAPTER_ASSETS, type AdapterAssetOverrides } from "../assets.js";
 import { BoundedStemAdmission, flacPipelineWidths, type FlacProcessingOptions } from "./flac-admission.js";
 import { registerFlacResult } from "./flac-result.js";
 import { assertStemIdentity } from "./identity.js";
-import { readExactFlacRange, type FlacLocator } from "./flac-delivery.js";
+import { readExactFlacRangeEffect, type FlacLocator } from "./flac-delivery.js";
 import { FLAC_INPUT_SLOT_BYTES, FlacInputSlotProducer } from "./flac-input-slot.js";
 import { FlacWorkerPool, type FlacWorkerPoolOptions } from "./flac-worker-pool.js";
 import {
-  NativeFlacMetadataScanner,
-  NATIVE_FLAC_STREAMINFO_PROBE_BYTES,
-  parseNativeFlacStreamInfo,
-} from "./native-flac-metadata.js";
+  DecoderByteSourceError,
+  makeDecoderByteSource,
+  type DecoderByteSource,
+  type DecoderByteSourceOptions,
+} from "./decoder-byte-source.js";
 import type { FlacWorkerLike, FlacWorkerResponse } from "./flac-worker-protocol.js";
 import type { ResolvedStem, StemIdentity, StemProgress, StemResolver } from "./types.js";
 
@@ -52,6 +54,15 @@ function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): E
   return new EngineWebAdapterError("stem.decode.worker", message.error.message);
 }
 
+function decoderSourceError(error: unknown): EngineWebAdapterError {
+  if (error instanceof DecoderByteSourceError) {
+    if (error.cause instanceof EngineWebAdapterError) return error.cause;
+    return new EngineWebAdapterError("stem.decode.worker", error.message, { operation: error.operation }, error.cause);
+  }
+  if (error instanceof EngineWebAdapterError) return error;
+  return new EngineWebAdapterError("stem.decode.worker", "FLAC decoder input lane failed", {}, error);
+}
+
 /** Create the advanced low-level native-FLAC resolver used by session integration. */
 export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolver {
   // Worker construction is lazy. Snapshot policy and every asset URL now so a
@@ -69,7 +80,14 @@ export function createFlacStemResolver(options: FlacDeliveryOptions): StemResolv
   });
 }
 
-function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: IngestDiagnostics, sharedPool?: FlacWorkerPool, sharedDownloads?: BoundedStemAdmission, sharedVerification?: BoundedStemAdmission): StemResolver {
+/** @internal Test-only seam; it is intentionally absent from package entrypoints. */
+export function createFlacStemResolverWithSource(options: FlacDeliveryOptions, sourceFactory: DecoderByteSourceFactory): StemResolver {
+  return makeFlacStemResolver(options, undefined, undefined, undefined, undefined, sourceFactory);
+}
+
+type DecoderByteSourceFactory = (options: DecoderByteSourceOptions) => DecoderByteSource;
+
+function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: IngestDiagnostics, sharedPool?: FlacWorkerPool, sharedDownloads?: BoundedStemAdmission, sharedVerification?: BoundedStemAdmission, sourceFactory: DecoderByteSourceFactory = makeDecoderByteSource): StemResolver {
   if (typeof options.locate !== "function") throw new TypeError("createFlacStemResolver requires locate");
   const decodeNoProgressMs = options.decodeNoProgressMs ?? 30_000;
   if (!Number.isSafeInteger(decodeNoProgressMs) || decodeNoProgressMs < 1) {
@@ -141,15 +159,21 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           worker = physical;
           decoderInput = new FlacInputSlotProducer();
           let stopping = false;
-          let offset = 0;
-          let totalBytes: number | undefined;
           let decodedBytes = 0;
           let decodedFrames = 0;
-          let expectedFrames = 0;
-          let totalPcmBytes = 0;
           let networkPending = 0;
           const deliveryState: { totalBytes?: number; etag?: string } = {};
-          let inputTail = Promise.resolve();
+          type InputCommand =
+            | { readonly type: "ready" }
+            | { readonly type: "input-credit"; readonly message: Extract<FlacWorkerResponse, { type: "input-credit" }> }
+            | { readonly type: "complete"; readonly message: Extract<FlacWorkerResponse, { type: "complete" }> };
+          const inputQueue = Effect.runSync(Queue.bounded<InputCommand>(1));
+          let inputLane = Promise.resolve();
+          let preparedMetadata: Readonly<{
+            readonly streamInfo: import("./native-flac-metadata.js").NativeFlacStreamInfo;
+            readonly expectedFrames: number;
+            readonly totalPcmBytes: number;
+          }> | undefined;
           let watchdog: ReturnType<typeof setTimeout> | undefined;
           const resetWatchdog = (phase: "decoder-load" | "metadata" | "frame" | "finish") => {
             if (watchdog !== undefined) clearTimeout(watchdog);
@@ -183,7 +207,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             }
             if (!successful) controller.abort(error);
             if (!successful) physical.terminate();
-            void inputTail.then(() => {
+            void inputLane.then(() => {
               if (successful) resolve(); else reject(error);
             });
           };
@@ -198,7 +222,9 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           const range = (phase: "probe" | "metadata" | "audio", start: number, end: number) => {
             networkPending += 1;
             resetWatchdog("frame");
-            return readExactFlacRange({
+            let handoffRelease: (() => void) | undefined;
+            let handed = false;
+            return readExactFlacRangeEffect({
             locate: options.locate,
             ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
             ...(options.readDeadlineMs === undefined ? {} : { readDeadlineMs: options.readDeadlineMs }),
@@ -207,66 +233,81 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             retainRange, downloadAdmission: downloads,
             ...(diagnostics === undefined ? {} : { diagnostics }),
             ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
+            onProduced: release => { handoffRelease = release; },
             onActivity: () => resetWatchdog(phase === "audio" ? "frame" : phase === "metadata" ? "metadata" : "decoder-load"),
-            }).finally(() => {
-              networkPending -= 1;
-              resetWatchdog(phase === "audio" ? "frame" : "metadata");
-            });
+            }).pipe(
+              Effect.tap(() => Effect.sync(() => { handed = true; })),
+              Effect.ensuring(Effect.sync(() => {
+                if (!handed) handoffRelease?.();
+                networkPending -= 1;
+                resetWatchdog(phase === "audio" ? "frame" : "metadata");
+              })),
+            );
           };
-          const prepare = async () => {
-            const parsed = await (async () => {
-              const probe = await range("probe", 0, NATIVE_FLAC_STREAMINFO_PROBE_BYTES - 1);
-              try {
-                totalBytes = probe.totalBytes;
-                return parseNativeFlacStreamInfo(probe.bytes, resolveOptions.expected);
-              } finally { probe.release(); }
-            })();
-            const scanner = new NativeFlacMetadataScanner(parsed.streamInfoIsFinal);
-            offset = NATIVE_FLAC_STREAMINFO_PROBE_BYTES;
-            while (!scanner.complete) {
-              const header = await range("metadata", scanner.nextHeaderOffset, scanner.nextHeaderOffset + 3);
-              try { offset = scanner.acceptHeader(header.bytes, header.totalBytes).nextOffset; }
-              finally { header.release(); }
-            }
-            if (totalBytes === undefined || offset >= totalBytes) throw new EngineWebAdapterError("stem.flac.invalid", "FLAC has no compressed audio suffix");
-            expectedFrames = resolveOptions.expected?.frames ?? parsed.streamInfo.totalSamples;
-            if (expectedFrames === 0) {
-              throw new EngineWebAdapterError("stem.flac.shape", "Unknown FLAC total samples require a compiled source declaration");
-            }
-            totalPcmBytes = resolveOptions.expected?.canonicalBytes ??
-              expectedFrames * parsed.streamInfo.channels * (parsed.streamInfo.bitDepth / 8);
-            physical.postMessage({
-              type: "initialize", requestId, streamInfo: parsed.streamInfo, expectedFrames, totalPcmBytes,
+          const inputProgram = Effect.scoped(Effect.gen(function*() {
+            const source = sourceFactory({
+              identity,
+              range,
+              ...(resolveOptions.expected === undefined ? {} : { expected: resolveOptions.expected }),
             });
-            resetWatchdog("frame");
-          };
-          const handleCredit = async (message: Extract<FlacWorkerResponse, { type: "input-credit" }>) => {
-            if (stopping) return;
-            if (totalBytes === undefined || offset >= totalBytes) throw new EngineWebAdapterError("stem.decode.worker", "FLAC Worker requested input outside the audio suffix");
-            if (!Number.isSafeInteger(message.maximumBytes) || message.maximumBytes < 1 || message.maximumBytes > FLAC_INPUT_SLOT_BYTES) {
-              throw new EngineWebAdapterError("stem.decode.worker", "FLAC Worker requested invalid input credit");
+            let initialized = false;
+            for (;;) {
+              const command = yield* Queue.take(inputQueue);
+              if (command.type === "ready") {
+                if (initialized) return yield* new DecoderByteSourceError({ operation: "prepare", message: "FLAC Worker sent ready twice" });
+                preparedMetadata = yield* source.prepare;
+                initialized = true;
+                try {
+                  physical.postMessage({
+                    type: "initialize", requestId, streamInfo: preparedMetadata.streamInfo,
+                    expectedFrames: preparedMetadata.expectedFrames, totalPcmBytes: preparedMetadata.totalPcmBytes,
+                  });
+                } catch (cause) {
+                  return yield* new DecoderByteSourceError({ operation: "prepare", message: "FLAC decoder initialization could not be sent", cause });
+                }
+                resetWatchdog("frame");
+              } else if (command.type === "input-credit") {
+                if (!initialized) return yield* new DecoderByteSourceError({ operation: "read", message: "FLAC Worker requested input before readiness" });
+                const message = command.message;
+                const result = yield* source.read(message.maximumBytes);
+                try {
+                  if (stopping || controller.signal.aborted) return;
+                  if (result.bytes.byteLength < 1 || result.bytes.byteLength > message.maximumBytes || result.bytes.byteLength > FLAC_INPUT_SLOT_BYTES) {
+                    return yield* new DecoderByteSourceError({ operation: "read", message: "FLAC decoder input exceeded its credit" });
+                  }
+                  decoderInput!.publish(result.bytes, result.end);
+                  resetWatchdog("frame");
+                } finally { result.release(); }
+              } else {
+                if (!initialized) return yield* new DecoderByteSourceError({ operation: "finish", message: "FLAC Worker completed before readiness" });
+                const message = command.message;
+                if (message.pcmBytes !== decodedBytes || message.frames !== decodedFrames ||
+                  (options.processing !== undefined && (decodedBytes !== preparedMetadata!.totalPcmBytes || decodedFrames !== preparedMetadata!.expectedFrames)) ||
+                  (workerHashes && (message.digest !== identity.slice(7) || !/^[a-f0-9]{64}$/u.test(message.digest)))) {
+                  return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "FLAC Worker completion does not verify canonical PCM", { identity }));
+                }
+                if (message.metrics !== undefined) recordWorkerProcessing(diagnostics, message.metrics);
+                if (workerHashes) verifiedDigest = message.digest;
+                yield* source.finish;
+                return;
+              }
             }
-            const length = Math.min(message.maximumBytes, totalBytes - offset);
-            const result = await range("audio", offset, offset + length - 1);
-            try {
-              if (stopping || controller.signal.aborted) return;
-              offset += result.bytes.byteLength;
-              decoderInput!.publish(result.bytes, offset === totalBytes);
-              resetWatchdog("frame");
-            } finally { result.release(); }
+          }));
+          const enqueue = (command: InputCommand) => {
+            if (!Queue.offerUnsafe(inputQueue, command)) {
+              stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker input-command queue overflow", {
+                identity, limit: 1,
+              }), true);
+            }
           };
           const onMessage = (event: MessageEvent<FlacWorkerResponse>) => {
             const message = event.data;
             if (stopping || message.requestId !== requestId) return;
             resetWatchdog(message.type === "ready" ? "metadata" : message.type === "complete" ? "finish" : "frame");
             if (message.type === "ready") {
-              const input = inputTail.then(prepare);
-              inputTail = input.catch(() => undefined);
-              void input.catch((error) => stop(error, true));
+              enqueue({ type: "ready" });
             } else if (message.type === "input-credit") {
-              const input = inputTail.then(() => handleCredit(message));
-              inputTail = input.catch(() => undefined);
-              void input.catch((error) => stop(error, true));
+              enqueue({ type: "input-credit", message });
             } else if (message.type === "pcm") {
               if (!(message.bytes instanceof ArrayBuffer) || message.bytes.byteLength > MAXIMUM_CANONICAL_OUTPUT_BYTES || blocks.length >= 2) {
                 stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker exceeded two unconsumed PCM outputs", {
@@ -287,15 +328,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               });
               notify();
             } else if (message.type === "complete") {
-              if (message.pcmBytes !== decodedBytes || message.frames !== decodedFrames ||
-                (options.processing !== undefined && (decodedBytes !== totalPcmBytes || decodedFrames !== expectedFrames)) ||
-                (workerHashes && (message.digest !== identity.slice(7) || !/^[a-f0-9]{64}$/u.test(message.digest)))) {
-                stop(new EngineWebAdapterError("stem.corrupt", "FLAC Worker completion does not verify canonical PCM", { identity }), true);
-                return;
-              }
-              if (message.metrics !== undefined) recordWorkerProcessing(diagnostics, message.metrics);
-              if (workerHashes) verifiedDigest = message.digest;
-              stop(undefined, false, true);
+              enqueue({ type: "complete", message });
             } else if (message.type === "error") {
               stop(workerError(message), false);
             }
@@ -303,6 +336,10 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           physical.addEventListener("message", onMessage);
           physical.addEventListener("error", onWorkerFailure);
           physical.addEventListener("messageerror", onMessageError);
+          inputLane = Effect.runPromise(inputProgram, { signal: controller.signal }).then(
+            () => { if (!stopping) stop(undefined, false, true); },
+            (error) => { if (!stopping) stop(decoderSourceError(error), true); },
+          );
           resetWatchdog("decoder-load");
           try {
             physical.postMessage({

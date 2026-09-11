@@ -5,11 +5,12 @@ import { MemoryStemStorageBackend } from "../src/stems/storage.js";
 import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Effect } from "effect";
 
 import { ADAPTER_ASSETS, createFlacWorker } from "../src/assets.js";
 import { EngineWebAdapterError } from "../src/errors.js";
 import { readExactFlacRange } from "../src/stems/flac-delivery.js";
-import { createFlacStemResolver } from "../src/stems/flac-resolver.js";
+import { createFlacStemResolver, createFlacStemResolverWithSource } from "../src/stems/flac-resolver.js";
 import { FlacWorkerPool } from "../src/stems/flac-worker-pool.js";
 import type {
   FlacWorkerLike,
@@ -351,6 +352,57 @@ test("resolver follows Worker credit with exact nonoverlapping ranges and dispos
     message.type === "start")!;
   assert.equal(start.decoderWasmUrl, "https://caller.invalid/decoder.wasm");
   assert.equal(start.inputSlot.bytes.byteLength, 256 * 1024);
+});
+
+test("private input lane consumes one synthetic sequential source with bounded credits", async () => {
+  const worker = new FakeWorker();
+  const encoded = new Uint8Array([1, 2, 3, 4, 5]);
+  const streamInfo = Object.freeze({
+    sampleRateHz: 44_100 as const, channels: 1 as const, bitDepth: 16 as const, totalSamples: 1,
+    minimumBlockSamples: 16, maximumBlockSamples: 16, minimumFrameBytes: 0, maximumFrameBytes: 0,
+    streamMd5: new Uint8Array(16), decoderDescription: new Uint8Array(42),
+  });
+  let prepares = 0;
+  let reads = 0;
+  let activeReads = 0;
+  let activePeak = 0;
+  let releases = 0;
+  let finishes = 0;
+  const resolver = createFlacStemResolverWithSource({
+    createWorker: () => worker,
+    hardwareConcurrency: 2,
+    locate: () => assert.fail("synthetic source must not invoke the ranged locator"),
+  }, () => {
+    let offset = 0;
+    return {
+      prepare: Effect.sync(() => {
+        prepares += 1;
+        return { streamInfo, expectedFrames: 1, totalPcmBytes: 4 };
+      }),
+      read: (maximumBytes: number) => Effect.sync(() => {
+        activeReads += 1;
+        activePeak = Math.max(activePeak, activeReads);
+        try {
+          reads += 1;
+          const length = Math.min(maximumBytes, encoded.byteLength - offset);
+          const bytes = encoded.slice(offset, offset + length);
+          offset += length;
+          return { bytes, end: offset === encoded.byteLength, release: () => { releases += 1; } };
+        } finally { activeReads -= 1; }
+      }),
+      finish: Effect.sync(() => { finishes += 1; }),
+    };
+  });
+  const resolved = await resolver.resolve(IDENTITY);
+  const reader = resolved.stream.getReader();
+  assert.deepEqual([...((await reader.read()).value ?? [])], [9, 8, 7, 6]);
+  assert.equal((await reader.read()).done, true);
+  assert.equal(prepares, 1);
+  assert.equal(reads, 2);
+  assert.equal(activePeak, 1);
+  assert.equal(releases, 2);
+  assert.equal(finishes, 1);
+  assert.deepEqual(worker.acceptedInputBytes, [4, 1]);
 });
 
 test("mid-body retry resumes at Worker credit without duplicated accepted bytes", async () => {

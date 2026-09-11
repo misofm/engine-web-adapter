@@ -1,5 +1,9 @@
 # Extract the private FLAC decoder input lane
 
+## Attempt 1 intermediate implementation checkpoint
+
+Luna xhigh extracted the private byte source and provided range Effect, replaced inputTail with a capacity-one Effect Queue, and added a synthetic sequential source through the existing controller. Producer reports typecheck, compiled focused resolver/cancellation/watchdog/source tests, lint and format checks passing. This is recoverable implementation groundwork, not an independent verdict. Root identified remaining contract work before full qualification: controller-side credit validation before source invocation, input admission shutdown at completion, cancellation/borrow handoff ownership, preserving complete Effect failure/cleanup causes at the existing edge, and delayed/rejecting finish plus invalid-credit/overflow/cancellation discriminators. Avoid an unnecessary extra copy of every legacy range. Full package and actual packed Chromium native decode checks remain. No acquisition/indexed install or public API is claimed by this checkpoint.
+
 Astra medium scope, rechecked by root against merged adapter d23f98579c8cf59e8e8109bf1d864ac62f730b3d after issue64 acceptance. The FLAC resolver/delivery source is unchanged from the planner baseline. This is acquisition slice A only, after accepted store/session integration. No public API, indexed parser, full GET, sparse install, codec ABI or app change.
 
 ## Smaller than the acquisition umbrella

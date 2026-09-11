@@ -40,6 +40,21 @@ interface DeliveryState {
   etag?: string;
 }
 
+interface FlacRangeReadOptions extends FlacHttpOptions {
+  readonly identity: StemIdentity;
+  readonly phase: "probe" | "metadata" | "audio";
+  readonly start: number;
+  readonly end: number;
+  readonly signal: AbortSignal;
+  readonly state: DeliveryState;
+  readonly onProgress?: (progress: StemProgress) => void;
+  readonly onActivity?: () => void;
+  readonly retainRange?: (bytes: number) => () => void;
+  readonly downloadAdmission?: BoundedStemAdmission;
+  readonly diagnostics?: IngestDiagnostics;
+  readonly onProduced?: (release: () => void) => void;
+}
+
 function failure(
   code: "stem.delivery.address" | "stem.delivery.http" | "stem.delivery.range" | "stem.delivery.retry_exhausted" | "stem.delivery.stall",
   message: string,
@@ -93,25 +108,13 @@ function requestFor(
 }
 
 /** Execute one credit-sized exact range through Effect HttpClient, including physical retries. */
-export function readExactFlacRange(options: FlacHttpOptions & {
-  readonly identity: StemIdentity;
-  readonly phase: "probe" | "metadata" | "audio";
-  readonly start: number;
-  readonly end: number;
-  readonly signal: AbortSignal;
-  readonly state: DeliveryState;
-  readonly onProgress?: (progress: StemProgress) => void;
-  readonly onActivity?: () => void;
-  readonly retainRange?: (bytes: number) => () => void;
-  readonly downloadAdmission?: BoundedStemAdmission;
-  readonly diagnostics?: IngestDiagnostics;
-}): Promise<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>> {
+export function readExactFlacRangeEffect(options: FlacRangeReadOptions): Effect.Effect<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>, EngineWebAdapterError> {
   const maximumAttempts = options.maximumAttempts ?? 4;
   const deadlineMs = options.readDeadlineMs ?? 30_000;
   if (!Number.isSafeInteger(maximumAttempts) || maximumAttempts < 1) throw new RangeError("maximumAttempts must be positive");
   if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1) throw new RangeError("readDeadlineMs must be positive");
   if (!Number.isSafeInteger(options.start) || !Number.isSafeInteger(options.end) || options.start < 0 || options.end < options.start) {
-    return Promise.reject(failure("stem.delivery.range", "Requested FLAC range is invalid", {
+    return Effect.fail(failure("stem.delivery.range", "Requested FLAC range is invalid", {
       identity: options.identity,
       phase: options.phase,
       range: [options.start, options.end],
@@ -122,7 +125,6 @@ export function readExactFlacRange(options: FlacHttpOptions & {
   const expectedBytes = options.end - options.start + 1;
   const range = `bytes=${options.start}-${options.end}`;
 
-  let unhandedRelease: (() => void) | undefined;
   const physicalAttempt = (attempt: number) => {
     let release = () => {};
     let produced = false;
@@ -296,6 +298,11 @@ export function readExactFlacRange(options: FlacHttpOptions & {
         status: response.status, retryable: false, expectedBytes, receivedBytes: received,
       }));
     }
+    // Transfer a release handle before invoking callbacks. A callback may
+    // synchronously abort the enclosing input lane before its caller receives
+    // the range result.
+    options.onProduced?.(release);
+    produced = true;
     options.onProgress?.({
       stage: options.phase === "probe" ? "probing" : "fetching",
       identity: options.identity,
@@ -306,8 +313,6 @@ export function readExactFlacRange(options: FlacHttpOptions & {
     });
     // The Effect has produced a result, but its outer scope can still fail or
     // be interrupted before the resolver receives that result.
-    unhandedRelease = release;
-    produced = true;
     return { bytes, totalBytes, release };
     }).pipe(Effect.ensuring(Effect.sync(() => { if (!produced) release(); })))).pipe(
       Effect.catch(error => Effect.fail(cleanupFailure ?? error)),
@@ -335,7 +340,19 @@ export function readExactFlacRange(options: FlacHttpOptions & {
     ? operation
     : operation.pipe(Effect.provideService(FetchHttpClient.Fetch, options.fetch));
   const provided = transported.pipe(Effect.provide(FetchHttpClient.layer));
-  return Effect.runPromise(provided, { signal: options.signal }).then((result) => {
+  return provided.pipe(Effect.mapError((error) => error instanceof EngineWebAdapterError
+    ? error
+    : failure("stem.delivery.http", "FLAC range operation failed", {
+      identity: options.identity, phase: options.phase, range: [options.start, options.end], attempt: 0, retryable: false,
+    }, error)));
+}
+
+export function readExactFlacRange(options: FlacRangeReadOptions): Promise<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>> {
+  let unhandedRelease: (() => void) | undefined;
+  let effect: Effect.Effect<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>, EngineWebAdapterError>;
+  try { effect = readExactFlacRangeEffect({ ...options, onProduced: release => { unhandedRelease = release; } }); }
+  catch (error) { return Promise.reject(error); }
+  return Effect.runPromise(effect, { signal: options.signal }).then((result) => {
     // Only this successful Promise handoff transfers ownership to the resolver.
     unhandedRelease = undefined;
     return result;
