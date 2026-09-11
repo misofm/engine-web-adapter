@@ -84,9 +84,9 @@ await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><sc
 await mkdir(join(consumer, "src"));
 await writeFile(join(consumer, "src", "main.ts"), browserSource(profile));
 await writeFile(join(consumer, "consumer-check.ts"), `
-import { EngineWebAdapterError, openEngineWebSession } from "@misofm/engine-web-adapter";
+import { EngineWebAdapterError, openEngineWebSession, openSparseEngineWebSession } from "@misofm/engine-web-adapter";
 import type {
-  EngineWebConsole, EngineWebSession, EngineWebSessionOptions, SourceObservation, FeedDiagnostics, MeterUpdate, TelemetryUpdate, TrackMeter,
+  EngineWebConsole, EngineWebSession, EngineWebSessionOptions, SparseEngineWebSessionOptions, SourceObservation, FeedDiagnostics, MeterUpdate, TelemetryUpdate, TrackMeter,
 } from "@misofm/engine-web-adapter";
 import { createFlacStemResolver, PcmPumpWorkerClient } from "@misofm/engine-web-adapter/stems";
 import { ADAPTER_ASSETS } from "@misofm/engine-web-adapter/assets";
@@ -97,6 +97,7 @@ const minimal: EngineWebSessionOptions = {
   document: "{}",
   flac: { locate: () => "https://caller.invalid/stem.flac" },
 };
+const sparseMinimal: SparseEngineWebSessionOptions = { document: "{}" };
 declare const session: EngineWebSession;
 const live: EngineWebConsole = session.console;
 const observation: SourceObservation = session.observeSource("source");
@@ -112,8 +113,8 @@ const peak: TrackMeter | undefined = update.tracks.get("track-000");
 declare const failure: EngineWebAdapterError;
 const remedy: string = failure.remedy;
 const transient: boolean = failure.transient;
-void [openEngineWebSession, createFlacStemResolver, PcmPumpWorkerClient, ADAPTER_ASSETS, packageJson,
-  minimal, live, meters, telemetry, peak, remedy, transient];
+void [openEngineWebSession, openSparseEngineWebSession, createFlacStemResolver, PcmPumpWorkerClient, ADAPTER_ASSETS, packageJson,
+  minimal, sparseMinimal, live, meters, telemetry, peak, remedy, transient];
 `);
 await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: {
   strict: true, noEmit: true, target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext",
@@ -295,7 +296,7 @@ function resolveChromeExecutable() {
 
 function browserSource(profile) { return String.raw`
 import { session } from "@misofm/engine";
-import { createIngestDiagnostics, openEngineWebSession } from "@misofm/engine-web-adapter";
+import { createIngestDiagnostics, openEngineWebSession, openSparseEngineWebSession } from "@misofm/engine-web-adapter";
 import { MSB1_CONTROL, PcmPumpWorkerClient } from "@misofm/engine-web-adapter/stems";
 import { ADAPTER_ASSETS } from "@misofm/engine-web-adapter/assets";
 
@@ -601,6 +602,52 @@ async function exerciseSparseWorker(ring: SharedArrayBuffer) {
     return { writes: Atomics.load(control, MSB1_CONTROL.WROTE), reads, generation: String(generation), scratch: pump.allocation.maximumReadScratchBytes };
   } finally { await pump.close(); }
 }
+async function exerciseSparseSession() {
+  const sparseFrames = 256;
+  const sparseIdentity = ("sha256:" + "4".repeat(64)) as any;
+  const sparseSource = { id: "sparse-source-000", spec: {
+    channels: profile.channels, bitDepth: profile.bitDepth, frames: sparseFrames, content: sparseIdentity,
+  } };
+  const sparseDocument = session({ id: "packed-sparse", sampleRateHz: profile.sampleRateHz, quantumFrames: 128 })
+    .source(sparseSource.id, sparseSource.spec)
+    .track("sparse-track-000", { source: { id: sparseSource.id, left: 0, right: profile.channels - 1 } })
+    .output("sparse-out")
+    .route({ id: "sparse-route", source: { kind: "track", trackId: "sparse-track-000", tap: "post_matrix" }, destination: { kind: "output_input", outputId: "sparse-out" } });
+  const frameBytes = profile.channels * (profile.bitDepth / 8);
+  const packed = new Uint8Array(4 * frameBytes);
+  const view = new DataView(packed.buffer);
+  for (let frame = 0; frame < 4; frame++) for (let channel = 0; channel < profile.channels; channel++) {
+    const sample = (frame + 1) * (channel === 0 ? 4096 : -2048);
+    const offset = (frame * profile.channels + channel) * (profile.bitDepth / 8);
+    if (profile.bitDepth === 16) view.setInt16(offset, sample, true);
+    else { view.setUint8(offset, sample & 0xff); view.setUint8(offset + 1, (sample >> 8) & 0xff); view.setUint8(offset + 2, (sample >> 16) & 0xff); }
+  }
+  const descriptor = { kind: "sparse-pcm" as const, data: new Blob([packed]), index: {
+    format: "miso_sparse_pcm_v1" as const, identity: sparseIdentity, sampleRateHz: profile.sampleRateHz,
+    channels: profile.channels, bitDepth: profile.bitDepth, frames: sparseFrames,
+    intervals: [{ startFrame: 2, frames: 2, byteOffset: 0 }, { startFrame: 200, frames: 2, byteOffset: 2 * frameBytes }],
+  } };
+  let reads = 0;
+  let leaseClosed = 0;
+  const lease = {
+    leaseId: "packed-sparse", sources: [],
+    async read(identity: string) { if (identity !== sparseIdentity) throw new Error("unexpected sparse identity"); reads += 1; return descriptor; },
+    async close() { leaseClosed += 1; },
+  };
+  const store = { async openSession(options: any) { return { ...lease, sources: options.sources }; } };
+  const engine = await openSparseEngineWebSession({
+    document: sparseDocument, console: false, store,
+    createPump: async ({ lease: receivedLease, sources, signal }) => PcmPumpWorkerClient.createSparse({
+      lease: receivedLease, sources, signal, windowFrames: sparseFrames,
+    }),
+  });
+  await engine.play();
+  await engine.seekFrames(200);
+  await engine.pause();
+  await engine.close();
+  if (engine.state !== "closed" || reads !== 1 || leaseClosed !== 1) throw new Error("packed sparse session lifecycle did not settle exactly once");
+  return { state: engine.state, reads, leaseClosed };
+}
 try {
   const coldIngest = createIngestDiagnostics();
   const warmIngest = createIngestDiagnostics();
@@ -630,6 +677,7 @@ try {
   const coldClosed = cold.state === "closed";
   if (sourceObservation.pull(() => { throw new Error("closed observation delivered PCM"); }) !== 0) throw new Error("observer survived session close");
   const sparseWorker = await exerciseSparseWorker(rings[0]!);
+  const sparseSession = await exerciseSparseSession();
   const coldLocatorCalls = locatorCalls;
   const coldFlacWorkers = flacWorkers;
   const coldNetworkRequests = networkRequests;
@@ -661,7 +709,7 @@ try {
     coldNetworkRequests, warmNetworkRequests: networkRequests,
     observedRemoteBytes, observedEtag,
     observedChunks, observationBytes: allocation.observationBytes, coldClosed, warmClosed, consoleFirst, meterFirst, notAttached, meterNotAttached,
-    ...counters, seekProofs, terminalPumpFailures, sparseWorker,
+    ...counters, seekProofs, terminalPumpFailures, sparseWorker, sparseSession,
   };
 } catch (error) {
   globalThis.__error = describe(error);

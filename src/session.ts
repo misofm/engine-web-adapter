@@ -42,12 +42,7 @@ import type {
   StemSessionLease,
   StemStore,
 } from "./stems/types.js";
-import type {
-  SparsePcmExpectation,
-  SparsePcmSessionLease,
-  SparsePcmSessionOptions,
-  SparsePcmSessionSource,
-} from "./stems/sparse-store.js";
+import type { SparsePcmSessionLease, SparsePcmSessionOptions, SparsePcmSessionSource } from "./stems/sparse-store.js";
 
 const PREFILL_TIMEOUT_MS = 2_000;
 
@@ -70,6 +65,16 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
 
 export async function openSparseEngineWebSession(options: SparseEngineWebSessionOptions): Promise<EngineWebSession> {
   const { store, resolver, maximumMetadataBytes, createPump, assets } = options;
+  // This entry point has one source contract. Refuse dense/FLAC-shaped input
+  // before capability checks, scratch compilation, or any store work can run.
+  const candidate = options as unknown as { readonly flac?: unknown };
+  if (candidate.flac !== undefined || (resolver !== undefined && typeof resolver !== "function")) {
+    throw new EngineWebAdapterError(
+      "session.input_path",
+      "Sparse sessions accept only the sparse PCM resolver path",
+      { hasFlac: candidate.flac !== undefined, hasDenseResolver: resolver !== undefined && typeof resolver !== "function" },
+    );
+  }
   return openSessionCommon(options, (input) => prepareSparseSources({
     ...input, store, resolver, maximumMetadataBytes, createPump, assets,
   }));
@@ -480,7 +485,7 @@ const acquireSparseSources = Effect.fn("Session.acquireSparseSources")(function*
   return {
     async close() {
       closing ??= Effect.runPromiseExit(Scope.close(scope, Exit.void)).then((exit) => {
-        if (Exit.isFailure(exit)) throw Cause.squash(exit.cause);
+        if (Exit.isFailure(exit)) throw mapSparseSessionCause(exit.cause);
       });
       return closing;
     },
@@ -500,7 +505,42 @@ const acquireSparseSources = Effect.fn("Session.acquireSparseSources")(function*
 });
 
 async function prepareSparseSources(input: SparseSourcePreparationInput): Promise<PreparedSources> {
-  return Effect.runPromise(acquireSparseSources(input));
+  const exit = await Effect.runPromiseExit(acquireSparseSources(input));
+  if (Exit.isFailure(exit)) throw mapSparseSessionCause(exit.cause);
+  return exit.value;
+}
+
+/**
+ * A sparse opening owns more than one resource, so a Promise rejection must
+ * retain every Effect failure. Cause.squash intentionally selects one defect
+ * and would hide a later lease/store/backend cleanup failure.
+ */
+function mapSparseSessionCause(cause: Cause.Cause<unknown>): unknown {
+  const reasons = cause.reasons;
+  if (reasons.length === 0) {
+    return new EngineWebAdapterError(
+      "session.open",
+      "Sparse session operation failed without a cause",
+      {},
+      new Error("Sparse session operation failed without a cause"),
+    );
+  }
+  const values = reasons.map((reason) => {
+    if (Cause.isFailReason(reason)) return reason.error;
+    if (Cause.isDieReason(reason)) return reason.defect;
+    const interrupted = new Error("Sparse session operation was interrupted", { cause: reason });
+    interrupted.name = "AbortError";
+    return interrupted;
+  });
+  const primary = values[0];
+  if (primary instanceof EngineWebAdapterError) {
+    if (values.length === 1) return primary;
+    return new EngineWebAdapterError(primary.code, primary.message, primary.details, new AggregateError(values, "Sparse session operation failed"));
+  }
+  const preserved = values.length === 1 && values[0] !== undefined
+    ? values[0]
+    : new AggregateError(values, "Sparse session operation failed");
+  return new EngineWebAdapterError("session.open", "Sparse session operation failed", {}, preserved);
 }
 
 function sparseSessionSources(

@@ -3,6 +3,7 @@ import { createIngestDiagnostics } from "../src/index.js";
 import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { MemoryStemStorageBackend } from "../src/stems/storage.js";
+import { OpfsStorageBackend, VerifiedSparsePcmStore } from "../src/stems/index.js";
 import { BrowserBootError, Msb1RingWriter, PcmFeedError } from "@misofm/engine/browser";
 import { scratchBootWithWorker, prepareBrowserSessionWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
@@ -12,7 +13,7 @@ import type { BrowserEngine } from "@misofm/engine/browser";
 import { EngineWebAdapterError, openEngineWebSession, openSparseEngineWebSession } from "../src/index.js";
 import { assertEngineWebCapabilities } from "../src/capabilities.js";
 import { MSB1_CONTROL } from "../src/stems/ring.js";
-import type { EngineAudioContext, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
+import type { EngineAudioContext, EnginePump, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
 import type { FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
 import type { DeclaredStemSource, StemResolver, StemSessionLease, StemStore } from "../src/stems/types.js";
 import type { SparsePcmSessionLease, SparsePcmSessionOptions } from "../src/stems/sparse-store.js";
@@ -400,6 +401,123 @@ test("sparse session prepares complete authoritative sources through the shared 
   assert.equal(leaseClosed, 1);
   assert.equal(storeClosed, 0, "injected sparse stores remain caller-owned");
   assert.ok(events.indexOf("pump.close") < events.indexOf("sparse.map.close"));
+});
+
+test("sparse entry refuses dense and FLAC-shaped paths before any boot or store work", async () => {
+  let scratches = 0;
+  let stores = 0;
+  const common = {
+    ...baseOptions(), resolver: undefined,
+    capabilityScope: { ...capabilities(), crossOriginIsolated: false },
+    scratchBoot: async () => { scratches += 1; throw new Error("scratch must not run"); },
+    store: { async openSession() { stores += 1; throw new Error("store must not run"); } },
+  };
+  await assert.rejects(
+    openSparseEngineWebSession({ ...common, flac: {} } as unknown as Parameters<typeof openSparseEngineWebSession>[0]),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.input_path",
+  );
+  await assert.rejects(
+    openSparseEngineWebSession({ ...common, resolver: { async resolve() { throw new Error("resolver must not run"); } } } as unknown as Parameters<typeof openSparseEngineWebSession>[0]),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.input_path",
+  );
+  assert.equal(scratches, 0);
+  assert.equal(stores, 0);
+});
+
+test("sparse acquisition maps primary, lease, store and OPFS cleanup failures together", async (t) => {
+  const primary = new Error("caller cancelled");
+  const leaseFailure = new Error("lease cleanup failed");
+  const storeFailure = new Error("store cleanup failed");
+  const backendFailure = new Error("backend cleanup failed");
+  const controller = new AbortController(); controller.abort(primary);
+  const lease: SparsePcmSessionLease = {
+    leaseId: "abandoned", sources: [],
+    async read() { throw new Error("unreachable"); },
+    async close() { throw leaseFailure; },
+  };
+  t.mock.method(VerifiedSparsePcmStore.prototype, "openSession", async () => lease);
+  t.mock.method(VerifiedSparsePcmStore.prototype, "close", async () => { throw storeFailure; });
+  t.mock.method(OpfsStorageBackend.prototype, "close", () => { throw backendFailure; });
+  const denseBase = baseOptions();
+  const sparseBase = { document: denseBase.document, sources: denseBase.sources!, leaseId: denseBase.leaseId! };
+  await assert.rejects(
+    openSparseEngineWebSession({
+      ...sparseBase, resolver: undefined, signal: controller.signal, capabilityScope: capabilities(),
+      scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+        backend: "simd128", tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }] }),
+    }),
+    (error: unknown) => {
+      if (!(error instanceof EngineWebAdapterError) || !(error.cause instanceof AggregateError)) return false;
+      const causes = error.cause.errors;
+      return error.code === "session.open"
+        && causes.includes(primary) && causes.includes(leaseFailure)
+        && causes.includes(storeFailure) && causes.includes(backendFailure);
+    },
+  );
+});
+
+test("sparse opening settles a cancelled map before closing a late lease", async () => {
+  const opened = deferred<void>();
+  const late = deferred<SparsePcmSessionLease>();
+  const controller = new AbortController();
+  let observedSignal: AbortSignal | undefined;
+  let leaseClosed = 0;
+  const lease: SparsePcmSessionLease = {
+    leaseId: "late", sources: [],
+    async read() { throw new Error("unreachable"); },
+    async close() { leaseClosed += 1; },
+  };
+  const denseBase = baseOptions();
+  const opening = openSparseEngineWebSession({
+    document: denseBase.document, sources: denseBase.sources!, leaseId: "late", resolver: undefined,
+    signal: controller.signal, capabilityScope: capabilities(),
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }] }),
+    store: { async openSession(options) { observedSignal = options.signal; opened.resolve(); return late.promise; } },
+  });
+  await opened.promise;
+  const reason = new Error("opening cancelled"); controller.abort(reason);
+  assert.equal(observedSignal?.aborted, true);
+  late.resolve(lease);
+  await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.open");
+  assert.equal(leaseClosed, 1, "a lease that settled after cancellation is closed exactly once");
+});
+
+test("sparse pump cancellation closes a pump that settles after opening is abandoned", async () => {
+  const pumpReady = deferred<EnginePump>();
+  const pumpCalled = deferred<void>();
+  const controller = new AbortController();
+  let leaseClosed = 0;
+  const lease: SparsePcmSessionLease = {
+    leaseId: "late-pump", sources: [],
+    async read() { throw new Error("custom pump does not read descriptors"); },
+    async close() { leaseClosed += 1; },
+  };
+  const events: string[] = [];
+  const context = fakeContext(events);
+  const denseBase = baseOptions();
+  const opening = openSparseEngineWebSession({
+    document: denseBase.document, sources: denseBase.sources!, leaseId: "late-pump", resolver: undefined,
+    signal: controller.signal, console: false, capabilityScope: capabilities(),
+    scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
+      backend: "simd128", tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }] }),
+    store: { async openSession() { return lease; } },
+    createContext: () => context,
+    createHost: async () => ({ node: { connect() {}, disconnect() {} }, async dispose() {} } as unknown as BrowserEngine["host"]),
+    createAttachNode: () => ({ port: { postMessage(message: unknown) {
+      const request = message as { op: string; rings?: SharedArrayBuffer[] };
+      if (request.op === "attach") for (const ring of request.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+    } }, disconnect() {} }),
+    createPump: async () => { pumpCalled.resolve(); return pumpReady.promise; },
+    createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+  });
+  await pumpCalled.promise;
+  const reason = new Error("pump opening cancelled"); controller.abort(reason);
+  let pumpClosed = 0;
+  pumpReady.resolve({ async seekFrames() { return 0n; }, close() { pumpClosed += 1; } });
+  await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.open");
+  assert.equal(pumpClosed, 1, "a late pump is closed after the prefill observes cancellation");
+  assert.equal(leaseClosed, 1);
 });
 
 test("session snapshots document and source declarations before deferred scratch work", async () => {
