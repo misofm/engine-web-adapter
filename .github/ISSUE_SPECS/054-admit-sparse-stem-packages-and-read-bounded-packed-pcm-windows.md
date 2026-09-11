@@ -1,6 +1,6 @@
 # Admit sparse stem packages and read bounded packed PCM windows
 
-Status: attempt 2 at `b90a182` received Astra medium FAIL for residual derivation admission; bounded attempt 3 authorized below. Matching adapter GitHub issue: #54. Luna xhigh implements; an independent Astra medium adversarially verifies. Maximum five coherent attempts. No production delivery claim until the successor cache/network/app issues are complete.
+Status: attempt 3 at `633c951` received independent Astra medium PASS. Matching adapter GitHub issue: #54. Luna xhigh implemented; Astra medium adversarially verified. Three coherent attempts used, within the five-attempt limit. This completes the bounded parser/reader foundation; production delivery requires the successor cache/network/app work.
 
 ## Problem and smallest closable capability
 
@@ -163,3 +163,26 @@ Evidence from this worktree:
 No network, store, session, worker, Rust, mono-conversion, version, or
 artist-data behavior changed. Root's attempt-3 checkpoint and the independent
 Astra verdict remain pending.
+
+## Attempt 3 adversarial verdict (Astra medium): PASS
+
+Reviewed clean implementation `633c951`. Oversized nonzero-base source arrays
+reject before a late element is read; negative/unsafe raw offsets reject;
+valid later-source global offsets derive correctly. The focused suite passes
+14/14, including raw header declarations and invalid window ranges. Existing
+205-test, typecheck, format, source-policy and package passes were inspected
+without an unnecessary full rerun. No reviewer source edits were made.
+
+The reviewer also checked the separate admission claims: derivation admits a
+bounded PCM interval index and does not certify a transport object. A large
+caller-provided unit list can coalesce to a small valid PCM index even when its
+hypothetical transport index exceeds 8 MiB. Actual package parser/serializer
+retain the independent 8 MiB index and 8 GiB object gates. Both derivation
+input count and resulting PCM metadata remain bounded. No wire limit or
+correctness gate was weakened.
+
+This PASS establishes deterministic package admission, exact bounded packed
+PCM windows and the public foundation APIs. It does not establish content
+hash verification, persistence, playback integration, registry availability
+or app deployment. The independent reviewer was the non-implementing Astra
+medium brief owner, with the documented session thread-limit constraint.
