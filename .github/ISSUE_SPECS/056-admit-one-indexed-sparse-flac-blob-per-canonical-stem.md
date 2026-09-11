@@ -93,3 +93,27 @@ Node and Bun checks each reported packed-*-: import/roundtrip PASS with
 payload start 481 and payload bytes 8. No browser harness was run because this
 slice contains pure format/index helpers only. Parser admission verifies shape,
 canonical metadata and extents; it does not authenticate FLAC or decoded PCM.
+
+## Attempt 1 adversarial verdict — FAIL
+
+Root checkpointed and pushed attempt 1 as `4df22404c45d33c686ec47746dc250fcf34cd0ca`.
+Independent Astra medium review found one bounded admission defect: the exported
+streaming `admitSparseStemManifest` checks manifest and payload extents but omits
+the 8 GiB total-object ceiling enforced by Blob parse/serialize wrappers. A
+metadata-only fixture with 256 chunks of 32 MiB and a 59,497-byte manifest admits
+8,589,994,105 total bytes, exceeding the 8,589,934,592-byte ceiling, both with and
+without a supplied payload length. No large payload allocation is necessary to
+demonstrate the failure.
+
+Attempt 2 must enforce the same checked `16 + manifestBytes + declaredPayloadBytes`
+ceiling in common streaming manifest admission, before it returns an admitted
+descriptor. Preserve exact known payload-length matching. Add small boundary
+tests for both optional-length modes and an admitted below-limit case, without
+an oversized body or new harness. This revision is confined to admission
+arithmetic/tests and its evidence; storage/network work remains out of scope.
+
+The reviewer independently passed the 16 focused tests and confirmed the
+65,537-item ordinary-array late getter is never touched. No other blocking
+finding was identified. Review uses the independent non-implementing Astra
+medium planning thread, not a fresh context, as disclosed in the brief. Root
+authorizes the bounded second attempt after this evidence is upstream.
