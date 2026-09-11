@@ -9,6 +9,7 @@ import {
   SPARSE_STEM_MAGIC,
   SPARSE_STEM_MAX_CHUNK_BYTES,
   SPARSE_STEM_MAX_INDEX_BYTES,
+  SPARSE_STEM_MAX_OBJECT_BYTES,
   admitSparseStemHeader,
   admitSparseStemManifest,
   assertSparseStemSessionBinding,
@@ -151,6 +152,53 @@ test("raw manifest corpus rejects malformed encodings and extent", async () => {
   const duplicate = text.replace('"format":', '"format":"' + SPARSE_STEM_FORMAT + '","format":');
   assert.throws(() => admitSparseStemManifest(new TextEncoder().encode(duplicate), 10), /unknown|canonical/u);
   await assert.rejects(parseSparseStemPackage(rawManifest(JSON.parse(text), new Uint8Array(9))), /endpoint|Payload/u);
+});
+
+function lexicalJson(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) return "[" + value.map((item) => lexicalJson(item)).join(",") + "]";
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return "{" + Object.keys(record).sort().map((key) => JSON.stringify(key) + ":" + lexicalJson(record[key])).join(",") + "}";
+  }
+  throw new Error("unsupported test JSON value");
+}
+
+function boundaryManifest(totalBytes: number): Uint8Array {
+  let lastBytes = SPARSE_STEM_MAX_CHUNK_BYTES;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const chunks = [];
+    let offset = 0;
+    for (let index = 0; index < 256; index += 1) {
+      const bytes = index === 255 ? lastBytes : SPARSE_STEM_MAX_CHUNK_BYTES;
+      chunks.push(chunk(1, index, bytes, offset));
+      offset += bytes;
+    }
+    const value = manifestWith([{ startFrame: 0, frames: 256, packedFrameOffset: 0 }], chunks, 256);
+    const encoded = new TextEncoder().encode(lexicalJson(value));
+    const desiredPayload = totalBytes - SPARSE_STEM_HEADER_BYTES - encoded.byteLength;
+    const nextLastBytes = desiredPayload - 255 * SPARSE_STEM_MAX_CHUNK_BYTES;
+    if (nextLastBytes === lastBytes) return encoded;
+    lastBytes = nextLastBytes;
+  }
+  throw new Error("boundary manifest did not converge");
+}
+
+test("streaming admission enforces the global object ceiling with or without known payload length", () => {
+  for (const totalBytes of [SPARSE_STEM_MAX_OBJECT_BYTES - 1, SPARSE_STEM_MAX_OBJECT_BYTES, SPARSE_STEM_MAX_OBJECT_BYTES + 1]) {
+    const encoded = boundaryManifest(totalBytes);
+    const declaredPayload = totalBytes - SPARSE_STEM_HEADER_BYTES - encoded.byteLength;
+    assert.ok(declaredPayload > 0);
+    if (totalBytes <= SPARSE_STEM_MAX_OBJECT_BYTES) {
+      assert.doesNotThrow(() => admitSparseStemManifest(encoded, declaredPayload));
+      assert.doesNotThrow(() => admitSparseStemManifest(encoded));
+    } else {
+      assert.throws(() => admitSparseStemManifest(encoded, declaredPayload), /bounded size/u);
+      assert.throws(() => admitSparseStemManifest(encoded), /bounded size/u);
+    }
+  }
 });
 
 test("metadata count limits are preflighted before late getters", () => {

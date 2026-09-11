@@ -138,6 +138,17 @@ function checkProduct(left: number, right: number, path: string): number {
   return product;
 }
 
+function checkObjectLimit(manifestBytes: number, payloadBytes: number): void {
+  const headerAndManifest = checkSum(SPARSE_STEM_HEADER_BYTES, manifestBytes, "stem object");
+  const objectBytes = checkSum(headerAndManifest, payloadBytes, "stem object");
+  if (objectBytes > SPARSE_STEM_MAX_OBJECT_BYTES) {
+    throw corrupt("Sparse stem object exceeds its bounded size", {
+      objectBytes,
+      limit: SPARSE_STEM_MAX_OBJECT_BYTES,
+    });
+  }
+}
+
 function preflightArray(value: unknown, path: string, maximum: number): readonly unknown[] {
   if (!Array.isArray(value)) throw corrupt(path + " must be an array", { path });
   if (value.length > maximum) throw corrupt(path + " exceeds its bounded count", { path, limit: maximum });
@@ -254,6 +265,7 @@ function validateManifest(value: unknown, payloadBytes?: number): SparseStemMani
       limit: SPARSE_STEM_MAX_INDEX_BYTES,
     });
   }
+  checkObjectLimit(encoded.byteLength, payloadBytes ?? expectedChunkOffset);
   return manifest;
 }
 
@@ -335,6 +347,10 @@ export function admitSparseStemManifest(
   if (encoded.byteLength < 1 || encoded.byteLength > SPARSE_STEM_MAX_INDEX_BYTES) {
     throw corrupt("Sparse stem manifest bytes are outside its bounded range", { bytes: encoded.byteLength });
   }
+  if (payloadBytes !== undefined) {
+    integer(payloadBytes, "payloadBytes", 0);
+    checkObjectLimit(encoded.byteLength, payloadBytes);
+  }
   let decoded: unknown;
   try {
     decoded = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(encoded)) as unknown;
@@ -364,10 +380,7 @@ export function serializeSparseStemPackage(value: unknown, payload: SparsePayloa
   const size = payloadSize(payload);
   const manifest = validateSparseStemManifest(value, size);
   const index = canonicalBytes(manifest);
-  const objectBytes = checkSum(checkSum(SPARSE_STEM_HEADER_BYTES, index.byteLength, "stem object"), size, "stem object");
-  if (objectBytes > SPARSE_STEM_MAX_OBJECT_BYTES) {
-    throw corrupt("Sparse stem object exceeds its bounded size", { objectBytes, limit: SPARSE_STEM_MAX_OBJECT_BYTES });
-  }
+  checkObjectLimit(index.byteLength, size);
   const header = new Uint8Array(SPARSE_STEM_HEADER_BYTES);
   header.set(HEADER_MAGIC);
   new DataView(header.buffer).setUint32(8, index.byteLength, true);

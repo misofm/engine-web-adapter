@@ -117,3 +117,24 @@ The reviewer independently passed the 16 focused tests and confirmed the
 finding was identified. Review uses the independent non-implementing Astra
 medium planning thread, not a fresh context, as disclosed in the brief. Root
 authorizes the bounded second attempt after this evidence is upstream.
+
+
+## Attempt 2 evidence (Luna, 2026-09-11)
+
+Corrected the shared singular admission boundary in
+src/stems/sparse-format.ts. Both the optional known payload path and the
+metadata-derived payload endpoint now enforce
+16 + canonical manifest bytes + payload bytes <= 8 GiB, while preserving exact
+known-payload endpoint equality. serializeSparseStemPackage uses the same
+checked helper. Added a metadata-only boundary regression in
+tests/sparse-stems.test.ts for totals 8 GiB - 1, exactly 8 GiB and 8 GiB + 1,
+with and without known payload length, using 256 chunk records at the 32 MiB
+per-chunk ceiling and no large payload allocation.
+
+Focused command:
+
+    npm run build && node scripts/clean-test-dist.mjs && npm exec -- tsc -p tsconfig.test.json && node --test .test-dist/tests/sparse-stems.test.js
+
+Result: 17 tests passed, 0 failed. The build and test TypeScript compilers
+completed successfully. The broader adapter/package gates remain as recorded
+for attempt 1 and were not rerun for this bounded arithmetic-only revision.
