@@ -2,12 +2,16 @@ import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
+import { EngineWebAdapterError } from "../src/errors.js";
 import {
   MemoryStemStorageBackend,
+  MemoryStemResolver,
   VerifiedSparsePcmStore,
+  VerifiedStemStore,
   validateSparsePcmIndex,
   type SparsePcmExpectation,
 } from "../src/stems/index.js";
+import { acquireNamedLock } from "../src/stems/lock.js";
 
 function expectation(bytes: Uint8Array, frames: number, shape: { readonly channels?: 1 | 2; readonly bitDepth?: 16 | 24 } = {}): SparsePcmExpectation {
   const channels = shape.channels ?? 1;
@@ -125,5 +129,133 @@ describe("VerifiedSparsePcmStore", () => {
     assert.equal(resolves, 1);
     assert.equal(left.data.size, right.data.size);
     assert.equal((await backend.list()).filter((name) => name.startsWith("sparse-pcm-v1-commit-")).length, 1);
+  });
+
+  it("keeps a dense store's index and payload usable beside sparse generations", async () => {
+    const denseBytes = new Uint8Array([4, 3, 2, 1]);
+    const denseExpected = expectation(denseBytes, 2);
+    const backend = new MemoryStemStorageBackend();
+    const dense = new VerifiedStemStore({ backend, instanceId: "dense" });
+    await (await dense.openSession({
+      leaseId: "dense-seed",
+      stems: [{ sourceId: "dense", identity: denseExpected.identity, bytes: denseBytes.byteLength }],
+      resolver: new MemoryStemResolver({ [denseExpected.identity]: denseBytes }),
+    })).close();
+    const indexBefore = backend.files.get("index.json")!.slice();
+    const sparseBytes = new Uint8Array([9, 8, 7, 6]);
+    const sparseExpected = expectation(sparseBytes, 2);
+    const sparse = new VerifiedSparsePcmStore({ backend, instanceId: "sparse" });
+    await sparse.installSource(sparseExpected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: sparseBytes }) }) });
+    assert.deepEqual(backend.files.get("index.json"), indexBefore);
+    assert.deepEqual(new Uint8Array(await (await dense.read(denseExpected.identity)).arrayBuffer()), denseBytes);
+    await sparse.close();
+  });
+
+  it("removes owned data and marker when the marker close fails", async () => {
+    class MarkerCloseFailureBackend extends MemoryStemStorageBackend {
+      override async createWriter(name: string, signal?: AbortSignal) {
+        const writer = await super.createWriter(name, signal);
+        if (!name.startsWith("sparse-pcm-v1-commit-")) return writer;
+        return {
+          write: (chunk: Uint8Array | string) => writer.write(chunk),
+          close: async () => { await writer.close(); throw new Error("marker close failed"); },
+          abort: (reason?: unknown) => writer.abort(reason),
+        };
+      }
+    }
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const backend = new MarkerCloseFailureBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "marker-failure" });
+    await assert.rejects(store.installSource(expectation(bytes, 2), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }));
+    assert.deepEqual(await backend.list(), []);
+    await store.close();
+  });
+
+  it("rejects before writing when the exact sparse generation cannot fit quota", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const backend = new MemoryStemStorageBackend({ quotaBytes: bytes.byteLength });
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "quota" });
+    await assert.rejects(store.installSource(expectation(bytes, 2), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.quota");
+    assert.deepEqual(await backend.list(), []);
+    await store.close();
+  });
+
+  it("refuses every colliding unpublished generation without touching the orphan", async () => {
+    class CollisionBackend extends MemoryStemStorageBackend {
+      override async exists(name: string): Promise<boolean> {
+        if (name.startsWith("sparse-pcm-v1-data-")) return true;
+        return super.exists(name);
+      }
+    }
+    const orphanName = "sparse-pcm-v1-data-collision-orphan";
+    const orphan = new Uint8Array([99, 98, 97]);
+    const backend = new CollisionBackend({ files: { [orphanName]: orphan } });
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "collision" });
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    await assert.rejects(store.installSource(expectation(bytes, 2), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+    assert.deepEqual(backend.files.get(orphanName), orphan);
+    await store.close();
+  });
+
+  it("rejects an unsupported shape before invoking the resolver", async () => {
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "preflight" });
+    const bytes = new Uint8Array([1, 2]);
+    let resolves = 0;
+    await assert.rejects(store.installSource({ ...expectation(bytes, 1), sampleRateHz: 12_345 }, { resolve: async () => { resolves += 1; return { spans: spans({ startFrame: 0, bytes }) }; } }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    assert.equal(resolves, 0);
+    assert.deepEqual(await backend.list(), []);
+    await store.close();
+  });
+
+  it("preserves an existing capability error from the backend boundary", async () => {
+    class CapabilityBackend extends MemoryStemStorageBackend {
+      override async open(): Promise<void> { throw new EngineWebAdapterError("capability.opfs", "OPFS unavailable"); }
+    }
+    const store = new VerifiedSparsePcmStore({ backend: new CapabilityBackend(), instanceId: "capability" });
+    const bytes = new Uint8Array([1, 2]);
+    await assert.rejects(store.installSource(expectation(bytes, 1), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "capability.opfs");
+    await store.close();
+  });
+
+  it("cancels a resolver before publication and waits for its physical release", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "cancel" });
+    let started!: () => void;
+    const resolverStarted = new Promise<void>((resolve) => { started = resolve; });
+    let resolverAborted = false;
+    const installing = store.installSource(expectation(bytes, 2), {
+      resolve: async (signal) => {
+        started();
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) { resolverAborted = true; resolve(); return; }
+          signal.addEventListener("abort", () => { resolverAborted = true; resolve(); }, { once: true });
+        });
+        return { spans: spans() };
+      },
+    });
+    await resolverStarted;
+    await store.close();
+    await assert.rejects(installing, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.equal(resolverAborted, true);
+    assert.deepEqual(await backend.list(), []);
+  });
+
+  it("waits for an active lock before admitting a cancelled successor", async () => {
+    const shared = { locks: new Map<string, Promise<void>>() };
+    const first = await acquireNamedLock(undefined, shared, "sparse-test", undefined);
+    const cancelled = new AbortController();
+    const second = acquireNamedLock(undefined, shared, "sparse-test", cancelled.signal);
+    cancelled.abort(new DOMException("cancelled", "AbortError"));
+    await assert.rejects(second);
+    let thirdReady = false;
+    const third = acquireNamedLock(undefined, shared, "sparse-test", undefined).then((lease) => { thirdReady = true; return lease; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(thirdReady, false);
+    await first.release();
+    const thirdLease = await third;
+    assert.equal(thirdReady, true);
+    await thirdLease.release();
   });
 });

@@ -121,7 +121,9 @@ export async function acquireStemLock(
       if (first !== undefined) throw first;
     } };
   } catch (error) {
-    await global.release().catch(() => undefined);
+    let releaseFailure: unknown;
+    try { await global.release(); } catch (releaseError) { releaseFailure = releaseError; }
+    if (releaseFailure !== undefined) throw new AggregateError([error, releaseFailure], "Stem lock acquisition cleanup failed");
     throw error;
   }
 }

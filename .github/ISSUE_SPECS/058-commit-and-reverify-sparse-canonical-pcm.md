@@ -185,3 +185,26 @@ not be accepted before the final cancellation/physical-settlement boundary.
 Root checkpoints these exact paths before Luna continues the remaining coherent
 correction/test tranche. No independent attempt2 verdict yet; all later features,
 full package and browser gates remain pending the completed focused contract.
+
+## Attempt 2 second correction checkpoint — 12 focused tests
+
+Luna added physical Promise observation bridges for writer and lock operations,
+separate resolver cancellation, normal-EOF handling, bounded source/read progress,
+prospective marker accounting, known-map admission and post-close cancellation
+checks. Cold success now returns the committed data handle without a redundant
+second canonical hash. New focused cases cover marker-close cleanup, quota refusal,
+collision/orphan preservation, unsupported-rate preflight, existing capability
+error preservation, resolver cancellation, dense coexistence and cancelled lock
+waiters. Typecheck/build/test compilation and12/12 focused tests pass. Root
+checkpoints the compiling tranche before more edits.
+
+Still pending before the single final attempt2 review: delayed create/write/close
+and partial-create cleanup regressions, cleanup-failure retention, external-signal
+runtime close, injected service layers/TestClock, strict option/late-getter and
+physical-usage quota tests, full proportional package gates and the existing real
+OPFS close/reopen/marker-failure browser case. Root inspection notes source progress
+currently uses raw timers and file ownership still begins after create returns;
+these must satisfy the already-frozen Effect Clock and partial-create contracts.
+Quota accounting must not infer estimate semantics from ownsOpfsWriteDeadlines:
+that flag concerns writer termination, not whether a backend reports persisted
+usage. This checkpoint makes no claim that those remaining requirements pass.

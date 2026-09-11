@@ -55,6 +55,7 @@ const ExpectedSchema = Schema.Struct({
   canonicalBytes: Schema.Number,
 });
 const SpanSchema = Schema.Struct({ startFrame: Schema.Number, bytes: Schema.Uint8Array });
+const InstallOptionsSchema = Schema.Struct({ resolve: Schema.Unknown, signal: Schema.optionalKey(Schema.Unknown) });
 const MarkerSchema = Schema.Struct({
   activeBytes: Schema.Number,
   bitDepth: Schema.Literals([16, 24]),
@@ -87,6 +88,7 @@ interface BackendShape {
 
 class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engine-web/SparseBackend") {
   static layer(backend: StemStorageBackend, options: { readonly lock: BackendShape["lock"]; readonly instanceId: string; readonly readDeadlineMs: number }): Layer.Layer<SparseBackend> {
+    const writerSignals = new WeakMap<StemStorageWriter, AbortSignal>();
     const fail = (operation: string, cause: unknown): SparseFailure => {
       const name = cause && typeof cause === "object" && "name" in cause ? String((cause as { readonly name?: unknown }).name) : "";
       if (name === "AbortError") return new SparseCancelledError({ message: `${operation} was cancelled`, cause });
@@ -102,15 +104,90 @@ class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engi
       if (ownsOpfsWriteDeadlines(backend, options.readDeadlineMs)) return base;
       return base.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline` }))));
     };
+    const physical = <A>(operation: string, writer: StemStorageWriter | undefined, run: () => PromiseLike<A>): Effect.Effect<A, SparseFailure> => {
+      const effect = Effect.callback<A, SparseFailure>((resume, effectSignal) => {
+        let pending: Promise<A>;
+        try { pending = Promise.resolve(run()); }
+        catch (cause) { resume(Effect.fail(fail(operation, cause))); return; }
+        const requestedSignal = writer === undefined ? undefined : writerSignals.get(writer);
+        let settled = false;
+        const finish = (result: Effect.Effect<A, SparseFailure>) => { if (!settled) { settled = true; requestedSignal?.removeEventListener("abort", onAbort); resume(result); } };
+        const onAbort = () => {
+          const abortPromise = writer === undefined
+            ? Promise.resolve()
+            : writer.abort(new DOMException("Physical operation interrupted", "AbortError"));
+          void Promise.allSettled([pending, abortPromise]).then((results) => {
+            const abortResult = results[1];
+            finish(abortResult?.status === "rejected" ? Effect.fail(fail(operation, abortResult.reason)) : Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled` })));
+          });
+        };
+        requestedSignal?.addEventListener("abort", onAbort, { once: true });
+        pending.then(
+          (value) => { if (!effectSignal.aborted && !requestedSignal?.aborted) finish(Effect.succeed(value)); },
+          (cause) => { if (!effectSignal.aborted && !requestedSignal?.aborted) finish(Effect.fail(fail(operation, cause))); },
+        );
+        return Effect.promise(async () => {
+          requestedSignal?.removeEventListener("abort", onAbort);
+          if (writer !== undefined) await writer.abort(new DOMException("Physical operation interrupted", "AbortError"));
+          await Promise.allSettled([pending]);
+        });
+      });
+      if (ownsOpfsWriteDeadlines(backend, options.readDeadlineMs)) return effect;
+      return effect.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline` }))));
+    };
+    const createWriter = (name: string, requestedSignal: AbortSignal): Effect.Effect<StemStorageWriter, SparseFailure> => Effect.callback<StemStorageWriter, SparseFailure>((resume, effectSignal) => {
+      const signal = requestedSignal;
+      let pending: Promise<StemStorageWriter>;
+      try { pending = Promise.resolve(backend.createWriter(name, signal)); }
+      catch (cause) { resume(Effect.fail(fail("writer create", cause))); return; }
+      let settled = false;
+      const complete = (result: Effect.Effect<StemStorageWriter, SparseFailure>) => { if (!settled) { settled = true; signal.removeEventListener("abort", onAbort); resume(result); } };
+      const onAbort = () => {
+        void pending.then(async (writer) => {
+          try {
+            await writer.abort(new DOMException("Physical writer acquisition interrupted", "AbortError"));
+            complete(Effect.fail(new SparseCancelledError({ message: "Sparse writer acquisition was cancelled" })));
+          } catch (cause) {
+            complete(Effect.fail(fail("writer abort", cause)));
+          }
+        }, (cause) => complete(Effect.fail(isAbort(cause) ? new SparseCancelledError({ message: "Sparse writer acquisition was cancelled", cause }) : fail("writer create", cause))));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      pending.then(
+        (writer) => { if (!signal.aborted && !effectSignal.aborted) { writerSignals.set(writer, signal); complete(Effect.succeed(writer)); } else onAbort(); },
+        (cause) => { if (!effectSignal.aborted) complete(Effect.fail(signal.aborted || isAbort(cause) ? new SparseCancelledError({ message: "Sparse writer acquisition was cancelled", cause }) : fail("writer create", cause))); },
+      );
+      return Effect.promise(async () => {
+        signal.removeEventListener("abort", onAbort);
+        let writer: StemStorageWriter;
+        try { writer = await pending; }
+        catch { return; } // a rejected create has no physical writer to abort
+        await writer.abort(new DOMException("Physical writer acquisition interrupted", "AbortError"));
+      });
+    });
+    const createTimed = (name: string, signal: AbortSignal): Effect.Effect<StemStorageWriter, SparseFailure> => {
+      const effect = createWriter(name, signal);
+      return ownsOpfsWriteDeadlines(backend, options.readDeadlineMs) ? effect : effect.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: "writer create exceeded its deadline" }))));
+    };
+    const removePhysical = (name: string): Effect.Effect<void, SparseFailure> => Effect.callback<void, SparseFailure>((resume, effectSignal) => {
+      let pending: Promise<void>;
+      try { pending = Promise.resolve(backend.remove(name)); }
+      catch (cause) { resume(Effect.fail(fail("storage remove", cause))); return; }
+      pending.then(
+        () => { if (!effectSignal.aborted) resume(Effect.succeed(undefined)); },
+        (cause) => { if (!effectSignal.aborted) resume(Effect.fail(fail("storage remove", cause))); },
+      );
+      return Effect.promise(() => pending);
+    });
     return Layer.succeed(this, this.of({
       open: timed("storage open", () => backend.open()),
       exists: (name) => timed("storage exists", () => backend.exists(name)),
       read: (name) => timed("storage read", () => backend.read(name)),
-      createWriter: (name, signal) => timed("writer create", (effectSignal) => backend.createWriter(name, signal ?? effectSignal)),
-      write: (writer, chunk) => timed("writer write", () => writer.write(chunk)),
-      close: (writer) => timed("writer close", () => writer.close()),
-      abort: (writer, reason) => Effect.tryPromise({ try: () => writer.abort(reason), catch: (cause) => new SparseIoError({ message: "writer abort failed", cause }) }).pipe(Effect.catch(() => Effect.void)),
-      remove: (name) => timed("storage remove", () => backend.remove(name)),
+      createWriter: (name, signal) => createTimed(name, signal),
+      write: (writer, chunk) => physical("writer write", writer, () => writer.write(chunk)).pipe(Effect.asVoid),
+      close: (writer) => physical("writer close", writer, () => writer.close()).pipe(Effect.asVoid),
+      abort: (writer, reason) => Effect.promise(() => writer.abort(reason)),
+      remove: removePhysical,
       estimate: timed("storage estimate", () => backend.estimate?.() ?? Promise.resolve({})),
       lock: options.lock,
       instanceId: options.instanceId,
@@ -126,9 +203,19 @@ class SparseCoordination extends Context.Service<SparseCoordination, {
   static layer: Layer.Layer<SparseCoordination, never, SparseBackend> = Layer.effect(this, Effect.gen(function*() {
     const backend = yield* SparseBackend;
     const acquire = Effect.fn("SparseCoordination.acquire")(function*(identity: StemIdentity, signal: AbortSignal) {
-      return yield* Effect.tryPromise({
-        try: () => acquireStemLock(backend.lock, identityHex(identity), signal),
-        catch: (cause) => new SparseIoError({ message: "Source lock acquisition failed", cause }),
+      return yield* Effect.callback<LockLease, SparseFailure>((resume, effectSignal) => {
+        const pending = acquireStemLock(backend.lock, identityHex(identity), signal);
+        pending.then(
+          (lease) => { if (!effectSignal.aborted && !signal.aborted) resume(Effect.succeed(lease)); },
+          (cause) => { if (!effectSignal.aborted) resume(Effect.fail(new SparseIoError({ message: "Source lock acquisition failed", cause }))); },
+        );
+        return Effect.promise(async () => {
+          let lease: LockLease;
+          try {
+            lease = await pending;
+          } catch { return; }
+          await lease.release();
+        });
       });
     });
     return SparseCoordination.of({ acquire });
@@ -150,7 +237,7 @@ class SparseProgram extends Context.Service<SparseProgram, {
       const expected = yield* decodeExpected(input);
       const operation = yield* makeOperation(lifecycle.signal, callerSignal);
       yield* Ref.set(operation.ref, { _tag: "opening" } as Lifecycle);
-      const lease = yield* Effect.acquireRelease(coordination.acquire(expected.identity, operation.signal), (held) => Effect.promise(() => held.release().catch(() => undefined)), { interruptible: true });
+      const lease = yield* Effect.acquireRelease(coordination.acquire(expected.identity, operation.signal), (held) => Effect.promise(() => held.release()), { interruptible: true });
       yield* backend.open;
       const marker = markerName(expected.identity);
       if (!(yield* backend.exists(marker))) {
@@ -166,9 +253,9 @@ class SparseProgram extends Context.Service<SparseProgram, {
     });
     const installSource = Effect.fn("SparseProgram.installSource")(function*(input: unknown, options: SparsePcmInstallOptions) {
       const expected = yield* decodeExpected(input);
-      if (typeof options?.resolve !== "function") return yield* new SparseBoundaryError({ message: "Sparse PCM install needs a resolve callback" });
-      const operation = yield* makeOperation(lifecycle.signal, options.signal);
-      const lease = yield* Effect.acquireRelease(coordination.acquire(expected.identity, operation.signal), (held) => Effect.promise(() => held.release().catch(() => undefined)), { interruptible: true });
+      const checkedOptions = yield* decodeInstallOptions(options);
+      const operation = yield* makeOperation(lifecycle.signal, checkedOptions.signal);
+      const lease = yield* Effect.acquireRelease(coordination.acquire(expected.identity, operation.signal), (held) => Effect.promise(() => held.release()), { interruptible: true });
       yield* backend.open;
       const marker = markerName(expected.identity);
       if (yield* backend.exists(marker)) {
@@ -176,12 +263,17 @@ class SparseProgram extends Context.Service<SparseProgram, {
         operation.dispose();
         return descriptor;
       }
-      const resolved = yield* resolveSource(options.resolve, operation.signal);
+      const resolved = yield* resolveSource(checkedOptions.resolve, operation.signal, backend.readDeadlineMs);
       const asserted = yield* admitOptionalIndex(resolved.index, expected);
       const generation = yield* uniqueGeneration(backend, expected.identity);
       const dataName = payloadName(expected.identity, generation);
-      const markerValue = yield* ingestAndCommit(backend, expected, resolved.spans, asserted, dataName, generation, operation);
-      const descriptor = yield* verifyMarker(backend, markerValue, expected, operation.signal);
+      if (asserted !== undefined) {
+        const knownMarker = canonicalJsonBytes(makeMarker(expected, asserted, dataName, generation));
+        if (knownMarker.byteLength > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse known index marker exceeds its bound" });
+        yield* quotaCheck(backend, asserted.activeBytes + knownMarker.byteLength);
+      }
+      const committed = yield* ingestAndCommit(backend, expected, resolved.spans, asserted, dataName, generation, operation);
+      const descriptor = Object.freeze({ kind: "sparse-pcm" as const, data: committed.data, index: committed.marker.index });
       yield* Ref.set(operation.ref, { _tag: "committed" } as Lifecycle);
       operation.dispose();
       return descriptor;
@@ -245,21 +337,66 @@ export class VerifiedSparsePcmStore {
 }
 
 function decodeExpected(input: unknown): Effect.Effect<SparsePcmExpectation, SparseBoundaryError> {
-  return Schema.decodeUnknownEffect(ExpectedSchema, { onExcessProperty: "error" })(input).pipe(
-    Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse PCM expectation schema is invalid", cause })),
-    Effect.flatMap((value) => Effect.try({ try: () => normalizeExpectation(value), catch: (cause) => new SparseBoundaryError({ message: "Sparse PCM expectation is invalid", cause }) })),
-  );
+  return Effect.gen(function*() {
+    yield* preflightExpected(input);
+    const value = yield* Schema.decodeUnknownEffect(ExpectedSchema, { onExcessProperty: "error" })(input).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse PCM expectation schema is invalid", cause })));
+    return yield* Effect.try({ try: () => normalizeExpectation(value), catch: (cause) => new SparseBoundaryError({ message: "Sparse PCM expectation is invalid", cause }) });
+  });
+}
+
+function preflightExpected(input: unknown): Effect.Effect<void, SparseBoundaryError> {
+  return Effect.try({ try: () => {
+    if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0) throw new Error("expectation must be a plain object");
+    const keys = Object.keys(input).sort();
+    const expected = ["bitDepth", "canonicalBytes", "channels", "frames", "identity", "sampleRateHz"];
+    if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) throw new Error("expectation keys are not exact");
+    const candidate = input as Record<string, unknown>;
+    if (typeof candidate.identity !== "string" || candidate.identity.length > 71) throw new Error("identity is outside its bound");
+    for (const key of ["sampleRateHz", "channels", "bitDepth", "frames", "canonicalBytes"]) {
+      if (typeof candidate[key] !== "number" || !Number.isSafeInteger(candidate[key])) throw new Error(`${key} is not a safe integer`);
+    }
+    const channels = candidate.channels as number;
+    const bitDepth = candidate.bitDepth as number;
+    const frames = candidate.frames as number;
+    const product = frames * channels * (bitDepth / 8);
+    if (!Number.isSafeInteger(product) || product < 1) throw new Error("canonical PCM product is outside its bound");
+  }, catch: (cause) => new SparseBoundaryError({ message: "Sparse expectation failed bounded preflight", cause }) });
+}
+
+function decodeInstallOptions(input: unknown): Effect.Effect<SparsePcmInstallOptions, SparseBoundaryError> {
+  return Effect.gen(function*() {
+    if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0 || Object.keys(input).some((key) => key !== "resolve" && key !== "signal")) return yield* new SparseBoundaryError({ message: "Sparse install options contain unknown keys" });
+    const value = yield* Schema.decodeUnknownEffect(InstallOptionsSchema, { onExcessProperty: "error" })(input).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse install options schema is invalid", cause })));
+    if (typeof value.resolve !== "function") return yield* new SparseBoundaryError({ message: "Sparse PCM install needs a resolve callback" });
+    if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) return yield* new SparseBoundaryError({ message: "Sparse install signal is invalid" });
+    return value as SparsePcmInstallOptions;
+  });
 }
 
 function makeOperation(storeSignal: AbortSignal, callerSignal: AbortSignal | undefined): Effect.Effect<OperationState, never, ScopeRequirement> {
   return Effect.gen(function*() {
     const effectSignal = yield* Effect.abortSignal;
     const controller = new AbortController();
-    const forward = (signal: AbortSignal) => { if (signal.aborted) controller.abort(signal.reason); else signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true }); };
+    const unregister: Array<() => void> = [];
+    const forward = (signal: AbortSignal) => {
+      if (signal.aborted) controller.abort(signal.reason);
+      else {
+        const listener = () => controller.abort(signal.reason);
+        signal.addEventListener("abort", listener, { once: true });
+        unregister.push(() => signal.removeEventListener("abort", listener));
+      }
+    };
     forward(storeSignal); forward(effectSignal); if (callerSignal !== undefined) forward(callerSignal);
     const ref = yield* Ref.make<Lifecycle>({ _tag: "opening" });
-    yield* Effect.addFinalizer(() => Effect.sync(() => controller.abort(new DOMException("Operation interrupted", "AbortError"))));
-    return { ref, signal: controller.signal, dispose: () => controller.abort() };
+    let disposed = false;
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      for (const remove of unregister.splice(0)) remove();
+      controller.abort(new DOMException("Operation interrupted", "AbortError"));
+    };
+    yield* Effect.addFinalizer(() => Effect.sync(dispose));
+    return { ref, signal: controller.signal, dispose };
   });
 }
 
@@ -282,10 +419,33 @@ function positiveDeadline(value: number): number { if (!Number.isSafeInteger(val
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function checkSignal(signal: AbortSignal): Effect.Effect<void, SparseCancelledError> { return signal.aborted ? Effect.fail(new SparseCancelledError({ message: "Sparse operation was cancelled", cause: signal.reason })) : Effect.void; }
 
-function resolveSource(resolve: SparsePcmInstallOptions["resolve"], signal: AbortSignal): Effect.Effect<SparsePcmResolved, SparseFailure> {
-  return Effect.tryPromise({ try: () => resolve(signal), catch: (cause) => isAbort(cause) ? new SparseCancelledError({ message: "Sparse resolver was cancelled", cause }) : new SparseIoError({ message: "Sparse resolver failed", cause }) }).pipe(
-    Effect.flatMap((value) => Effect.try({ try: () => { if (!isRecord(value) || typeof (value.spans as { readonly [Symbol.asyncIterator]?: unknown } | undefined)?.[Symbol.asyncIterator] !== "function") throw new Error("resolver spans must be an AsyncIterable"); return value as SparsePcmResolved; }, catch: (cause) => new SparseBoundaryError({ message: "Sparse resolver result is invalid", cause }) })),
-  );
+function resolveSource(resolve: SparsePcmInstallOptions["resolve"], signal: AbortSignal, deadlineMs: number): Effect.Effect<SparsePcmResolved, SparseFailure> {
+  return Effect.gen(function*() {
+    const child = new AbortController();
+    if (signal.aborted) child.abort(signal.reason);
+    else signal.addEventListener("abort", () => child.abort(signal.reason), { once: true });
+    const resolving = Effect.callback<SparsePcmResolved, SparseFailure>((resume, effectSignal) => {
+      let pending: Promise<SparsePcmResolved>;
+      try { pending = Promise.resolve(resolve(child.signal)); }
+      catch (cause) { resume(Effect.fail(isAbort(cause) ? new SparseCancelledError({ message: "Sparse resolver was cancelled", cause }) : new SparseIoError({ message: "Sparse resolver failed", cause }))); return Effect.sync(() => { child.abort(cause); }); }
+      pending.then(
+        (resolved) => { if (!effectSignal.aborted) resume(Effect.succeed(resolved)); },
+        (cause) => { if (!effectSignal.aborted) resume(Effect.fail(isAbort(cause) ? new SparseCancelledError({ message: "Sparse resolver was cancelled", cause }) : new SparseIoError({ message: "Sparse resolver failed", cause }))); },
+      );
+      return Effect.promise(async () => {
+        child.abort(new DOMException("Sparse resolver interrupted", "AbortError"));
+        await settleWithin(pending, deadlineMs, "Sparse resolver");
+      });
+    }).pipe(
+      Effect.timeout(deadlineMs),
+      Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: "Sparse resolver exceeded its deadline" }))),
+    );
+    const value = yield* resolving;
+    return yield* Effect.try({ try: () => {
+      if (!isRecord(value) || typeof (value.spans as { readonly [Symbol.asyncIterator]?: unknown } | undefined)?.[Symbol.asyncIterator] !== "function") throw new Error("resolver spans must be an AsyncIterable");
+      return { ...value, spans: cancellableIterable(value.spans, child, deadlineMs) } as SparsePcmResolved;
+    }, catch: (cause) => new SparseBoundaryError({ message: "Sparse resolver result is invalid", cause }) });
+  });
 }
 
 function admitOptionalIndex(value: SparsePcmIndex | undefined, expected: SparsePcmExpectation): Effect.Effect<SparsePcmIndex | undefined, SparseFailure> {
@@ -304,13 +464,14 @@ function uniqueGeneration(backend: BackendShape, identity: StemIdentity): Effect
   });
 }
 
-function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, source: AsyncIterable<SparsePcmSpan>, asserted: SparsePcmIndex | undefined, dataName: string, generation: string, operation: OperationState): Effect.Effect<Marker, SparseFailure, ScopeRequirement> {
+interface CommittedSparse { readonly marker: Marker; readonly data: Blob }
+function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, source: AsyncIterable<SparsePcmSpan>, asserted: SparsePcmIndex | undefined, dataName: string, generation: string, operation: OperationState): Effect.Effect<CommittedSparse, SparseFailure, ScopeRequirement> {
   let dataOwned = false;
   let markerOwned = false;
   let markerCommitted = false;
   const cleanup = Effect.gen(function*() {
-    if (markerOwned && !markerCommitted) yield* backend.remove(markerName(expected.identity)).pipe(Effect.catch(() => Effect.void));
-    if (dataOwned && !markerCommitted) yield* backend.remove(dataName).pipe(Effect.catch(() => Effect.void));
+    if (markerOwned && !markerCommitted) yield* backend.remove(markerName(expected.identity));
+    if (dataOwned && !markerCommitted) yield* backend.remove(dataName);
   });
   const transaction = Effect.scoped(Effect.gen(function*() {
       yield* Ref.set(operation.ref, { _tag: "streaming" } as Lifecycle);
@@ -321,7 +482,7 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
     const hash = new IncrementalSha256();
     let previousEnd = 0;
     let activeBytes = 0;
-    let metadataBytes = 0;
+    let intervalBytes = 0;
     const frameBytes = expected.channels * (expected.bitDepth / 8);
     const processSpan = Effect.fn("SparseProgram.processSpan")(function*(raw: unknown) {
       yield* checkSignal(operation.signal);
@@ -331,26 +492,37 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
       const spanFrames = span.bytes.byteLength / frameBytes;
       const prior = intervals[intervals.length - 1];
       const nextIsAdjacent = prior !== undefined && prior.startFrame + prior.frames === span.startFrame;
+      const prospective = nextIsAdjacent && prior !== undefined
+        ? { startFrame: prior.startFrame, frames: prior.frames + spanFrames, byteOffset: prior.byteOffset }
+        : { startFrame: span.startFrame, frames: spanFrames, byteOffset: activeBytes };
       if (!nextIsAdjacent) {
         if (intervals.length >= SPARSE_PCM_MAX_INTERVALS) return yield* new SparseBoundaryError({ message: "Sparse interval count exceeds its bound" });
-        metadataBytes += JSON.stringify({ byteOffset: activeBytes, frames: spanFrames, startFrame: span.startFrame }).length + 1;
-        if (metadataBytes > MAX_MARKER_BYTES - 2048) return yield* new SparseBoundaryError({ message: "Sparse marker metadata exceeds its bound" });
+        intervalBytes += encodedIntervalBytes(prospective) + (intervals.length === 0 ? 0 : 1);
+      } else if (prior !== undefined) {
+        intervalBytes += encodedIntervalBytes(prospective) - encodedIntervalBytes(prior);
       }
+      if (prospectiveMarkerBytes(expected, generation, dataName, activeBytes + span.bytes.byteLength, intervalBytes) > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse marker metadata exceeds its bound" });
       yield* hashZeros(hash, (span.startFrame - previousEnd) * frameBytes, operation.signal);
       hash.update(span.bytes);
-      // The backend's usage snapshot excludes this still-open generation on
-      // deterministic backends; include the pending active bytes exactly once.
-      yield* quotaCheck(backend, activeBytes + span.bytes.byteLength + 2048);
+      // A deterministic backend only accounts a generation when its writer
+      // closes. OPFS already accounts the persisted active file, so reserve
+      // just this write plus the exact prospective marker there. The first
+      // known-index admission above runs before that file exists.
+      const quotaBytes = backend.opfsOwnedDeadlines
+        ? span.bytes.byteLength + prospectiveMarkerBytes(expected, generation, dataName, activeBytes + span.bytes.byteLength, intervalBytes)
+        : activeBytes + span.bytes.byteLength + prospectiveMarkerBytes(expected, generation, dataName, activeBytes + span.bytes.byteLength, intervalBytes);
+      yield* quotaCheck(backend, quotaBytes);
       yield* backend.write(dataWriter, span.bytes);
       if (nextIsAdjacent && prior !== undefined) intervals[intervals.length - 1] = Object.freeze({ startFrame: prior.startFrame, frames: prior.frames + spanFrames, byteOffset: prior.byteOffset });
       else intervals.push(Object.freeze({ startFrame: span.startFrame, frames: spanFrames, byteOffset: activeBytes }));
       activeBytes += span.bytes.byteLength;
       previousEnd = span.startFrame + spanFrames;
     });
-    const cancellable = cancellableIterable(source, operation.signal);
-    const stream = Stream.fromAsyncIterable(cancellable, (cause) => isAbort(cause)
+    const stream = Stream.fromAsyncIterable(source, (cause) => isAbort(cause)
       ? new SparseCancelledError({ message: "Sparse resolver stream was cancelled", cause })
-      : new SparseIoError({ message: "Sparse resolver stream failed", cause }));
+      : isTimeout(cause)
+        ? new SparseDeadlineError({ message: "Sparse resolver stream exceeded its deadline", cause })
+        : new SparseIoError({ message: "Sparse resolver stream failed", cause }));
     yield* Stream.runForEach(stream, processSpan);
     yield* hashZeros(hash, (expected.frames - previousEnd) * frameBytes, operation.signal);
     const index = yield* Effect.try({ try: () => validateSparsePcmIndex({ format: SPARSE_PCM_FORMAT, identity: expected.identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth, frames: expected.frames, intervals, activeBytes, canonicalBytes: expected.canonicalBytes }, activeBytes), catch: (cause) => new SparseCorruptError({ message: "Derived sparse index is invalid", cause }) });
@@ -371,10 +543,13 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
     yield* backend.write(markerWriter, markerBytes);
     yield* backend.close(markerWriter);
     markerClosed = true;
+    yield* checkSignal(operation.signal);
+    const data = yield* backend.read(dataName);
+    yield* checkSignal(operation.signal);
     markerCommitted = markerClosed;
-    return marker;
+    return { marker, data };
   }));
-  return transaction.pipe(Effect.onError(() => cleanup));
+  return transaction.pipe(Effect.onError(() => cleanup.pipe(Effect.orDie)));
 }
 
 function preflightSpan(value: unknown): Effect.Effect<void, SparseBoundaryError> {
@@ -385,18 +560,69 @@ function preflightSpan(value: unknown): Effect.Effect<void, SparseBoundaryError>
 function decodeSpan(value: unknown): Effect.Effect<{ readonly startFrame: number; readonly bytes: Uint8Array }, SparseBoundaryError> {
   return Schema.decodeUnknownEffect(SpanSchema, { onExcessProperty: "error" })(value).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse span schema is invalid", cause })));
 }
-function cancellableIterable(source: AsyncIterable<SparsePcmSpan>, signal: AbortSignal): AsyncIterable<unknown> {
+function cancellableIterable(source: AsyncIterable<SparsePcmSpan>, controller: AbortController, deadlineMs: number): AsyncIterable<unknown> {
+  const signal = controller.signal;
   return { [Symbol.asyncIterator]: () => {
     const iterator = source[Symbol.asyncIterator]();
+    let finished = false;
+    let pending: Promise<IteratorResult<SparsePcmSpan>> | undefined;
     return {
-      next: () => raceAbort(iterator.next(), signal),
-      return: async () => { if (!signal.aborted) signal.dispatchEvent(new Event("abort")); return iterator.return?.() ?? { done: true, value: undefined }; },
+      next: async () => {
+        const read = Promise.resolve(iterator.next());
+        pending = read;
+        try {
+          const result = await raceAbort(read, signal, deadlineMs, controller);
+          if (result.done) finished = true;
+          return result;
+        } finally {
+          if (pending === read) pending = undefined;
+        }
+      },
+      return: async () => {
+        if (!finished && !signal.aborted) controller.abort(new DOMException("Sparse resolver stream interrupted", "AbortError"));
+        const activeRead = pending;
+        if (activeRead !== undefined) await settleWithin(activeRead, deadlineMs, "Sparse resolver stream read");
+        if (iterator.return === undefined) return { done: true, value: undefined };
+        const returned = Promise.resolve(iterator.return());
+        await settleWithin(returned, deadlineMs, "Sparse resolver stream close");
+        return await returned;
+      },
     };
   } };
 }
-function raceAbort<T>(promise: PromiseLike<T>, signal: AbortSignal): Promise<T> {
+async function settleWithin<T>(promise: PromiseLike<T>, deadlineMs: number, operation: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const observed = Promise.resolve(promise).then(() => undefined, () => undefined);
+  const deadline = new Promise<void>((_, reject) => {
+    timer = setTimeout(() => reject(new DOMException(`${operation} exceeded its deadline`, "TimeoutError")), deadlineMs);
+  });
+  try { await Promise.race([observed, deadline]); }
+  finally { if (timer !== undefined) clearTimeout(timer); }
+}
+function raceAbort<T>(promise: PromiseLike<T>, signal: AbortSignal, deadlineMs?: number, controller?: AbortController): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("Operation aborted", "AbortError"));
-  return new Promise<T>((resolve, reject) => { const abort = () => reject(signal.reason ?? new DOMException("Operation aborted", "AbortError")); signal.addEventListener("abort", abort, { once: true }); Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort)); });
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (result: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      if (timer !== undefined) clearTimeout(timer);
+      result();
+    };
+    const abort = () => finish(() => reject(signal.reason ?? new DOMException("Operation aborted", "AbortError")));
+    signal.addEventListener("abort", abort, { once: true });
+    if (deadlineMs !== undefined) timer = setTimeout(() => {
+      const reason = new DOMException("Sparse resolver stream made no progress", "TimeoutError");
+      controller?.abort(reason);
+      finish(() => reject(reason));
+    }, deadlineMs);
+    Promise.resolve(promise).then(
+      (value) => finish(() => resolve(value)),
+      (cause) => finish(() => reject(cause)),
+    );
+  });
 }
 function hashZeros(hash: IncrementalSha256, bytes: number, signal: AbortSignal): Effect.Effect<void, SparseFailure> {
   return Effect.fn("SparseProgram.hashZeros")(function*() {
@@ -414,7 +640,7 @@ function readMarker(backend: BackendShape, name: string, signal: AbortSignal): E
     yield* checkSignal(signal);
     const blob = yield* backend.read(name);
     if (!Number.isSafeInteger(blob.size) || blob.size < 1 || blob.size > MAX_MARKER_BYTES) return yield* new SparseCorruptError({ message: "Sparse marker is outside its bounded byte size" });
-    const bytes = yield* Effect.tryPromise({ try: () => blob.arrayBuffer(), catch: (cause) => new SparseIoError({ message: "Sparse marker read failed", cause }) });
+    const bytes = yield* readBlobBytes(backend, blob, 0, blob.size, signal, "Sparse marker read");
     const value = yield* Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown, catch: (cause) => new SparseCorruptError({ message: "Sparse marker JSON is invalid", cause }) });
     const decoded = yield* Schema.decodeUnknownEffect(MarkerSchema, { onExcessProperty: "error" })(value).pipe(Effect.mapError((cause) => new SparseCorruptError({ message: "Sparse marker schema is invalid", cause })));
     const index = yield* Effect.try({ try: () => validateSparsePcmIndex(decoded.index, decoded.activeBytes), catch: (cause) => new SparseCorruptError({ message: "Sparse marker index is invalid", cause }) });
@@ -427,6 +653,22 @@ function readMarker(backend: BackendShape, name: string, signal: AbortSignal): E
 
 interface Marker { readonly format: typeof MARKER_TAG; readonly identity: StemIdentity; readonly sampleRateHz: number; readonly channels: 1 | 2; readonly bitDepth: 16 | 24; readonly frames: number; readonly canonicalBytes: number; readonly activeBytes: number; readonly index: SparsePcmIndex; readonly payloadName: string; readonly generation: string }
 function makeMarker(expected: SparsePcmExpectation, index: SparsePcmIndex, payload: string, generation: string): Marker { return Object.freeze({ format: MARKER_TAG, identity: expected.identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth, frames: expected.frames, canonicalBytes: expected.canonicalBytes, activeBytes: index.activeBytes, index, payloadName: payload, generation }); }
+function encodedIntervalBytes(interval: SparsePcmInterval): number { return canonicalJsonBytes({ byteOffset: interval.byteOffset, frames: interval.frames, startFrame: interval.startFrame }).byteLength; }
+function prospectiveMarkerBytes(expected: SparsePcmExpectation, generation: string, payload: string, activeBytes: number, intervalBytes: number): number {
+  const empty = {
+    format: SPARSE_PCM_FORMAT,
+    identity: expected.identity,
+    sampleRateHz: expected.sampleRateHz,
+    channels: expected.channels,
+    bitDepth: expected.bitDepth,
+    frames: expected.frames,
+    intervals: [] as readonly SparsePcmInterval[],
+    activeBytes,
+    canonicalBytes: expected.canonicalBytes,
+  } as SparsePcmIndex;
+  const base = canonicalJsonBytes(makeMarker(expected, empty, payload, generation)).byteLength;
+  return base + intervalBytes;
+}
 function verifyMarker(backend: BackendShape, marker: Marker, expected: SparsePcmExpectation, signal: AbortSignal): Effect.Effect<SparsePcmDescriptor, SparseFailure> {
   return Effect.fn("SparseProgram.verifyMarker")(function*() {
     if (marker.format !== MARKER_TAG || marker.identity !== expected.identity || marker.sampleRateHz !== expected.sampleRateHz || marker.channels !== expected.channels || marker.bitDepth !== expected.bitDepth || marker.frames !== expected.frames || marker.canonicalBytes !== expected.canonicalBytes || marker.activeBytes !== marker.index.activeBytes || marker.payloadName !== payloadName(expected.identity, marker.generation)) return yield* new SparseCorruptError({ message: "Sparse marker conflicts with the expectation" });
@@ -442,7 +684,7 @@ function verifyMarker(backend: BackendShape, marker: Marker, expected: SparsePcm
       for (let offset = 0; offset < interval.frames * frameBytes; offset += MAX_SPAN_BYTES) {
         yield* checkSignal(signal);
         const end = Math.min(offset + MAX_SPAN_BYTES, interval.frames * frameBytes);
-        const bytes = yield* Effect.tryPromise({ try: () => data.slice(payloadCursor + offset, payloadCursor + end).arrayBuffer(), catch: (cause) => new SparseIoError({ message: "Sparse payload read failed", cause }) });
+        const bytes = yield* readBlobBytes(backend, data, payloadCursor + offset, payloadCursor + end, signal, "Sparse payload read");
         if (bytes.byteLength !== end - offset) return yield* new SparseCorruptError({ message: "Sparse payload read was short" });
         hash.update(new Uint8Array(bytes));
       }
@@ -455,13 +697,33 @@ function verifyMarker(backend: BackendShape, marker: Marker, expected: SparsePcm
   })();
 }
 
+function readBlobBytes(backend: BackendShape, blob: Blob, start: number, end: number, signal: AbortSignal, operation: string): Effect.Effect<ArrayBuffer, SparseFailure> {
+  return Effect.gen(function*() {
+    yield* checkSignal(signal);
+    const bytes = yield* Effect.tryPromise({
+      try: () => blob.slice(start, end).arrayBuffer(),
+      catch: (cause) => isAbort(cause)
+        ? new SparseCancelledError({ message: `${operation} was cancelled`, cause })
+        : new SparseIoError({ message: `${operation} failed`, cause }),
+    }).pipe(
+      Effect.timeout(backend.readDeadlineMs),
+      Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline` }))),
+    );
+    yield* checkSignal(signal);
+    return bytes;
+  });
+}
+
 function compareIndexShape(index: SparsePcmIndex, expected: SparsePcmExpectation): void { if (index.identity !== expected.identity || index.sampleRateHz !== expected.sampleRateHz || index.channels !== expected.channels || index.bitDepth !== expected.bitDepth || index.frames !== expected.frames || index.canonicalBytes !== expected.canonicalBytes) throw new EngineWebAdapterError("stem.invalid_declaration", "Sparse PCM index shape conflicts with expectation"); }
 function compareIndexes(a: SparsePcmIndex, b: SparsePcmIndex): void { if (a.activeBytes !== b.activeBytes || a.canonicalBytes !== b.canonicalBytes || a.intervals.length !== b.intervals.length || a.intervals.some((x, i) => x.startFrame !== b.intervals[i]!.startFrame || x.frames !== b.intervals[i]!.frames || x.byteOffset !== b.intervals[i]!.byteOffset)) throw new EngineWebAdapterError("stem.corrupt", "Sparse resolver index disagrees with derived spans"); }
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean { return a.byteLength === b.byteLength && a.every((value, index) => value === b[index]); }
-function quotaCheck(backend: BackendShape, additional: number): Effect.Effect<void, SparseFailure> { return Effect.gen(function*() { const estimate = yield* backend.estimate; if (estimate.quota !== undefined && estimate.usage !== undefined && (!Number.isSafeInteger(additional) || estimate.usage + additional > estimate.quota)) return yield* new SparseQuotaError({ message: "Sparse storage quota is insufficient" }); }); }
+function quotaCheck(backend: BackendShape, additional: number): Effect.Effect<void, SparseFailure> { return Effect.gen(function*() { const estimate = yield* backend.estimate; if (estimate.quota !== undefined && estimate.usage !== undefined && (!Number.isSafeInteger(additional) || additional < 0 || estimate.usage + additional > estimate.quota)) return yield* new SparseQuotaError({ message: "Sparse storage quota is insufficient" }); }); }
 function isAbort(error: unknown): boolean { return error instanceof DOMException && error.name === "AbortError" || error instanceof Error && error.name === "AbortError"; }
+function isTimeout(error: unknown): boolean { return error instanceof DOMException && error.name === "TimeoutError" || error instanceof Error && error.name === "TimeoutError"; }
 function mapPublicError(error: unknown): unknown {
   if (error instanceof EngineWebAdapterError) return error;
+  const preserved = nestedAdapterError(error);
+  if (preserved !== undefined) return preserved;
   if (error instanceof SparseCancelledError) return new EngineWebAdapterError("stem.cancelled", error.message, {}, error.cause);
   if (error instanceof SparseDeadlineError) return new EngineWebAdapterError("stem.read_deadline", error.message, {}, error.cause);
   if (error instanceof SparseQuotaError) return new EngineWebAdapterError("stem.quota", error.message, {}, error.cause);
@@ -469,4 +731,13 @@ function mapPublicError(error: unknown): unknown {
   if (error instanceof SparseConflictError || error instanceof SparseCorruptError) return new EngineWebAdapterError("stem.corrupt", error.message, {}, error.cause);
   if (error instanceof SparseIoError) return new EngineWebAdapterError("stem.corrupt", error.message, {}, error.cause);
   return isAbort(error) ? new EngineWebAdapterError("stem.cancelled", "Sparse operation was cancelled", {}, error) : error;
+}
+function nestedAdapterError(error: unknown): EngineWebAdapterError | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (current instanceof EngineWebAdapterError) return current;
+    if (typeof current !== "object" || current === null || !("cause" in current)) return undefined;
+    current = (current as { readonly cause?: unknown }).cause;
+  }
+  return current instanceof EngineWebAdapterError ? current : undefined;
 }
