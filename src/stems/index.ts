@@ -33,6 +33,15 @@ export type {
   StorageManagerLike,
 } from "./storage.js";
 export type { VerifiedStemStoreOptions, WebLockProvider } from "./store.js";
+export { VerifiedSparsePcmStore } from "./sparse-store.js";
+export type {
+  SparsePcmExpectation,
+  SparsePcmSpan,
+  SparsePcmResolved,
+  SparsePcmDescriptor,
+  SparsePcmInstallOptions,
+  SparsePcmStoreOptions,
+} from "./sparse-store.js";
 export type {
   DeclaredStemSource,
   CanonicalPcmExpectation,
