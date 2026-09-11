@@ -50,6 +50,27 @@ async function handle(message: PumpWorkerRequest): Promise<void> {
     startDriving();
     return;
   }
+  if (message.type === "initialize-sparse") {
+    stopDriving();
+    pump?.close();
+    pump = CanonicalPcmPump.fromClonedSparse({
+      assets: message.assets,
+      sources: message.sources,
+      windowFrames: message.windowFrames,
+      generation: message.generation,
+    });
+    idleMs = message.idleMs;
+    scope.postMessage({
+      type: "initialized", requestId: message.requestId,
+      bounds: {
+        windowBytes: pump.maximumWindowBytes,
+        ringBytes: pump.ringBytes,
+        maximumReadScratchBytes: pump.maximumReadScratchBytes,
+      },
+    });
+    startDriving();
+    return;
+  }
   if (message.type === "seek") {
     if (pump === undefined) throw new Error("PCM pump Worker is not initialized");
     const generation = await pump.seekFrames(message.frame);

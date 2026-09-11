@@ -35,6 +35,8 @@ export interface PumpAllocation {
   readonly windowFrames: number;
   /** Current plus next/pending canonical windows; excludes rings, JS objects and browser caches. */
   readonly maximumWindowBytes: number;
+  /** Sparse active-read scratch bound; omitted by legacy dense pump implementors. */
+  readonly maximumReadScratchBytes?: number;
 }
 
 /** Source PCM is borrowed until the callback returns; only frames samples are valid. */

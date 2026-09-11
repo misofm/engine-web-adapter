@@ -1,11 +1,16 @@
 import { createPumpWorker } from "../assets.js";
 import type { AdapterAssetOverrides } from "../assets.js";
 import { EngineWebAdapterError } from "../errors.js";
+import { Effect } from "effect";
 import type { PumpAllocation } from "../session-types.js";
 import { PCM_WINDOW_FRAMES } from "./pump.js";
-import type { PcmPumpSource } from "./pump.js";
+import type { PcmPumpSource, SparsePcmPumpSource } from "./pump.js";
+import { validateSparsePcmIndex } from "./sparse-pcm.js";
+import type { SparsePcmIndex } from "./sparse-pcm.js";
+import type { SparsePcmDescriptor } from "./sparse-store.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "./worker-protocol.js";
 import type { StemSessionLease } from "./types.js";
+import type { StemIdentity } from "./types.js";
 
 export interface PumpWorkerLike {
   postMessage(message: PumpWorkerRequest): void;
@@ -103,6 +108,77 @@ export class PcmPumpWorkerClient {
     }
   }
 
+  static async createSparse(options: {
+    readonly lease: Pick<{ read(identity: string): Promise<SparsePcmDescriptor> }, "read">;
+    readonly sources: readonly SparsePcmPumpSource[];
+    readonly windowFrames?: number;
+    readonly idleMs?: number;
+    readonly generation?: bigint;
+    readonly assets?: AdapterAssetOverrides;
+    readonly worker?: PumpWorkerLike;
+    readonly signal?: AbortSignal;
+    readonly requestDeadlineMs?: number;
+  }): Promise<PcmPumpWorkerClient> {
+    const worker = options.worker ?? createPumpWorker(options.assets) as unknown as PumpWorkerLike;
+    const deadline = options.requestDeadlineMs ?? 5_000;
+    if (!Number.isSafeInteger(deadline) || deadline <= 0) throw new RangeError("requestDeadlineMs must be positive");
+    const client = new PcmPumpWorkerClient(worker, deadline);
+    try {
+      const windowFrames = options.windowFrames ?? PCM_WINDOW_FRAMES;
+      if (!Number.isSafeInteger(windowFrames) || windowFrames <= 0 || windowFrames > PCM_WINDOW_FRAMES) throw new RangeError("Sparse PCM windowFrames must be between 1 and 8192");
+      options.signal?.throwIfAborted();
+      if (options.signal !== undefined) {
+        const abort = () => client.#terminate(options.signal?.reason ?? new DOMException("PCM pump Worker aborted", "AbortError"), false);
+        options.signal.addEventListener("abort", abort, { once: true });
+        client.#detachAbort = () => options.signal?.removeEventListener("abort", abort);
+      }
+      const sourceIds = new Set<string>();
+      for (const source of options.sources) {
+        options.signal?.throwIfAborted();
+        if (sourceIds.has(source.sourceId)) throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM source IDs must be unique");
+        sourceIds.add(source.sourceId);
+        validateSparsePumpSource(source);
+      }
+      const assets = new Map<StemIdentity, SparsePcmDescriptor>();
+      const resolved = await Effect.runPromise(readSparseDescriptors(options.lease, options.sources));
+      for (const source of options.sources) {
+        options.signal?.throwIfAborted();
+        const prior = assets.get(source.identity);
+        const descriptor = prior ?? resolved.get(source.identity);
+        if (descriptor === undefined) throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM resolver omitted a source asset");
+        const admitted = admitSparseDescriptor(descriptor, source.identity);
+        if (prior !== undefined && !sameSparseShape(prior.index, admitted.index)) {
+          throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM aliases disagree about asset shape");
+        }
+        if (prior === undefined) assets.set(source.identity, admitted);
+        validateSparseSourceBinding(source, admitted);
+      }
+      options.signal?.throwIfAborted();
+      const requestId = client.#next();
+      const reply = await client.#request({
+        type: "initialize-sparse", requestId, sources: options.sources,
+        assets: [...assets.values()], windowFrames,
+        idleMs: options.idleMs ?? 4, generation: options.generation ?? 1n,
+      });
+      client.#throwIfTerminated();
+      options.signal?.throwIfAborted();
+      const expectedScratch = sparseScratchBytes(options.sources, windowFrames);
+      if (reply.type !== "initialized" || !reply.bounds ||
+          !Number.isSafeInteger(reply.bounds.windowBytes) || reply.bounds.windowBytes < 0 ||
+          (options.sources.length > 0 && reply.bounds.windowBytes === 0) ||
+          !Number.isSafeInteger(reply.bounds.ringBytes) ||
+          reply.bounds.ringBytes !== options.sources.reduce((bytes, source) => bytes + source.ring.byteLength, 0) ||
+          !Number.isSafeInteger(reply.bounds.maximumReadScratchBytes) || reply.bounds.maximumReadScratchBytes !== expectedScratch) {
+        throw new EngineWebAdapterError("session.open", "Sparse PCM pump Worker returned invalid initialization bounds");
+      }
+      client.#allocation = Object.freeze({ windowFrames, maximumWindowBytes: reply.bounds.windowBytes, maximumReadScratchBytes: reply.bounds.maximumReadScratchBytes });
+      return client;
+    } catch (error) {
+      client.#terminate(error);
+      throw error;
+    }
+  }
+
   async seekFrames(frame: number | bigint): Promise<bigint> {
     if (this.#closed || this.#closing) throw new EngineWebAdapterError("session.closed", "PCM pump Worker is closed");
     const reply = await this.#request({ type: "seek", requestId: this.#next(), frame: BigInt(frame) });
@@ -184,4 +260,58 @@ export class PcmPumpWorkerClient {
     for (const pending of this.#pending.values()) { clearTimeout(pending.timer); pending.reject(authoritative); }
     this.#pending.clear();
   }
+}
+
+const readSparseDescriptors = Effect.fn("PcmPumpWorkerClient.readSparseDescriptors")(function* (
+  lease: Pick<{ read(identity: string): Promise<SparsePcmDescriptor> }, "read">,
+  sources: readonly SparsePcmPumpSource[],
+) {
+  const descriptors = new Map<StemIdentity, SparsePcmDescriptor>();
+  for (const source of sources) {
+    if (descriptors.has(source.identity)) continue;
+    const descriptor = yield* Effect.tryPromise({
+      try: () => lease.read(source.identity),
+      catch: (cause) => cause,
+    });
+    descriptors.set(source.identity, descriptor);
+  }
+  return descriptors;
+});
+
+function validateSparsePumpSource(source: SparsePcmPumpSource): void {
+  if (typeof source.sourceId !== "string" || source.sourceId.length === 0 ||
+      !Number.isSafeInteger(source.sampleRateHz) || source.sampleRateHz <= 0 ||
+      !Number.isSafeInteger(source.frames) || source.frames <= 0 ||
+      (source.channels !== 1 && source.channels !== 2) || (source.bitDepth !== 16 && source.bitDepth !== 24) ||
+      !(source.ring instanceof SharedArrayBuffer)) {
+    throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM source declaration is invalid");
+  }
+}
+
+function admitSparseDescriptor(value: SparsePcmDescriptor, identity: string): SparsePcmDescriptor {
+  if (value?.kind !== "sparse-pcm" || !(value.data instanceof Blob)) {
+    throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM resolver returned an invalid descriptor");
+  }
+  const index = validateSparsePcmIndex(value.index, value.data);
+  if (index.identity !== identity) throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM descriptor identity disagrees with its source");
+  return Object.freeze({ kind: "sparse-pcm" as const, data: value.data, index });
+}
+
+function validateSparseSourceBinding(source: SparsePcmPumpSource, descriptor: SparsePcmDescriptor): void {
+  const index = descriptor.index;
+  if (source.sampleRateHz !== index.sampleRateHz || source.channels !== index.channels || source.bitDepth !== index.bitDepth || source.frames !== index.frames) {
+    throw new EngineWebAdapterError("session.declaration_mismatch", "Sparse PCM source shape disagrees with its asset");
+  }
+}
+
+function sameSparseShape(left: SparsePcmIndex, right: SparsePcmIndex): boolean {
+  return left.identity === right.identity && left.sampleRateHz === right.sampleRateHz && left.channels === right.channels &&
+    left.bitDepth === right.bitDepth && left.frames === right.frames && left.canonicalBytes === right.canonicalBytes && left.activeBytes === right.activeBytes;
+}
+
+function sparseScratchBytes(sources: readonly SparsePcmPumpSource[], windowFrames: number): number {
+  const values = sources.map((source) => windowFrames * source.channels * (source.bitDepth / 8)).sort((left, right) => right - left).slice(0, 4);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (!Number.isSafeInteger(total)) throw new EngineWebAdapterError("session.open", "Sparse PCM read scratch bound is unsafe");
+  return total;
 }

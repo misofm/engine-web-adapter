@@ -51,3 +51,21 @@ create parallel request/termination state machines for dense and sparse modes.
 Effect owns the new control path through one client edge and the worker message
 edge. Existing public Promise methods remain compatible. Runtime services should
 represent an actual dependency or resource, not a wrapper around a pure function.
+
+## Attempt 1 intermediate checkpoint — focused PCM slice
+
+The shared pump can read admitted sparse windows and report active-read scratch;
+the explicit sparse worker message and client path retain source aliases as
+independent rings. Seven new cases and20 existing pump/worker cases pass27/27
+(root rerun retained), with Luna's typecheck/format/source-policy checks passing.
+The Node worker test exercises structured clone; it does not replace the required
+packed browser gate. This is a recoverable intermediate checkpoint, not the
+completed attempt or an independent verdict.
+
+Completion still requires the specified Effect control/resource ownership and
+Schema boundary work, remaining cancellation/seek/bounds regressions, and packed
+browser qualification. A descriptor-loop-only Effect wrapper is not completion
+of the Effect amendment. Preserve the existing post-await dense stop/generation
+guard, validate each unique sparse descriptor once, and avoid redundant receiving
+constructors or placeholder dense lease functions. Do not broaden the scheduler
+rewrite. Root checkpoints this tranche before additional implementation.

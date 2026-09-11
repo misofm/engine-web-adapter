@@ -17,7 +17,7 @@ export { BoundedStemAdmission } from "./flac-admission.js";
 export { createFlacStemResolver } from "./flac-resolver.js";
 export { MSB1_CONTROL } from "./ring.js";
 export { PcmPumpWorkerClient } from "./worker-client.js";
-export type { PcmPumpSource } from "./pump.js";
+export type { PcmPumpSource, SparsePcmPumpSource, SparsePcmPumpOptions } from "./pump.js";
 export type { Msb1RingCounters } from "./ring.js";
 // The OPFS write Worker's own mechanics stay unexported like every other Worker
 // wire protocol here; this one type is the exception because
