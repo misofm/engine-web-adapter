@@ -19,6 +19,10 @@ import type { PumpWorkerRequest, PumpWorkerResponse } from "../src/stems/worker-
 
 const IDENTITY = `sha256:${"2".repeat(64)}` as StemIdentity;
 
+function identityFor(digit: string): StemIdentity {
+  return `sha256:${digit.repeat(64)}` as StemIdentity;
+}
+
 interface Interval { readonly startFrame: number; readonly frames: number }
 
 function packedDescriptor(options: {
@@ -119,6 +123,34 @@ class TrackingBlob extends Blob {
     this.slices += 1;
     return super.slice(start, end, contentType);
   }
+}
+
+class BlockingBlob extends Blob {
+  active = 0;
+  peak = 0;
+  readonly pending: Array<() => void> = [];
+
+  override slice(start?: number, end?: number, contentType?: string): Blob {
+    const base = super.slice(start, end, contentType);
+    return {
+      arrayBuffer: async () => {
+        this.active += 1;
+        this.peak = Math.max(this.peak, this.active);
+        await new Promise<void>((resolve) => this.pending.push(resolve));
+        this.active -= 1;
+        return base.arrayBuffer();
+      },
+    } as Blob;
+  }
+
+  releaseAll(): void {
+    for (const release of this.pending.splice(0)) release();
+  }
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !predicate(); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(predicate(), true, "condition did not become true before the test deadline");
 }
 
 test("sparse pump matches the dense oracle across gaps, stereo 24-bit data and a partial tail", async () => {
@@ -222,6 +254,105 @@ test("sparse Worker client deduplicates identity reads and requires the reported
   assert.equal(stalled.terminated, true);
 });
 
+test("sparse descriptor progress deadlines are per asset, not cumulative initialization time", async () => {
+  const descriptors = new Map<StemIdentity, SparsePcmDescriptor>();
+  const sources = ["3", "4", "5"].map((digit, index) => {
+    const descriptor = packedDescriptor({
+      identity: identityFor(digit), channels: 1, bitDepth: 16, frames: 4,
+      intervals: [{ startFrame: 0, frames: 4 }], samples: Array.from({ length: 4 }, (_, frame) => [frame + index + 1]),
+    });
+    descriptors.set(descriptor.index.identity, descriptor);
+    return source(`progress-${index}`, descriptor);
+  });
+  const worker = new SparseFakeWorker(true, true, undefined, 48, 24);
+  const client = await PcmPumpWorkerClient.createSparse({
+    lease: { read: async (identity) => { await new Promise((resolve) => setTimeout(resolve, 45)); return descriptors.get(identity as StemIdentity)!; } },
+    sources, worker, windowFrames: 4, requestDeadlineMs: 100,
+  });
+  assert.equal(worker.messages.filter((message) => message.type === "initialize-sparse").length, 1);
+  await client.close();
+});
+
+test("a stalled sparse descriptor read times out and a late result cannot revive initialization", async () => {
+  const descriptor = packedDescriptor({ channels: 1, bitDepth: 16, frames: 4, intervals: [{ startFrame: 0, frames: 4 }], samples: [[1], [2], [3], [4]] });
+  const started = deferred<void>();
+  const result = deferred<SparsePcmDescriptor>();
+  const worker = new SparseFakeWorker();
+  const opening = PcmPumpWorkerClient.createSparse({
+    lease: { read: async () => { started.resolve(); return result.promise; } },
+    sources: [source("late-read", descriptor)], worker, requestDeadlineMs: 10,
+  });
+  await started.promise;
+  await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.read_deadline");
+  result.resolve(descriptor);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(worker.messages.some((message) => message.type === "initialize-sparse"), false);
+  assert.equal(worker.terminated, true);
+});
+
+test("sparse initialization cancellation during read and immediately after reply cannot hand off a client", async () => {
+  const descriptor = packedDescriptor({ channels: 1, bitDepth: 16, frames: 4, intervals: [{ startFrame: 0, frames: 4 }], samples: [[1], [2], [3], [4]] });
+  const started = deferred<void>();
+  const result = deferred<SparsePcmDescriptor>();
+  const duringRead = new AbortController();
+  const readWorker = new SparseFakeWorker();
+  const opening = PcmPumpWorkerClient.createSparse({
+    lease: { read: async () => { started.resolve(); return result.promise; } },
+    sources: [source("cancel-read", descriptor)], worker: readWorker, signal: duringRead.signal,
+  });
+  await started.promise;
+  const readReason = new DOMException("cancelled during sparse read", "AbortError");
+  duringRead.abort(readReason);
+  await assert.rejects(opening, (error: unknown) => error === readReason);
+  result.resolve(descriptor);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(readWorker.messages.some((message) => message.type === "initialize-sparse"), false);
+  assert.equal(readWorker.terminated, true);
+
+  const afterReply = new AbortController();
+  const replyReason = new DOMException("cancelled after sparse reply", "AbortError");
+  let replied = false;
+  const replyWorker = new SparseFakeWorker(true, true, () => {
+    replied = true;
+    afterReply.abort(replyReason);
+  }, 16, 8);
+  await assert.rejects(PcmPumpWorkerClient.createSparse({
+    lease: { read: async () => descriptor },
+    sources: [source("cancel-reply", descriptor)], worker: replyWorker, windowFrames: 4, signal: afterReply.signal,
+  }), (error: unknown) => error === replyReason);
+  assert.equal(replied, true);
+  assert.equal(replyWorker.terminated, true);
+});
+
+test("five mixed sparse source sizes publish the largest-four scratch bound across a pending seek", async () => {
+  const shapes: ReadonlyArray<{ channels: 1 | 2; bitDepth: 16 | 24 }> = [
+    { channels: 1, bitDepth: 16 }, { channels: 2, bitDepth: 16 }, { channels: 1, bitDepth: 24 },
+    { channels: 2, bitDepth: 24 }, { channels: 1, bitDepth: 16 },
+  ];
+  const blockers: BlockingBlob[] = [];
+  const descriptors = shapes.map((shape, index) => {
+    const data = new BlockingBlob([new Uint8Array(8 * shape.channels * (shape.bitDepth / 8))]);
+    blockers.push(data);
+    return packedDescriptor({
+      identity: identityFor(["6", "7", "8", "9", "a"][index]!), ...shape, frames: 8,
+      intervals: [{ startFrame: 0, frames: 8 }], samples: Array.from({ length: 8 }, () => Array.from({ length: shape.channels }, () => 1)), data,
+    });
+  });
+  const sources = descriptors.map((descriptor, index) => source(`mixed-${index}`, descriptor));
+  const pump = CanonicalPcmPump.createSparse({ assets: descriptors, sources, windowFrames: 4 });
+  assert.equal(pump.maximumReadScratchBytes, 60);
+  const pending = pump.pumpPass(false);
+  await waitFor(() => blockers.reduce((active, blob) => active + blob.active, 0) === 4);
+  assert.equal(Math.max(...blockers.map((blob) => blob.peak)), 1);
+  assert.equal(blockers.reduce((active, blob) => active + blob.active, 0), 4);
+  await pump.seekFrames(1);
+  assert.equal(blockers.reduce((active, blob) => active + blob.active, 0), 4);
+  pump.close();
+  for (const blob of blockers) blob.releaseAll();
+  await pending;
+  assert.equal(Math.max(...blockers.map((blob) => blob.peak)), 1);
+});
+
 test("sparse pending windows retain generation ownership across seek and stop", async () => {
   const descriptor = packedDescriptor({ channels: 1, bitDepth: 16, frames: 8, intervals: [{ startFrame: 0, frames: 8 }], samples: Array.from({ length: 8 }, (_, frame) => [frame + 1]) });
   const entered = deferred<void>();
@@ -314,13 +445,22 @@ class SparseFakeWorker implements PumpWorkerLike {
   readonly messages: PumpWorkerRequest[] = [];
   readonly listeners = new Map<string, Set<(event: any) => void>>();
   terminated = false;
-  constructor(readonly validScratch = true, readonly replyInitialize = true) {}
+  constructor(
+    readonly validScratch = true,
+    readonly replyInitialize = true,
+    readonly onInitialize: (() => void) | undefined = undefined,
+    readonly windowBytes = 32,
+    readonly scratchBytes = 16,
+  ) {}
   postMessage(message: PumpWorkerRequest): void {
     this.messages.push(message);
-    if (this.replyInitialize && message.type === "initialize-sparse") queueMicrotask(() => this.emit("message", { data: {
-      type: "initialized", requestId: message.requestId,
-      bounds: { windowBytes: 32, ringBytes: message.sources.reduce((sum, item) => sum + item.ring.byteLength, 0), maximumReadScratchBytes: this.validScratch ? 16 : 0 },
-    } satisfies PumpWorkerResponse }));
+    if (this.replyInitialize && message.type === "initialize-sparse") queueMicrotask(() => {
+      this.emit("message", { data: {
+        type: "initialized", requestId: message.requestId,
+        bounds: { windowBytes: this.windowBytes, ringBytes: message.sources.reduce((sum, item) => sum + item.ring.byteLength, 0), maximumReadScratchBytes: this.validScratch ? this.scratchBytes : 0 },
+      } satisfies PumpWorkerResponse });
+      this.onInitialize?.();
+    });
     if (message.type === "stop") queueMicrotask(() => this.emit("message", { data: { type: "stopped", requestId: message.requestId } satisfies PumpWorkerResponse }));
   }
   terminate(): void { this.terminated = true; }

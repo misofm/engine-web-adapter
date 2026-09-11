@@ -157,7 +157,7 @@ export class PcmPumpWorkerClient {
         read: (identity) => readSparseDescriptorEffect(options.lease, identity, options.signal),
       });
       const opening = Effect.gen(function* () {
-        const resolved = yield* readSparseDescriptors(options.sources);
+        const resolved = yield* readSparseDescriptors(options.sources, deadline);
         const assets = yield* Effect.try({
           try: () => {
             const admittedAssets = new Map<StemIdentity, SparsePcmDescriptor>();
@@ -173,9 +173,8 @@ export class PcmPumpWorkerClient {
         });
         const requestId = client.#next();
         const reply = yield* client.#requestEffect({
-            type: "initialize-sparse", requestId, sources: options.sources,
-            assets: [...assets.values()], windowFrames,
-          idleMs, generation,
+          type: "initialize-sparse", requestId, sources: options.sources,
+          assets: [...assets.values()], windowFrames, idleMs, generation,
         });
         yield* Effect.try({
           try: () => validateSparseInitializationReply(reply, expectedWindow, expectedRing, expectedScratch),
@@ -183,16 +182,9 @@ export class PcmPumpWorkerClient {
         });
         return reply;
       }).pipe(Effect.provide(controlLayer));
-      const timedOpening = Effect.timeoutOrElse(opening, {
-        duration: deadline,
-        orElse: () => {
-          const error = new EngineWebAdapterError("stem.read_deadline", "Sparse PCM Worker initialization timed out", { milliseconds: deadline });
-          return Effect.sync(() => client.#terminate(error)).pipe(Effect.andThen(Effect.fail(error)));
-        },
-      });
       const bracketed = Effect.acquireUseRelease(
         Effect.succeed(client),
-        () => timedOpening,
+        () => opening,
         (_owned, exit) => Exit.isSuccess(exit) ? Effect.void : Effect.sync(() => client.#terminate(Cause.squash(exit.cause))),
       );
       const exit = await Effect.runPromiseExit(bracketed);
@@ -313,12 +305,19 @@ export class PcmPumpWorkerClient {
 
 const readSparseDescriptors = Effect.fn("PcmPumpWorkerClient.readSparseDescriptors")(function* (
   sources: readonly SparsePcmPumpSource[],
+  deadline: number,
 ) {
   const control = yield* SparsePumpControl;
   const descriptors = new Map<StemIdentity, SparsePcmDescriptor>();
   for (const source of sources) {
     if (descriptors.has(source.identity)) continue;
-    const descriptor = yield* control.read(source.identity);
+    const descriptor = yield* control.read(source.identity).pipe(Effect.timeoutOrElse({
+      duration: deadline,
+      orElse: () => Effect.fail(new EngineWebAdapterError("stem.read_deadline", "Sparse PCM descriptor read timed out", {
+        identity: source.identity,
+        milliseconds: deadline,
+      })),
+    }));
     descriptors.set(source.identity, descriptor);
   }
   return descriptors;

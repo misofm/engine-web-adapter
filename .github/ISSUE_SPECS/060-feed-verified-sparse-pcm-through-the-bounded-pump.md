@@ -112,3 +112,23 @@ Review and reproduction are retained under
 `/data/sparse-pcm-launch/tooling/adapter-60-attempt1-review/`, with the review copy
 in `adapter-60-reviews/attempt1-bf72c37.md`. No additional Cause-loss defect was
 demonstrated; this correction does not authorize a wider error-boundary rewrite.
+
+## Attempt 2 completed checkpoint — independent review pending
+
+The aggregate opening timeout is removed. Each unique descriptor lookup now has
+its own Effect Clock deadline, and the shared request path retains its separate
+handshake/seek/stop deadline. Existing scoped failure termination and synchronous
+successful handoff checks remain. Production correction is confined to the
+worker client; no new timer/controller/state framework was introduced.
+
+Four new representative tests prove healthy cumulative lookup time may exceed a
+single deadline, a stalled read cannot revive initialization after timing out,
+sparse cancellation during lookup and immediately after reply retains its cause,
+and five mixed native source sizes retain four physical reads through a seek with
+the largest-four conservative scratch bound. Luna reports32 focused tests and
+all249 package tests/checks passing. The existing packed Chromium smoke passes
+with sparse writes35, descriptor reads1, generation2 and scratch512 bytes.
+Logs are retained at `/data/sparse-pcm-launch/adapter-60-attempt2/`; packed consumer
+is `/tmp/engine-web-adapter-browser-ASgaHx`. Root reviewed the bounded code diff
+and retained logs, and git diff --check passes. One independent Astra medium
+verdict remains required; no CLI, registry or app delivery is claimed here.
