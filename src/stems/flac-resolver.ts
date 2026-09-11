@@ -56,8 +56,10 @@ function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): E
 
 function decoderSourceError(error: unknown): EngineWebAdapterError {
   if (error instanceof DecoderByteSourceError) {
-    if (error.cause instanceof EngineWebAdapterError) return error.cause;
-    return new EngineWebAdapterError("stem.decode.worker", error.message, { operation: error.operation }, error.cause);
+    if (error.cause instanceof EngineWebAdapterError) {
+      return new EngineWebAdapterError(error.cause.code, error.cause.message, error.cause.details, error);
+    }
+    return new EngineWebAdapterError("stem.decode.worker", error.message, { operation: error.operation }, error);
   }
   if (error instanceof EngineWebAdapterError) return error;
   return new EngineWebAdapterError("stem.decode.worker", "FLAC decoder input lane failed", {}, error);
@@ -65,8 +67,7 @@ function decoderSourceError(error: unknown): EngineWebAdapterError {
 
 function inputCauseValue(reason: Cause.Reason<unknown>): unknown {
   if (Cause.isFailReason(reason)) {
-    const error = reason.error;
-    return error instanceof DecoderByteSourceError && "cause" in error ? error.cause : error;
+    return reason.error;
   }
   if (Cause.isDieReason(reason)) return reason.defect;
   const interrupted = new Error("FLAC decoder input lane was interrupted", { cause: reason });
@@ -74,19 +75,38 @@ function inputCauseValue(reason: Cause.Reason<unknown>): unknown {
   return interrupted;
 }
 
+function preservedCause(value: unknown): unknown {
+  // EngineWebAdapterError cannot distinguish an omitted cause from an
+  // explicit undefined. Keep an AggregateError wrapper at this boundary so a
+  // defect's full Cause remains observable even when its payload is undefined.
+  if (value === undefined) return new AggregateError([undefined], "FLAC decoder input lane failed");
+  if (value instanceof DecoderByteSourceError && "cause" in value) {
+    return new AggregateError([value, preservedCause(value.cause)], "FLAC decoder input lane failed");
+  }
+  return value;
+}
+
+function expandedCause(value: unknown): ReadonlyArray<unknown> {
+  const preserved = preservedCause(value);
+  if (value instanceof DecoderByteSourceError && "cause" in value) {
+    return [preserved, ...expandedCause(value.cause)];
+  }
+  if (value instanceof AggregateError) {
+    return [preserved, ...value.errors.flatMap(expandedCause)];
+  }
+  return [preserved];
+}
+
 function inputCauseError(cause: Cause.Cause<unknown>): EngineWebAdapterError {
   const reasons = cause.reasons;
   const values = reasons.map(inputCauseValue);
   const primary = values[0];
-  if (primary instanceof EngineWebAdapterError && values.length === 1) return primary;
   const mapped = decoderSourceError(primary);
-  const preserved = values.length === 1 && values[0] !== undefined
-    ? values[0]
-    : new AggregateError(values, "FLAC decoder input lane failed");
+  const preserved = new AggregateError(values.flatMap(expandedCause), "FLAC decoder input lane failed");
   if (primary instanceof Error && primary.name === "AbortError") {
     return new EngineWebAdapterError("stem.cancelled", "FLAC decoder input lane was cancelled", {}, preserved);
   }
-  return values.length === 1 ? mapped : new EngineWebAdapterError(mapped.code, mapped.message, mapped.details, preserved);
+  return new EngineWebAdapterError(mapped.code, mapped.message, mapped.details, preserved);
 }
 
 function mergeInputCause(primary: unknown, exit: Exit.Exit<unknown, unknown>): unknown {
@@ -95,7 +115,7 @@ function mergeInputCause(primary: unknown, exit: Exit.Exit<unknown, unknown>): u
   if (reasons.length === 0) return primary;
   const mapped = decoderSourceError(primary);
   return new EngineWebAdapterError(mapped.code, mapped.message, mapped.details,
-    new AggregateError([primary, ...reasons], "FLAC decoder input lane failed"));
+    new AggregateError([preservedCause(primary), ...reasons.flatMap(expandedCause)], "FLAC decoder input lane failed"));
 }
 
 /** Create the advanced low-level native-FLAC resolver used by session integration. */
@@ -205,6 +225,20 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           const inputQueue = Effect.runSync(Queue.bounded<InputCommand>(1));
           let inputLane: Promise<Exit.Exit<unknown, unknown>> = Promise.resolve(Exit.succeed(undefined));
           let acceptingInput = true;
+          let terminal = false;
+          // One operation-local owner spans range acquisition and the source
+          // continuation. Delivery adopts before progress callbacks; this
+          // scope releases if interruption wins before the source clears it.
+          let currentBorrow: (() => void) | undefined;
+          const adoptBorrow = (release: () => void) => {
+            currentBorrow?.();
+            currentBorrow = release;
+          };
+          const releaseBorrow = () => {
+            const release = currentBorrow;
+            currentBorrow = undefined;
+            release?.();
+          };
           let sourcePending = 0;
           let preparedMetadata: Readonly<{
             readonly streamInfo: import("./native-flac-metadata.js").NativeFlacStreamInfo;
@@ -270,8 +304,6 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           const range = (phase: "probe" | "metadata" | "audio", start: number, end: number) => {
             networkPending += 1;
             resetWatchdog("frame");
-            let handoffRelease: (() => void) | undefined;
-            let handed = false;
             return readExactFlacRangeEffect({
             locate: options.locate,
             ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
@@ -281,20 +313,20 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             retainRange, downloadAdmission: downloads,
             ...(diagnostics === undefined ? {} : { diagnostics }),
             ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
-            onProduced: release => { handoffRelease = release; },
+            onProduced: adoptBorrow,
             onActivity: () => resetWatchdog(phase === "audio" ? "frame" : phase === "metadata" ? "metadata" : "decoder-load"),
             }).pipe(
-              Effect.map(result => ({ ...result, handoff: () => { handed = true; } })),
               Effect.ensuring(Effect.sync(() => {
-                if (!handed) handoffRelease?.();
                 networkPending -= 1;
                 resetWatchdog(phase === "audio" ? "frame" : "metadata");
               })),
             );
           };
           const inputProgram = Effect.scoped(Effect.gen(function*() {
+            yield* Effect.addFinalizer(() => Effect.sync(releaseBorrow));
             const source = sourceFactory({
               identity,
+              borrow: { adopt: adoptBorrow, release: releaseBorrow },
               range,
               ...(resolveOptions.expected === undefined ? {} : { expected: resolveOptions.expected }),
             });
@@ -356,15 +388,19 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             if (stopping || message.requestId !== requestId) return;
             resetWatchdog(message.type === "ready" ? "metadata" : message.type === "complete" ? "finish" : "frame");
             if (message.type === "ready") {
+              if (terminal) {
+                stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker sent readiness after completion", { identity }), true);
+                return;
+              }
               enqueue({ type: "ready" });
             } else if (message.type === "input-credit") {
-              if (!acceptingInput) {
+              if (!acceptingInput || terminal) {
                 stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker requested input after completion", { identity }), true);
                 return;
               }
               enqueue({ type: "input-credit", message });
             } else if (message.type === "pcm") {
-              if (!(message.bytes instanceof ArrayBuffer) || message.bytes.byteLength > MAXIMUM_CANONICAL_OUTPUT_BYTES || blocks.length >= 2) {
+              if (terminal || !(message.bytes instanceof ArrayBuffer) || message.bytes.byteLength > MAXIMUM_CANONICAL_OUTPUT_BYTES || blocks.length >= 2) {
                 stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker exceeded two unconsumed PCM outputs", {
                   identity, limit: 2,
                 }), true);
@@ -383,6 +419,11 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               });
               notify();
             } else if (message.type === "complete") {
+              if (terminal) {
+                stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker sent completion twice", { identity }), true);
+                return;
+              }
+              terminal = true;
               acceptingInput = false;
               enqueue({ type: "complete", message });
             } else if (message.type === "error") {

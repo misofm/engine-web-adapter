@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect";
+import { Cause, Effect, Exit, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 
 import { EngineWebAdapterError } from "../errors.js";
@@ -67,6 +67,15 @@ function failure(
 function retryable(error: unknown): boolean {
   return HttpClientError.isHttpClientError(error) ||
     (error instanceof EngineWebAdapterError && error.details.retryable === true);
+}
+
+function preserveDeliveryCause(primary: unknown, cleanup: unknown): EngineWebAdapterError {
+  if (primary instanceof EngineWebAdapterError) {
+    return new EngineWebAdapterError(primary.code, primary.message, primary.details,
+      new AggregateError([primary, cleanup], "FLAC delivery failed during cleanup"));
+  }
+  return new EngineWebAdapterError("stem.delivery.http", "FLAC range operation failed during cleanup", {},
+    new AggregateError([primary, cleanup], "FLAC delivery failed during cleanup"));
 }
 
 function requestFor(
@@ -315,7 +324,8 @@ export function readExactFlacRangeEffect(options: FlacRangeReadOptions): Effect.
     // be interrupted before the resolver receives that result.
     return { bytes, totalBytes, release };
     }).pipe(Effect.ensuring(Effect.sync(() => { if (!produced) release(); })))).pipe(
-      Effect.catch(error => Effect.fail(cleanupFailure ?? error)),
+      Effect.catch(error => Effect.fail(cleanupFailure === undefined || cleanupFailure === error
+        ? error : preserveDeliveryCause(error, cleanupFailure))),
     );
   };
 
@@ -352,7 +362,40 @@ export function readExactFlacRange(options: FlacRangeReadOptions): Promise<Reado
   let effect: Effect.Effect<Readonly<{ bytes: Uint8Array; totalBytes: number; release: () => void }>, EngineWebAdapterError>;
   try { effect = readExactFlacRangeEffect({ ...options, onProduced: release => { unhandedRelease = release; } }); }
   catch (error) { return Promise.reject(error); }
-  return Effect.runPromise(effect, { signal: options.signal }).then((result) => {
+  const causeValue = (reason: Cause.Reason<unknown>): unknown => {
+    if (Cause.isFailReason(reason)) return reason.error;
+    if (Cause.isDieReason(reason)) return reason.defect;
+    const interruption = new Error("FLAC delivery was interrupted", { cause: reason });
+    interruption.name = "AbortError";
+    return interruption;
+  };
+  const exitError = (cause: Cause.Cause<unknown>): EngineWebAdapterError => {
+    const values = cause.reasons.map(causeValue);
+    const first = values[0];
+    const mapped = first instanceof EngineWebAdapterError ? first : new EngineWebAdapterError(
+      "stem.delivery.http", "FLAC range operation failed", {
+        identity: options.identity, phase: options.phase, range: [options.start, options.end], attempt: 0, retryable: false,
+      }, first,
+    );
+    if (values.length === 1 && first instanceof EngineWebAdapterError) return first;
+    return new EngineWebAdapterError(mapped.code, mapped.message, mapped.details,
+      new AggregateError(values.length === 0 ? [new AggregateError([undefined])] : values, "FLAC range operation failed"));
+  };
+  return Effect.runPromiseExit(effect, { signal: options.signal }).then((exit) => {
+    if (Exit.isFailure(exit)) {
+      unhandedRelease?.();
+      unhandedRelease = undefined;
+      const error = exitError(exit.cause);
+      if (options.signal.aborted) {
+        throw new EngineWebAdapterError("stem.cancelled", "FLAC delivery was cancelled", {
+          identity: options.identity,
+          phase: options.phase,
+          range: [options.start, options.end],
+        }, new AggregateError([options.signal.reason, error], "FLAC delivery was cancelled"));
+      }
+      throw error;
+    }
+    const result = exit.value;
     // Only this successful Promise handoff transfers ownership to the resolver.
     unhandedRelease = undefined;
     return result;
@@ -364,7 +407,7 @@ export function readExactFlacRange(options: FlacRangeReadOptions): Promise<Reado
         identity: options.identity,
         phase: options.phase,
         range: [options.start, options.end],
-      }, options.signal.reason);
+      }, new AggregateError([options.signal.reason, error], "FLAC delivery was cancelled"));
     }
     throw error;
   });

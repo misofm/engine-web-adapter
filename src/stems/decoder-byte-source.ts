@@ -34,12 +34,15 @@ export interface DecoderByteSource {
 export interface DecoderByteSourceOptions {
   readonly identity: StemIdentity;
   readonly expected?: CanonicalPcmExpectation;
+  /** Operation-local owner for a borrowed range. */
+  readonly borrow?: {
+    readonly adopt: (release: () => void) => void;
+    readonly release: () => void;
+  };
   readonly range: (phase: "probe" | "metadata" | "audio", start: number, end: number) => Effect.Effect<{
     readonly bytes: Uint8Array;
     readonly totalBytes: number;
     readonly release: () => void;
-    /** Internal handoff marker used to quarantine a borrowed range on interruption. */
-    readonly handoff?: () => void;
   }, EngineWebAdapterError>;
 }
 
@@ -64,44 +67,45 @@ export function makeDecoderByteSource(options: DecoderByteSourceOptions): Decode
   let totalPcmBytes = 0;
   const range = (phase: "probe" | "metadata" | "audio", start: number, end: number, operation: DecoderByteSourceError["operation"]) =>
     options.range(phase, start, end).pipe(Effect.mapError(cause => sourceFailure(operation, cause)));
+  const release = (borrowed: { readonly release: () => void }) => {
+    if (options.borrow === undefined) borrowed.release();
+    else options.borrow.release();
+  };
 
   const prepare = Effect.fn("DecoderByteSource.prepare")(function*() {
     if (prepared) return yield* new DecoderByteSourceError({ operation: "prepare", message: "FLAC decoder source was prepared twice" });
     if (finished) return yield* new DecoderByteSourceError({ operation: "prepare", message: "FLAC decoder source was finished" });
     const probe = yield* range("probe", 0, NATIVE_FLAC_STREAMINFO_PROBE_BYTES - 1, "prepare");
-    probe.handoff?.();
     let parsed: Readonly<{ streamInfo: NativeFlacStreamInfo; streamInfoIsFinal: boolean }>;
     try {
       totalBytes = probe.totalBytes;
       parsed = parseNativeFlacStreamInfo(probe.bytes, options.expected);
     } catch (cause) {
-      probe.release();
+      release(probe);
       return yield* Effect.fail(sourceFailure("prepare", cause));
     }
-    probe.release();
+    release(probe);
     const scanner = new NativeFlacMetadataScanner(parsed.streamInfoIsFinal);
     offset = NATIVE_FLAC_STREAMINFO_PROBE_BYTES;
     while (!scanner.complete) {
       const result = yield* range("metadata", scanner.nextHeaderOffset, scanner.nextHeaderOffset + 3, "prepare");
-      result.handoff?.();
       let header: number;
       try { header = scanner.acceptHeader(result.bytes, result.totalBytes).nextOffset; }
       catch (cause) {
-        result.release();
+        release(result);
         return yield* Effect.fail(sourceFailure("prepare", cause));
       }
-      result.release();
+      release(result);
       offset = header;
     }
     if (totalBytes === undefined || offset >= totalBytes) {
-      return yield* new DecoderByteSourceError({ operation: "prepare", message: "FLAC has no compressed audio suffix" });
+      const cause = new EngineWebAdapterError("stem.flac.invalid", "FLAC has no compressed audio suffix", { identity: options.identity });
+      return yield* new DecoderByteSourceError({ operation: "prepare", message: cause.message, cause });
     }
     expectedFrames = options.expected?.frames ?? parsed.streamInfo.totalSamples;
     if (expectedFrames === 0) {
-      return yield* new DecoderByteSourceError({
-        operation: "prepare",
-        message: "Unknown FLAC total samples require a compiled source declaration",
-      });
+      const cause = new EngineWebAdapterError("stem.flac.shape", "Unknown FLAC total samples require a compiled source declaration", { identity: options.identity });
+      return yield* new DecoderByteSourceError({ operation: "prepare", message: cause.message, cause });
     }
     totalPcmBytes = options.expected?.canonicalBytes ??
       expectedFrames * parsed.streamInfo.channels * (parsed.streamInfo.bitDepth / 8);
@@ -123,18 +127,17 @@ export function makeDecoderByteSource(options: DecoderByteSourceOptions): Decode
     }
     const length = Math.min(maximumBytes, totalBytes - offset);
     const result = yield* range("audio", offset, offset + length - 1, "read");
-    result.handoff?.();
     try {
       if (result.bytes.byteLength < 1 || result.bytes.byteLength > maximumBytes || result.bytes.byteLength !== length) {
-        result.release();
+        release(result);
         return yield* new DecoderByteSourceError({ operation: "read", message: "FLAC delivery returned bytes outside the input credit" });
       }
       const bytes = result.bytes;
       const end = offset + bytes.byteLength === totalBytes;
       offset += bytes.byteLength;
-      return { bytes, end, release: result.release };
+      return { bytes, end, release: () => release(result) };
     } catch (cause) {
-      result.release();
+      release(result);
       return yield* Effect.fail(sourceFailure("read", cause));
     }
   })();
