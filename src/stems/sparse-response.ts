@@ -178,10 +178,10 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
       if (failures.length > 0) throw new AggregateError(failures, "Sparse full response cleanup failed");
     }));
     const nextBody = Effect.gen(function*() {
-      if (eof) return { done: true as const, value: new Uint8Array() };
       if (carry !== undefined && carryOffset < carry.byteLength) return { done: false as const, value: carry };
       carry = undefined;
       carryOffset = 0;
+      if (eof) return { done: true as const, value: new Uint8Array() };
       const readPromise = byob
         ? (reader as ReadableStreamBYOBReader).read(byobBuffer ?? new Uint8Array(new ArrayBuffer(SPARSE_RESPONSE_MAX_INPUT_BYTES)))
         : (reader as ReadableStreamDefaultReader<Uint8Array>).read();
@@ -201,14 +201,21 @@ export function openSparseResponse(options: SparseResponseOptions): Effect.Effec
       if (exit.value.done && (options.signal.aborted || requestController.signal.aborted)) {
         return yield* Effect.fail(failure("stem.cancelled", "Sparse full response was cancelled", { identity: options.identity }, options.signal.reason ?? requestController.signal.reason));
       }
-      if (exit.value.done && value === undefined) {
+      if (value === undefined) {
+        if (!exit.value.done || byob) return yield* Effect.fail(failure("stem.delivery.range", "Sparse response ended without a terminal body view", { identity: options.identity }));
         eof = true;
         return { done: true as const, value: new Uint8Array() };
       }
-      if (!(value instanceof Uint8Array) || value.byteLength < 1 || (byob && (value.byteLength > SPARSE_RESPONSE_MAX_INPUT_BYTES || value.buffer.byteLength > SPARSE_RESPONSE_MAX_INPUT_BYTES))) {
+      if (!(value instanceof Uint8Array) || (byob && (value.byteLength > SPARSE_RESPONSE_MAX_INPUT_BYTES || value.buffer.byteLength > SPARSE_RESPONSE_MAX_INPUT_BYTES))) {
         return yield* Effect.fail(failure("stem.delivery.range", "Sparse full response body chunk exceeds its bounded transport view", { identity: options.identity, limit: SPARSE_RESPONSE_MAX_CHUNK_BYTES }));
       }
       if (byob && value.buffer instanceof ArrayBuffer) byobBuffer = new Uint8Array(value.buffer);
+      if (exit.value.done) {
+        eof = true;
+        if (value.byteLength === 0) return { done: true as const, value };
+      } else if (value.byteLength < 1) {
+        return yield* Effect.fail(failure("stem.delivery.range", "Sparse full response returned an empty nonterminal body view", { identity: options.identity }));
+      }
       carry = value;
       return { done: false as const, value };
     });

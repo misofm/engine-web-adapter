@@ -87,6 +87,52 @@ function packageBody(flac: Uint8Array): { readonly body: Uint8Array; readonly ex
   return { body: new Uint8Array([...header, ...encoded, ...flac]), expected };
 }
 
+function emptySilentPackage(): { readonly body: Uint8Array; readonly expected: SparsePcmExpectation } {
+  const expected = {
+    identity: ZERO_IDENTITY,
+    sampleRateHz: 48_000,
+    channels: 1 as const,
+    bitDepth: 16 as const,
+    frames: 2_048,
+    canonicalBytes: 4_096,
+  };
+  const encoded = serializeSparseStemIndex({
+    format: "miso_sparse_stem_v1" as const,
+    identity: expected.identity,
+    sampleRateHz: expected.sampleRateHz,
+    channels: expected.channels,
+    bitDepth: expected.bitDepth,
+    frames: expected.frames,
+    intervals: [],
+    chunks: [],
+  });
+  const header = new Uint8Array(16);
+  header.set(new TextEncoder().encode("MISOSTM1"));
+  new DataView(header.buffer).setUint32(8, encoded.byteLength, true);
+  return { body: new Uint8Array([...header, ...encoded]), expected };
+}
+
+test("a real byte response can install an all-silent sparse source without a decoder worker", async () => {
+  const packed = emptySilentPackage();
+  const backend = new MemoryStemStorageBackend();
+  const store = new VerifiedSparsePcmStore({ backend, instanceId: "sparse-byte-eof" });
+  let requests = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/silent",
+    fetch: async () => {
+      requests += 1;
+      return new Response(packed.body.buffer as ArrayBuffer, { status: 200, headers: { "Content-Length": String(packed.body.byteLength) } });
+    },
+    createWorker: () => { throw new Error("all-silent source must not create a decoder worker"); },
+  });
+  const result = await store.installSource(packed.expected, { resolve: signal => resolver(packed.expected, signal) });
+  assert.equal(requests, 1);
+  assert.equal(result.data.size, 0);
+  assert.equal(result.index.activeBytes, 0);
+  assert.equal(result.index.canonicalBytes, packed.expected.canonicalBytes);
+  await store.close();
+});
+
 test("sparse full GET installs an actual FLAC payload cold and resolves warm without transport or workers", async () => {
   const flac = new Uint8Array(readFileSync("tests/fixtures/native-silence.flac"));
   const packed = packageBody(flac);
