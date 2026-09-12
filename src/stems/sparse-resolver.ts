@@ -6,6 +6,7 @@ import { BoundedStemAdmission, flacPipelineWidths } from "./flac-admission.js";
 import { createFlacStemChunkResolver, type BorrowedFlacPcm, type FlacChunkDecodeOptions } from "./flac-resolver.js";
 import { DecoderByteSourceError, makeFiniteDecoderByteSource } from "./decoder-byte-source.js";
 import { FlacWorkerPool } from "./flac-worker-pool.js";
+import { registerSparseResolver } from "./sparse-scheduling.js";
 import {
   SPARSE_STEM_HEADER_BYTES,
   admitSparseStemHeader,
@@ -351,6 +352,7 @@ function scopedAsyncIterable(
   stream: Stream.Stream<SparsePcmSpan, EngineWebAdapterError>,
   identity: StemIdentity,
   onClose?: () => void,
+  onRelease?: () => void | Promise<void>,
 ): AsyncIterable<SparsePcmSpan> {
   return {
     [Symbol.asyncIterator]() {
@@ -367,8 +369,8 @@ function scopedAsyncIterable(
         if (closePromise !== undefined) return closePromise;
         const fiber = currentFiber;
         closePromise = (async () => {
-          onClose?.();
           const failures: unknown[] = [];
+          try { onClose?.(); } catch (cause) { failures.push(cause); }
           if (fiber !== undefined) {
             try {
               const interrupted = await runPromiseExit(Fiber.interrupt(fiber));
@@ -379,6 +381,7 @@ function scopedAsyncIterable(
             const closed = await runPromiseExit(Scope.close(scope, exit));
             if (Exit.isFailure(closed)) failures.push(closed.cause);
           } catch (cause) { failures.push(cause); }
+          try { await onRelease?.(); } catch (cause) { failures.push(cause); }
           if (failures.length > 0) throw closeFailure(identity, "stream", failures);
           return { done: true, value: undefined };
         })();
@@ -492,9 +495,16 @@ export function createSparseStemResolver(
   });
   const downloadAdmission = new BoundedStemAdmission(widths.downloads);
 
-  return async (expected, signal, context) => {
+  const resolver = async (expected: SparsePcmExpectation, signal: AbortSignal, context?: SparseStemResolverContext) => {
     const checkedContext = snapshotResolverContext(context);
     const progress = sparseProgressReporter(checkedContext.onProgress, expected.identity);
+    const epoch = pool.retain();
+    let epochReleased = false;
+    const releaseEpoch = async (): Promise<void> => {
+      if (epochReleased) return;
+      epochReleased = true;
+      await epoch.release();
+    };
     let handedOff = false;
     try {
       const frameBytes = safeFrameBytes(expected);
@@ -592,9 +602,21 @@ export function createSparseStemResolver(
       });
       const stream = Stream.unwrap(acquisition).pipe(Stream.provide(FetchHttpClient.layer));
       handedOff = true;
-      return { spans: scopedAsyncIterable(stream as Stream.Stream<SparsePcmSpan, EngineWebAdapterError>, expected.identity, progress.close) };
+      return {
+        spans: scopedAsyncIterable(
+          stream as Stream.Stream<SparsePcmSpan, EngineWebAdapterError>,
+          expected.identity,
+          progress.close,
+          releaseEpoch,
+        ),
+      };
     } finally {
-      if (!handedOff) progress.close();
+      if (!handedOff) {
+        progress.close();
+        await releaseEpoch();
+      }
     }
   };
+  registerSparseResolver(resolver, { concurrency: widths.processing, pool });
+  return resolver;
 }

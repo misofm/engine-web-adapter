@@ -2,6 +2,7 @@ import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Random, Re
 
 import { EngineWebAdapterError } from "../errors.js";
 import { sparseProgressReporter, type ProgressObserver } from "./progress.js";
+import { sparseResolverScheduling } from "./sparse-scheduling.js";
 import { assertStemIdentity } from "./identity.js";
 import { canonicalJsonBytes } from "./canonical-json.js";
 import { IncrementalSha256 } from "./sha256.js";
@@ -426,9 +427,16 @@ class SparseProgram extends Context.Service<SparseProgram, {
       yield* Effect.addFinalizer(() => Effect.sync(progress.close));
       const operation = yield* makeOperation(lifecycle.signal, checked.signal);
       const descriptors = new Map<StemIdentity, SparsePcmDescriptor>();
-      let retainedMetadataBytes = checked.declarationMetadataBytes;
-      let sourcesReady = 0;
-      for (const unique of checked.unique) {
+      const metadataBytes = yield* Ref.make(checked.declarationMetadataBytes);
+      const scheduling = checked.resolve === undefined ? undefined : sparseResolverScheduling(checked.resolve);
+      if (scheduling?.pool.canRetain) {
+        yield* Effect.acquireRelease(
+          Effect.sync(() => scheduling.pool.retain()),
+          (lease) => Effect.promise(() => lease.release()),
+        );
+      }
+      const concurrency = scheduling?.concurrency ?? 1;
+      const prepareUnique = (unique: SparsePcmExpectation) => Effect.scoped(Effect.gen(function*() {
         yield* checkSignal(operation.signal);
         const sourceId = checked.sources.find((source) => source.identity === unique.identity)?.sourceId;
         const sourceProgress = sparseProgressReporter(checked.onProgress, unique.identity, sourceId);
@@ -447,19 +455,23 @@ class SparseProgram extends Context.Service<SparseProgram, {
         if (descriptor === undefined) return yield* new SparseNotFoundError({ message: `Sparse PCM source is not committed: ${unique.identity}` });
         const charge = retainedDescriptorMetadataBytes(descriptor.index);
         if (charge === undefined) return yield* new SparseBoundaryError({ message: "Sparse descriptor metadata charge is outside its safe bound" });
-        const next = safeAdd(retainedMetadataBytes, charge);
-        if (next === undefined || next > checked.maximumMetadataBytes) return yield* new SparseBoundaryError({ message: "Sparse session metadata budget is exhausted" });
-        retainedMetadataBytes = next;
+        const accepted = yield* Ref.modify(metadataBytes, (retained) => {
+          const next = safeAdd(retained, charge);
+          return next === undefined || next > checked.maximumMetadataBytes
+            ? [false, retained]
+            : [true, next];
+        });
+        if (!accepted) return yield* new SparseBoundaryError({ message: "Sparse session metadata budget is exhausted" });
         descriptors.set(unique.identity, descriptor);
         for (const source of checked.sources) {
           if (source.identity !== unique.identity) continue;
           progress.emit({ stage: "source-ready", identity: unique.identity, sourceId: source.sourceId, bytes: unique.canonicalBytes });
-          sourcesReady += 1;
           yield* checkSignal(operation.signal);
         }
-      }
+      }));
+      yield* Effect.forEach(checked.unique, prepareUnique, { concurrency, discard: true });
       yield* checkSignal(operation.signal);
-      progress.emit({ stage: "ready", sourcesReady, sourcesTotal: checked.sources.length });
+      progress.emit({ stage: "ready", sourcesReady: checked.sources.length, sourcesTotal: checked.sources.length });
       yield* checkSignal(operation.signal);
       const lease = new SparsePcmSessionLeaseImpl(checked.leaseId, checked.sources, descriptors);
       const handoffState: { storeSignal: AbortSignal | undefined; callerSignal: AbortSignal | undefined } = {

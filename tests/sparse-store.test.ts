@@ -12,6 +12,8 @@ import {
   OpfsStorageBackend,
   VerifiedSparsePcmStore,
   VerifiedStemStore,
+  createSparseStemResolver,
+  serializeSparseStemIndex,
   validateSparsePcmIndex,
   type SparsePcmExpectation,
 } from "../src/stems/index.js";
@@ -39,6 +41,28 @@ function deferred(): { readonly promise: Promise<void>; readonly resolve: () => 
   let resolve!: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
+}
+
+function emptySparsePackage(expected: SparsePcmExpectation): Uint8Array {
+  const encoded = serializeSparseStemIndex({
+    format: "miso_sparse_stem_v1" as const,
+    identity: expected.identity,
+    sampleRateHz: expected.sampleRateHz,
+    channels: expected.channels,
+    bitDepth: expected.bitDepth,
+    frames: expected.frames,
+    intervals: [],
+    chunks: [],
+  });
+  const header = new Uint8Array(16);
+  header.set(new TextEncoder().encode("MISOSTM1"));
+  new DataView(header.buffer).setUint32(8, encoded.byteLength, true);
+  return new Uint8Array([...header, ...encoded]);
+}
+
+function responseBody(bytes: Uint8Array | undefined): ArrayBuffer {
+  if (bytes === undefined) throw new Error("missing sparse package fixture");
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 describe("VerifiedSparsePcmStore", () => {
@@ -1123,6 +1147,127 @@ describe("VerifiedSparsePcmStore", () => {
     assert.deepEqual(events.filter((event) => event.stage === "ready").map((event) => [event.sourcesReady, event.sourcesTotal]), [[2, 2]]);
     assert.ok(events.find((event) => event.stage === "probing" && event.identity === expected.identity));
     await lease.close();
+    await store.close();
+  });
+
+  it("uses native sparse scheduling for bounded parallel sources while wrappers stay sequential", async () => {
+    const first = expectation(new Uint8Array(4), 2);
+    const second = expectation(new Uint8Array(6), 3);
+    const packages = new Map([
+      ["first", emptySparsePackage(first)],
+      ["second", emptySparsePackage(second)],
+    ]);
+    let active = 0;
+    let peak = 0;
+    const resolver = createSparseStemResolver({
+      locate: (identity) => `https://fixture.invalid/${identity === first.identity ? "first" : "second"}`,
+      fetch: async (input) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        const key = new URL(String(input)).pathname.slice(1);
+        active -= 1;
+        return new Response(responseBody(packages.get(key)), { status: 200 });
+      },
+      createWorker: () => { throw new Error("silent sources must not create workers"); },
+      hardwareConcurrency: 3,
+    });
+    const parallelStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "native-parallel" });
+    const parallelLease = await parallelStore.openSession({
+      leaseId: "native-parallel",
+      sources: [{ ...first, sourceId: "first" }, { ...second, sourceId: "second" }],
+      resolve: resolver,
+    });
+    assert.equal(peak, 2, "the registered native resolver uses its bounded processing width");
+    await parallelLease.close();
+    await parallelStore.close();
+
+    active = 0;
+    peak = 0;
+    const wrapped = (expected: SparsePcmExpectation, signal: AbortSignal, context?: import("../src/stems/types.js").SparseStemResolverContext) => resolver(expected, signal, context);
+    const sequentialStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "wrapped-sequential" });
+    const sequentialLease = await sequentialStore.openSession({
+      leaseId: "wrapped-sequential",
+      sources: [{ ...first, sourceId: "first" }, { ...second, sourceId: "second" }],
+      resolve: wrapped,
+    });
+    assert.equal(peak, 1, "wrapping the native function does not claim private scheduling metadata");
+    await sequentialLease.close();
+    await sequentialStore.close();
+  });
+
+  it("charges concurrent native descriptors atomically and preserves earlier verified commits", async () => {
+    const first = expectation(new Uint8Array(4), 2);
+    const second = expectation(new Uint8Array(6), 3);
+    const packages = new Map([
+      [first.identity, emptySparsePackage(first)],
+      [second.identity, emptySparsePackage(second)],
+    ]);
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    const resolver = createSparseStemResolver({
+      locate: (identity) => `https://fixture.invalid/${identity.slice(7)}`,
+      fetch: async (input) => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        const identity = new URL(String(input)).pathname.slice(1);
+        return new Response(responseBody(packages.get(`sha256:${identity}`)), { status: 200 });
+      },
+      createWorker: () => { throw new Error("silent sources must not create workers"); },
+      hardwareConcurrency: 3,
+    });
+    const sourceIds = ["first", "second"] as const;
+    const declarationBytes = 2 * "metadata".length + sourceIds.reduce((sum, sourceId) => sum + 256 + 2 * sourceId.length, 0);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "metadata-race" });
+    await assert.rejects(store.openSession({
+      leaseId: "metadata",
+      sources: [{ ...first, sourceId: sourceIds[0] }, { ...second, sourceId: sourceIds[1] }],
+      maximumMetadataBytes: declarationBytes + 512,
+      resolve: resolver,
+      onProgress: (event) => events.push(event),
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    assert.equal(events.some((event) => event.stage === "ready"), false);
+    assert.ok(events.filter((event) => event.stage === "source-ready").length <= 1);
+    assert.ok((await store.inspectSourcePresence(first)).status === "present" || (await store.inspectSourcePresence(second)).status === "present");
+    await store.close();
+  });
+
+  it("interrupts an active native sparse sibling after the first source fails", async () => {
+    const failing = expectation(new Uint8Array(4), 2);
+    const slow = expectation(new Uint8Array(6), 3);
+    const slowBody = emptySparsePackage(slow);
+    let slowStarted = false;
+    let slowCancelled = 0;
+    let releaseStarted!: () => void;
+    const started = new Promise<void>((resolve) => { releaseStarted = resolve; });
+    const resolver = createSparseStemResolver({
+      locate: (identity) => `https://fixture.invalid/${identity === failing.identity ? "failing" : "slow"}`,
+      fetch: async (input) => {
+        if (new URL(String(input)).pathname.slice(1) === "failing") return new Response(null, { status: 500 });
+        slowStarted = true;
+        releaseStarted();
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { controller.enqueue(slowBody); },
+          cancel() { slowCancelled += 1; },
+        }), { status: 200 });
+      },
+      createWorker: () => { throw new Error("silent sources must not create workers"); },
+      hardwareConcurrency: 3,
+    });
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "sibling-failure" });
+    const opening = store.openSession({
+      leaseId: "sibling-failure",
+      sources: [{ ...failing, sourceId: "failing" }, { ...slow, sourceId: "slow" }],
+      resolve: resolver,
+    });
+    let timer!: ReturnType<typeof setTimeout>;
+    const sawSlow = await Promise.race([
+      started.then(() => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), 1_000); }),
+    ]);
+    clearTimeout(timer);
+    assert.equal(sawSlow, true, "native bounded scheduling must admit the sibling before failure cleanup");
+    await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.delivery.http");
+    assert.equal(slowStarted, true);
+    assert.ok(slowCancelled >= 1, "the sibling response body was physically cancelled");
     await store.close();
   });
 });
