@@ -253,6 +253,12 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
       if (chunk === undefined) {
         if (state.packedFrame !== expectedPackedFrames(state.manifest)) return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "Sparse packed frame endpoint changed during mapping", { identity: state.expected.identity }));
         yield* state.cursor.assertEof;
+        if (state.signal.aborted) return yield* Effect.fail(sparseStreamCancelled(state.expected.identity, state.signal.reason));
+        // Active PCM decoding can finish below the full canonical total when
+        // the manifest contains implicit zero gaps. Deliver that final
+        // truthful boundary before the stream scope closes the reporter.
+        state.progress.flush();
+        if (state.signal.aborted) return yield* Effect.fail(sparseStreamCancelled(state.expected.identity, state.signal.reason));
         state.done = true;
         return yield* Cause.done();
       }
@@ -306,6 +312,10 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
       state.currentReader = result.output.getReader();
     }
 });
+
+function sparseStreamCancelled(identity: StemIdentity, reason: unknown): EngineWebAdapterError {
+  return new EngineWebAdapterError("stem.cancelled", "Sparse stream was cancelled", { identity }, reason);
+}
 
 function shallowCleanupPrimary(value: unknown): EngineWebAdapterError | undefined {
   if (value instanceof EngineWebAdapterError) return value;

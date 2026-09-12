@@ -8,6 +8,7 @@ import type { StemIdentity, StemProgress } from "./types.js";
 export type ProgressObserver = (progress: StemProgress) => void;
 
 const COALESCE_MS = 50;
+const forcedBoundaries = new WeakSet<object>();
 
 export function observeProgress(observer: ProgressObserver | undefined, progress: StemProgress): void {
   if (observer === undefined) return;
@@ -21,6 +22,8 @@ export function observeProgress(observer: ProgressObserver | undefined, progress
 
 export interface SparseProgressReporter {
   readonly emit: (progress: StemProgress) => void;
+  /** Flush the latest coalesced byte boundary after a successful operation. */
+  readonly flush: () => void;
   readonly close: () => void;
 }
 
@@ -37,6 +40,7 @@ export function sparseProgressReporter(
   const last = new Map<string, number>();
   const delivered = new Map<string, number>();
   const deliveredAt = new Map<string, number>();
+  const pending = new Map<string, StemProgress>();
 
   const emit = (input: StemProgress): void => {
     if (!attached) return;
@@ -63,7 +67,11 @@ export function sparseProgressReporter(
       const previousDelivered = delivered.get(key) ?? 0;
       const meaningful = bounded - previousDelivered >= Math.max(1, Math.ceil(total / 20));
       const previousAt = deliveredAt.get(key) ?? -Infinity;
-      if (!stageStart && !terminal && !meaningful && now - previousAt < COALESCE_MS) return;
+      if (!forcedBoundaries.has(progress) && !stageStart && !terminal && !meaningful && now - previousAt < COALESCE_MS) {
+        pending.set(key, progress);
+        return;
+      }
+      pending.delete(key);
       delivered.set(key, bounded);
       deliveredAt.set(key, now);
       observeProgress(observer, progress);
@@ -72,18 +80,44 @@ export function sparseProgressReporter(
     observeProgress(observer, progress);
   };
 
+  const flush = (): void => {
+    if (!attached) return;
+    for (const [key, progress] of pending) {
+      if (!attached) return;
+      if (!("bytes" in progress) || !("totalBytes" in progress) ||
+        !Number.isSafeInteger(progress.bytes) || progress.bytes < 0 ||
+        !Number.isSafeInteger(progress.totalBytes) || progress.totalBytes < 0) {
+        pending.delete(key);
+        continue;
+      }
+      const prior = delivered.get(key) ?? 0;
+      if (progress.bytes < prior) {
+        pending.delete(key);
+        continue;
+      }
+      pending.delete(key);
+      delivered.set(key, progress.bytes);
+      deliveredAt.set(key, monotonicNow());
+      forcedBoundaries.add(progress);
+      observeProgress(observer, progress);
+    }
+  };
+
   return {
     emit,
-    close: () => { attached = false; },
+    flush,
+    close: () => { attached = false; pending.clear(); },
   };
 }
 
 function addContext(progress: StemProgress, identity: StemIdentity | undefined, sourceId: string | undefined): StemProgress {
-  return Object.freeze({
+  const contextualized = Object.freeze({
     ...progress,
     ...(sourceId === undefined ? {} : { sourceId }),
     ...(identity === undefined ? {} : { identity }),
   });
+  if (forcedBoundaries.has(progress)) forcedBoundaries.add(contextualized);
+  return contextualized;
 }
 
 function monotonicNow(): number {

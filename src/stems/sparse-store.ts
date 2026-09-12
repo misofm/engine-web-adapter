@@ -352,6 +352,8 @@ class SparseProgram extends Context.Service<SparseProgram, {
       const record = yield* readMarker(backend, marker, operation.signal);
       const descriptor = yield* verifyMarker(backend, record, expected, operation.signal, progress.emit);
       yield* checkSignal(operation.signal);
+      progress.flush();
+      yield* checkSignal(operation.signal);
       progress.emit({ stage: "source-ready", identity: expected.identity, bytes: expected.canonicalBytes });
       yield* Ref.set(operation.ref, { _tag: "closed" } as Lifecycle);
       yield* Effect.succeed(lease);
@@ -369,6 +371,8 @@ class SparseProgram extends Context.Service<SparseProgram, {
       const marker = markerName(expected.identity);
       if (yield* backend.exists(marker)) {
         const descriptor = yield* verifyMarker(backend, yield* readMarker(backend, marker, operation.signal), expected, operation.signal, progress.emit);
+        yield* checkSignal(operation.signal);
+        progress.flush();
         yield* checkSignal(operation.signal);
         progress.emit({ stage: "source-ready", identity: expected.identity, bytes: expected.canonicalBytes });
         operation.dispose();
@@ -401,6 +405,8 @@ class SparseProgram extends Context.Service<SparseProgram, {
       }
       const committed = yield* ingestAndCommit(backend, expected, source, asserted, dataName, generation, operation, progress.emit);
       const descriptor = Object.freeze({ kind: "sparse-pcm" as const, data: committed.data, index: committed.marker.index });
+      yield* checkSignal(operation.signal);
+      progress.flush();
       yield* checkSignal(operation.signal);
       progress.emit({ stage: "source-ready", identity: expected.identity, bytes: expected.canonicalBytes });
       yield* Ref.set(operation.ref, { _tag: "committed" } as Lifecycle);
@@ -451,6 +457,8 @@ class SparseProgram extends Context.Service<SparseProgram, {
           }));
         if (descriptor === undefined) return yield* new SparseNotFoundError({ message: `Sparse PCM source is not committed: ${unique.identity}` });
         yield* checkSignal(operation.signal);
+        sourceProgress.flush();
+        yield* checkSignal(operation.signal);
         const charge = retainedDescriptorMetadataBytes(descriptor.index);
         if (charge === undefined) return yield* new SparseBoundaryError({ message: "Sparse descriptor metadata charge is outside its safe bound" });
         const accepted = yield* Ref.modify(metadataBytes, (retained) => {
@@ -480,6 +488,8 @@ class SparseProgram extends Context.Service<SparseProgram, {
         }
         yield* Effect.forEach(checked.unique, prepareUnique, { concurrency, discard: true });
       }));
+      yield* checkSignal(operation.signal);
+      progress.flush();
       yield* checkSignal(operation.signal);
       progress.emit({ stage: "ready", sourcesReady: checked.sources.length, sourcesTotal: checked.sources.length });
       yield* checkSignal(operation.signal);
