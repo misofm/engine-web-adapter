@@ -18,6 +18,7 @@ import {
   type SparsePcmExpectation,
 } from "../src/stems/index.js";
 import { acquireNamedLock } from "../src/stems/lock.js";
+import { registerSparseResolver } from "../src/stems/sparse-scheduling.js";
 import { sparseSourceProgramForTest } from "../src/stems/sparse-store.js";
 
 function expectation(bytes: Uint8Array, frames: number, shape: { readonly channels?: 1 | 2; readonly bitDepth?: 16 | 24 } = {}): SparsePcmExpectation {
@@ -1125,6 +1126,47 @@ describe("VerifiedSparsePcmStore", () => {
     await store.close();
   });
 
+  it("rejects direct warm open when the final verification callback cancels", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const expected = expectation(bytes, 1);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-final-direct" });
+    await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+    const controller = new AbortController();
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    await assert.rejects(store.openSource(expected, {
+      signal: controller.signal,
+      onProgress: (event) => {
+        events.push(event);
+        if (event.stage === "verifying" && event.bytes === event.totalBytes) controller.abort("final byte");
+      },
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.ok(events.some((event) => event.stage === "verifying" && event.bytes === event.totalBytes));
+    assert.equal(events.some((event) => event.stage === "source-ready"), false);
+    await store.close();
+  });
+
+  it("rejects warm sessions before publishing aliases after final verification cancellation", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const expected = expectation(bytes, 1);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-final-session" });
+    await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+    const controller = new AbortController();
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    await assert.rejects(store.openSession({
+      leaseId: "warm-final-session",
+      sources: [{ ...expected, sourceId: "left" }, { ...expected, sourceId: "right" }],
+      signal: controller.signal,
+      onProgress: (event) => {
+        events.push(event);
+        if (event.stage === "verifying" && event.bytes === event.totalBytes) controller.abort("final byte");
+      },
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.ok(events.some((event) => event.stage === "verifying" && event.bytes === event.totalBytes));
+    assert.equal(events.some((event) => event.stage === "source-ready"), false);
+    assert.equal(events.some((event) => event.stage === "ready"), false);
+    await store.close();
+  });
+
   it("forwards resolver progress context and emits one ready proof per alias", async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const expected = expectation(bytes, 2);
@@ -1147,6 +1189,38 @@ describe("VerifiedSparsePcmStore", () => {
     assert.deepEqual(events.filter((event) => event.stage === "ready").map((event) => [event.sourcesReady, event.sourcesTotal]), [[2, 2]]);
     assert.ok(events.find((event) => event.stage === "probing" && event.identity === expected.identity));
     await lease.close();
+    await store.close();
+  });
+
+  it("waits for native epoch release before aggregate readiness", async () => {
+    const expected = expectation(new Uint8Array(2), 1);
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    const lifecycle: string[] = [];
+    const resolver = async () => ({ spans: spans() });
+    registerSparseResolver(resolver, {
+      concurrency: 1,
+      pool: {
+        canRetain: true,
+        retain: () => ({
+          release: async () => {
+            lifecycle.push("physical-release");
+            throw new Error("physical termination failed");
+          },
+        }),
+      },
+    });
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "release-before-ready" });
+    await assert.rejects(store.openSession({
+      leaseId: "release-before-ready",
+      sources: [{ ...expected, sourceId: "source" }],
+      resolve: resolver,
+      onProgress: (event) => events.push(event),
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+    const sourceReady = events.findIndex((event) => event.stage === "source-ready");
+    const physicalRelease = lifecycle.indexOf("physical-release");
+    assert.ok(sourceReady >= 0, "a committed source remains observable");
+    assert.equal(events.some((event) => event.stage === "ready"), false, "aggregate readiness waits for physical release");
+    assert.ok(physicalRelease >= 0, "the retained epoch was physically released");
     await store.close();
   });
 

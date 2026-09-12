@@ -351,6 +351,7 @@ class SparseProgram extends Context.Service<SparseProgram, {
       }
       const record = yield* readMarker(backend, marker, operation.signal);
       const descriptor = yield* verifyMarker(backend, record, expected, operation.signal, progress.emit);
+      yield* checkSignal(operation.signal);
       progress.emit({ stage: "source-ready", identity: expected.identity, bytes: expected.canonicalBytes });
       yield* Ref.set(operation.ref, { _tag: "closed" } as Lifecycle);
       yield* Effect.succeed(lease);
@@ -368,6 +369,7 @@ class SparseProgram extends Context.Service<SparseProgram, {
       const marker = markerName(expected.identity);
       if (yield* backend.exists(marker)) {
         const descriptor = yield* verifyMarker(backend, yield* readMarker(backend, marker, operation.signal), expected, operation.signal, progress.emit);
+        yield* checkSignal(operation.signal);
         progress.emit({ stage: "source-ready", identity: expected.identity, bytes: expected.canonicalBytes });
         operation.dispose();
         return descriptor;
@@ -399,6 +401,7 @@ class SparseProgram extends Context.Service<SparseProgram, {
       }
       const committed = yield* ingestAndCommit(backend, expected, source, asserted, dataName, generation, operation, progress.emit);
       const descriptor = Object.freeze({ kind: "sparse-pcm" as const, data: committed.data, index: committed.marker.index });
+      yield* checkSignal(operation.signal);
       progress.emit({ stage: "source-ready", identity: expected.identity, bytes: expected.canonicalBytes });
       yield* Ref.set(operation.ref, { _tag: "committed" } as Lifecycle);
       operation.dispose();
@@ -429,12 +432,6 @@ class SparseProgram extends Context.Service<SparseProgram, {
       const descriptors = new Map<StemIdentity, SparsePcmDescriptor>();
       const metadataBytes = yield* Ref.make(checked.declarationMetadataBytes);
       const scheduling = checked.resolve === undefined ? undefined : sparseResolverScheduling(checked.resolve);
-      if (scheduling?.pool.canRetain) {
-        yield* Effect.acquireRelease(
-          Effect.sync(() => scheduling.pool.retain()),
-          (lease) => Effect.promise(() => lease.release()),
-        );
-      }
       const concurrency = scheduling?.concurrency ?? 1;
       const prepareUnique = (unique: SparsePcmExpectation) => Effect.scoped(Effect.gen(function*() {
         yield* checkSignal(operation.signal);
@@ -453,6 +450,7 @@ class SparseProgram extends Context.Service<SparseProgram, {
             onProgress: reportSourceProgress,
           }));
         if (descriptor === undefined) return yield* new SparseNotFoundError({ message: `Sparse PCM source is not committed: ${unique.identity}` });
+        yield* checkSignal(operation.signal);
         const charge = retainedDescriptorMetadataBytes(descriptor.index);
         if (charge === undefined) return yield* new SparseBoundaryError({ message: "Sparse descriptor metadata charge is outside its safe bound" });
         const accepted = yield* Ref.modify(metadataBytes, (retained) => {
@@ -469,7 +467,19 @@ class SparseProgram extends Context.Service<SparseProgram, {
           yield* checkSignal(operation.signal);
         }
       }));
-      yield* Effect.forEach(checked.unique, prepareUnique, { concurrency, discard: true });
+      // Keep the resolver's retained worker epoch alive through every source
+      // scope, then close that epoch before publishing aggregate readiness.
+      // A physical release failure must prevent `ready` while preserving any
+      // source-ready facts already committed by completed tasks.
+      yield* Effect.scoped(Effect.gen(function*() {
+        if (scheduling?.pool.canRetain) {
+          yield* Effect.acquireRelease(
+            Effect.sync(() => scheduling.pool.retain()),
+            (lease) => Effect.promise(() => lease.release()),
+          );
+        }
+        yield* Effect.forEach(checked.unique, prepareUnique, { concurrency, discard: true });
+      }));
       yield* checkSignal(operation.signal);
       progress.emit({ stage: "ready", sourcesReady: checked.sources.length, sourcesTotal: checked.sources.length });
       yield* checkSignal(operation.signal);
@@ -1252,6 +1262,7 @@ function verifyMarker(
       stage: "verifying", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
     }), frameCursor * frameBytes);
     if (payloadCursor !== data.size || hash.digestHex() !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse payload failed canonical verification" });
+    yield* checkSignal(signal);
     return Object.freeze({ kind: "sparse-pcm", data, index: marker.index });
   })();
 }
