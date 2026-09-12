@@ -27,8 +27,91 @@ interface DecoderExports extends WebAssembly.Exports {
   readonly miso_flac_allocator_realloc_calls: () => number;
 }
 
+const REQUIRED_DECODER_EXPORTS = [
+  "miso_flac_decoder_abi_version", "miso_flac_decoder_description_ptr", "miso_flac_decoder_description_capacity",
+  "miso_flac_decoder_output_ptr", "miso_flac_decoder_output_length", "miso_flac_decoder_output_frames",
+  "miso_flac_decoder_callback_error", "miso_flac_decoder_state", "miso_flac_decoder_initialize",
+  "miso_flac_decoder_process_single", "miso_flac_decoder_release_output", "miso_flac_decoder_finish",
+  "miso_flac_decoder_destroy", "miso_flac_allocator_live_bytes", "miso_flac_allocator_peak_live_bytes",
+  "miso_flac_allocator_peak_heap_bytes", "miso_flac_allocator_free_calls", "miso_flac_allocator_realloc_calls",
+] as const;
+
 function decoderError(code: "stem.decode.asset" | "stem.decode.flac" | "stem.decode.output", message: string, details: Readonly<Record<string, unknown>> = {}, cause?: unknown): EngineWebAdapterError {
   return new EngineWebAdapterError(code, message, { retryable: false, ...details }, cause);
+}
+
+export interface NativeFlacDecoderModuleOptions {
+  readonly url: string;
+  readonly signal?: AbortSignal;
+}
+
+/** Compile and validate one immutable decoder module for a fixed asset URL. */
+export async function loadNativeFlacDecoderModule(options: NativeFlacDecoderModuleOptions): Promise<WebAssembly.Module> {
+  const module = await compileNativeFlacDecoderModule(options);
+  await validateNativeFlacDecoderModule(module);
+  return module;
+}
+
+/** Compile without probing an instance; the decoder load path validates its own instance. */
+async function compileNativeFlacDecoderModule(options: NativeFlacDecoderModuleOptions): Promise<WebAssembly.Module> {
+  let response: Response;
+  try {
+    response = await fetch(options.url, options.signal === undefined ? undefined : { signal: options.signal });
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw new EngineWebAdapterError("stem.cancelled", "FLAC decoder asset loading was cancelled", {}, error);
+    }
+    throw decoderError("stem.decode.asset", "FLAC decoder asset could not be loaded", { phase: "decoder-load" }, error);
+  }
+  if (options.signal?.aborted) {
+    throw new EngineWebAdapterError("stem.cancelled", "FLAC decoder asset loading was cancelled", {}, options.signal.reason);
+  }
+  if (!response.ok) throw decoderError("stem.decode.asset", `FLAC decoder asset returned HTTP ${response.status}`, { phase: "decoder-load", status: response.status });
+  const mime = (response.headers.get("content-type") ?? "").split(";", 1)[0]!.trim().toLowerCase();
+  if (mime !== "application/wasm") throw decoderError("stem.decode.asset", "FLAC decoder asset has the wrong MIME type", { phase: "decoder-load", mime });
+  let module: WebAssembly.Module;
+  try { module = await WebAssembly.compileStreaming(Promise.resolve(response)); }
+  catch (error) {
+    if (options.signal?.aborted) {
+      throw new EngineWebAdapterError("stem.cancelled", "FLAC decoder asset compilation was cancelled", {}, error);
+    }
+    throw decoderError("stem.decode.asset", "FLAC decoder asset could not be compiled", { phase: "decoder-load" }, error);
+  }
+  if (options.signal?.aborted) {
+    throw new EngineWebAdapterError("stem.cancelled", "FLAC decoder asset compilation was cancelled", {}, options.signal.reason);
+  }
+  return module;
+}
+
+/** Validate exports and fixed non-shared memory without retaining an instance. */
+async function validateNativeFlacDecoderModule(module: WebAssembly.Module): Promise<void> {
+  let instance: WebAssembly.Instance;
+  try {
+    const instantiated = await WebAssembly.instantiate(module, { env: { miso_flac_read: () => -1 } });
+    instance = ("instance" in instantiated ? instantiated.instance : instantiated) as WebAssembly.Instance;
+  } catch (error) {
+    if (error instanceof EngineWebAdapterError) throw error;
+    throw decoderError("stem.decode.asset", "FLAC decoder asset could not be instantiated", { phase: "decoder-load" }, error);
+  }
+  try {
+    validateDecoderExports(instance.exports as unknown as DecoderExports);
+  } finally {
+    try { (instance.exports as unknown as Partial<DecoderExports>).miso_flac_decoder_destroy?.(); }
+    catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder asset validation destroy trapped", { phase: "decoder-load" }, error); }
+  }
+}
+
+function validateDecoderExports(exports: DecoderExports): void {
+  let fixedNonSharedMemory = false;
+  if (exports.memory instanceof WebAssembly.Memory && exports.memory.buffer instanceof ArrayBuffer &&
+    exports.memory.buffer.byteLength === FLAC_DECODER_MEMORY_BYTES) {
+    try { exports.memory.grow(1); }
+    catch (error) { fixedNonSharedMemory = error instanceof RangeError; }
+  }
+  let valid = fixedNonSharedMemory && REQUIRED_DECODER_EXPORTS.every((name) => typeof exports[name] === "function");
+  try { valid = valid && exports.miso_flac_decoder_abi_version() === 2; }
+  catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder ABI validation trapped", { phase: "decoder-load" }, error); }
+  if (!valid) throw decoderError("stem.decode.asset", "FLAC decoder asset has an incompatible ABI or memory", { phase: "decoder-load" });
 }
 
 export class NativeFlacDecoder {
@@ -42,20 +125,20 @@ export class NativeFlacDecoder {
     readonly inputSlot: FlacInputSlotBuffers;
     readonly requestRefill: () => void;
     readonly onInputWait?: (waiting: boolean) => void;
+    readonly module?: WebAssembly.Module;
+    readonly signal?: AbortSignal;
   }): Promise<NativeFlacDecoder> {
-    let response: Response;
-    try { response = await fetch(options.url); }
-    catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder asset could not be loaded", { phase: "decoder-load" }, error); }
-    if (!response.ok) throw decoderError("stem.decode.asset", `FLAC decoder asset returned HTTP ${response.status}`, { phase: "decoder-load", status: response.status });
-    const mime = (response.headers.get("content-type") ?? "").split(";", 1)[0]!.trim().toLowerCase();
-    if (mime !== "application/wasm") throw decoderError("stem.decode.asset", "FLAC decoder asset has the wrong MIME type", { phase: "decoder-load", mime });
     const consumer = new FlacInputSlotConsumer(options.inputSlot, options.requestRefill, options.onInputWait);
+    const module = options.module ?? await compileNativeFlacDecoderModule({
+      url: options.url,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    if (options.signal?.aborted) {
+      throw new EngineWebAdapterError("stem.cancelled", "FLAC decoder instantiation was cancelled", {}, options.signal.reason);
+    }
     let instance: WebAssembly.Instance | undefined;
-    let module: WebAssembly.Module;
-    try { module = await WebAssembly.compileStreaming(Promise.resolve(response)); }
-    catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder asset could not be compiled", { phase: "decoder-load" }, error); }
     try {
-      instance = await WebAssembly.instantiate(module, {
+      const instantiated = await WebAssembly.instantiate(module, {
         env: {
           miso_flac_read(pointer: number, maximumBytes: number): number {
             const memory = (instance!.exports as unknown as DecoderExports).memory.buffer;
@@ -64,29 +147,10 @@ export class NativeFlacDecoder {
           },
         },
       });
+      instance = ("instance" in instantiated ? instantiated.instance : instantiated) as WebAssembly.Instance;
     } catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder asset could not be instantiated", { phase: "decoder-load" }, error); }
     const exports = instance.exports as unknown as DecoderExports;
-    const required = [
-      "miso_flac_decoder_abi_version", "miso_flac_decoder_description_ptr", "miso_flac_decoder_description_capacity",
-      "miso_flac_decoder_output_ptr", "miso_flac_decoder_output_length", "miso_flac_decoder_output_frames",
-      "miso_flac_decoder_callback_error", "miso_flac_decoder_state", "miso_flac_decoder_initialize",
-      "miso_flac_decoder_process_single", "miso_flac_decoder_release_output", "miso_flac_decoder_finish",
-      "miso_flac_decoder_destroy", "miso_flac_allocator_live_bytes", "miso_flac_allocator_peak_live_bytes",
-      "miso_flac_allocator_peak_heap_bytes",
-      "miso_flac_allocator_free_calls", "miso_flac_allocator_realloc_calls",
-    ] as const;
-    let fixedNonSharedMemory = false;
-    if (exports.memory instanceof WebAssembly.Memory && exports.memory.buffer instanceof ArrayBuffer &&
-      exports.memory.buffer.byteLength === FLAC_DECODER_MEMORY_BYTES) {
-      try { exports.memory.grow(1); }
-      catch (error) { fixedNonSharedMemory = error instanceof RangeError; }
-    }
-    let valid = fixedNonSharedMemory && required.every((name) => typeof exports[name] === "function");
-    try { valid = valid && exports.miso_flac_decoder_abi_version() === 2; }
-    catch (error) { throw decoderError("stem.decode.asset", "FLAC decoder ABI validation trapped", { phase: "decoder-load" }, error); }
-    if (!valid) {
-      throw decoderError("stem.decode.asset", "FLAC decoder asset has an incompatible ABI or memory", { phase: "decoder-load" });
-    }
+    validateDecoderExports(exports);
     return new NativeFlacDecoder(exports);
   }
 

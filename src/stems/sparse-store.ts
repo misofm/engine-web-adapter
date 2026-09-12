@@ -1,6 +1,8 @@
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
 
 import { EngineWebAdapterError } from "../errors.js";
+import { registerForcedProgressObserver, sparseProgressReporter, type ProgressObserver } from "./progress.js";
+import { sparseResolverScheduling } from "./sparse-scheduling.js";
 import { assertStemIdentity } from "./identity.js";
 import { canonicalJsonBytes } from "./canonical-json.js";
 import { IncrementalSha256 } from "./sha256.js";
@@ -15,7 +17,7 @@ import {
   type SparsePcmIndex,
   type SparsePcmInterval,
 } from "./sparse-pcm.js";
-import type { StemIdentity } from "./types.js";
+import type { SparseStemResolverContext, StemIdentity, StemProgress } from "./types.js";
 
 const MAX_MARKER_BYTES = 8 * 1024 * 1024;
 const MAX_SPAN_BYTES = 128 * 1024;
@@ -34,15 +36,20 @@ export interface SparsePcmExpectation {
 export interface SparsePcmSpan { readonly startFrame: number; readonly bytes: Uint8Array }
 export interface SparsePcmResolved { readonly spans: AsyncIterable<SparsePcmSpan>; readonly index?: SparsePcmIndex }
 export interface SparsePcmDescriptor { readonly kind: "sparse-pcm"; readonly data: Blob; readonly index: SparsePcmIndex }
-export interface SparsePcmInstallOptions { readonly resolve: (signal: AbortSignal) => Promise<SparsePcmResolved>; readonly signal?: AbortSignal }
+export interface SparsePcmInstallOptions {
+  readonly resolve: (signal: AbortSignal, context?: SparseStemResolverContext) => Promise<SparsePcmResolved>;
+  readonly signal?: AbortSignal;
+  readonly onProgress?: (progress: StemProgress) => void;
+}
 export interface SparsePcmStoreOptions { readonly backend?: StemStorageBackend; readonly locks?: WebLockProvider; readonly instanceId?: string; readonly readDeadlineMs?: number }
 export interface SparsePcmSessionSource extends SparsePcmExpectation { readonly sourceId: string }
 export interface SparsePcmSessionOptions {
   readonly leaseId: string;
   readonly sources: readonly SparsePcmSessionSource[];
   readonly maximumMetadataBytes?: number;
-  readonly resolve?: (expected: SparsePcmExpectation, signal: AbortSignal) => Promise<SparsePcmResolved>;
+  readonly resolve?: (expected: SparsePcmExpectation, signal: AbortSignal, context?: SparseStemResolverContext) => Promise<SparsePcmResolved>;
   readonly signal?: AbortSignal;
+  readonly onProgress?: (progress: StemProgress) => void;
 }
 export interface SparsePcmSessionLease {
   readonly leaseId: string;
@@ -73,7 +80,7 @@ const ExpectedSchema = Schema.Struct({
   canonicalBytes: Schema.Number,
 });
 const SpanSchema = Schema.Struct({ startFrame: Schema.Number, bytes: Schema.Uint8Array });
-const InstallOptionsSchema = Schema.Struct({ resolve: Schema.Unknown, signal: Schema.optionalKey(Schema.Unknown) });
+const InstallOptionsSchema = Schema.Struct({ resolve: Schema.Unknown, signal: Schema.optionalKey(Schema.Unknown), onProgress: Schema.optionalKey(Schema.Unknown) });
 const SessionSourceSchema = Schema.Struct({
   bitDepth: Schema.Literals([16, 24]),
   canonicalBytes: Schema.Number,
@@ -89,6 +96,7 @@ const SessionOptionsSchema = Schema.Struct({
   maximumMetadataBytes: Schema.optionalKey(Schema.Number),
   resolve: Schema.optionalKey(Schema.Unknown),
   signal: Schema.optionalKey(Schema.Unknown),
+  onProgress: Schema.optionalKey(Schema.Unknown),
 });
 const MarkerSchema = Schema.Struct({
   activeBytes: Schema.Number,
@@ -318,7 +326,7 @@ interface PreparedSparsePcmSession {
 }
 
 class SparseProgram extends Context.Service<SparseProgram, {
-  readonly openSource: (expected: unknown, callerSignal?: AbortSignal) => Effect.Effect<SparsePcmDescriptor | undefined, SparseFailure, ScopeRequirement>;
+  readonly openSource: (expected: unknown, options?: { readonly signal?: AbortSignal; readonly onProgress?: ProgressObserver }) => Effect.Effect<SparsePcmDescriptor | undefined, SparseFailure, ScopeRequirement>;
   readonly installSource: (expected: unknown, options: SparsePcmInstallOptions) => Effect.Effect<SparsePcmDescriptor, SparseFailure, ScopeRequirement>;
   readonly openSession: (options: unknown) => Effect.Effect<PreparedSparsePcmSession, SparseFailure, ScopeRequirement>;
   readonly inspectSourcePresence: (expected: unknown, callerSignal?: AbortSignal) => Effect.Effect<SparsePcmPresence, SparseFailure, ScopeRequirement>;
@@ -327,9 +335,12 @@ class SparseProgram extends Context.Service<SparseProgram, {
     const backend = yield* SparseBackend;
     const coordination = yield* SparseCoordination;
     const lifecycle = yield* SparseLifecycle;
-    const openSource = Effect.fn("SparseProgram.openSource")(function*(input: unknown, callerSignal?: AbortSignal) {
+    const openSource = Effect.fn("SparseProgram.openSource")(function*(input: unknown, options?: { readonly signal?: AbortSignal; readonly onProgress?: ProgressObserver }) {
       const expected = yield* decodeExpected(input);
-      const operation = yield* makeOperation(lifecycle.signal, callerSignal);
+      const checkedOptions = yield* Effect.try({ try: () => decodeOpenOptions(options), catch: (cause) => new SparseBoundaryError({ message: "Sparse open options failed bounded preflight", cause }) });
+      const progress = sparseProgressReporter(checkedOptions.onProgress, expected.identity);
+      yield* Effect.addFinalizer(() => Effect.sync(progress.close));
+      const operation = yield* makeOperation(lifecycle.signal, checkedOptions.signal);
       yield* Ref.set(operation.ref, { _tag: "opening" } as Lifecycle);
       const lease = yield* Effect.acquireRelease(coordination.acquire(expected.identity, operation.signal), (held) => Effect.promise(() => held.release()), { interruptible: true });
       yield* backend.open;
@@ -339,7 +350,11 @@ class SparseProgram extends Context.Service<SparseProgram, {
         return undefined;
       }
       const record = yield* readMarker(backend, marker, operation.signal);
-      const descriptor = yield* verifyMarker(backend, record, expected, operation.signal);
+      const descriptor = yield* verifyMarker(backend, record, expected, operation.signal, progress.emit);
+      yield* checkSignal(operation.signal);
+      progress.flush();
+      yield* checkSignal(operation.signal);
+      progress.emit({ stage: "source-ready", identity: expected.identity, bytes: expected.canonicalBytes });
       yield* Ref.set(operation.ref, { _tag: "closed" } as Lifecycle);
       yield* Effect.succeed(lease);
       operation.dispose();
@@ -348,16 +363,30 @@ class SparseProgram extends Context.Service<SparseProgram, {
     const installSource = Effect.fn("SparseProgram.installSource")(function*(input: unknown, options: SparsePcmInstallOptions) {
       const expected = yield* decodeExpected(input);
       const checkedOptions = yield* decodeInstallOptions(options);
+      const progress = sparseProgressReporter(checkedOptions.onProgress, expected.identity);
+      yield* Effect.addFinalizer(() => Effect.sync(progress.close));
       const operation = yield* makeOperation(lifecycle.signal, checkedOptions.signal);
       const lease = yield* Effect.acquireRelease(coordination.acquire(expected.identity, operation.signal), (held) => Effect.promise(() => held.release()), { interruptible: true });
       yield* backend.open;
       const marker = markerName(expected.identity);
       if (yield* backend.exists(marker)) {
-        const descriptor = yield* verifyMarker(backend, yield* readMarker(backend, marker, operation.signal), expected, operation.signal);
+        const descriptor = yield* verifyMarker(backend, yield* readMarker(backend, marker, operation.signal), expected, operation.signal, progress.emit);
+        yield* checkSignal(operation.signal);
+        progress.flush();
+        yield* checkSignal(operation.signal);
+        progress.emit({ stage: "source-ready", identity: expected.identity, bytes: expected.canonicalBytes });
         operation.dispose();
         return descriptor;
       }
-      const resolved = yield* resolveSource(checkedOptions.resolve, operation.signal, backend.readDeadlineMs);
+      const reportResolverProgress: ProgressObserver = (event) => {
+        if (event.stage === "source-ready" || event.stage === "ready") return;
+        progress.emit(event);
+      };
+      registerForcedProgressObserver(reportResolverProgress, (event) => {
+        if (event.stage === "source-ready" || event.stage === "ready") return;
+        progress.emitForced(event);
+      });
+      const resolved = yield* resolveSource(checkedOptions.resolve, operation.signal, backend.readDeadlineMs, { onProgress: reportResolverProgress });
       // Resolve owns the child abort controller as soon as it succeeds. Keep
       // the iterator in a scope before any index/generation admission can
       // fail; otherwise a resolver that has already handed us a generator
@@ -378,8 +407,12 @@ class SparseProgram extends Context.Service<SparseProgram, {
         if (knownMarker.byteLength > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse known index marker exceeds its bound" });
         yield* quotaCheck(backend, asserted.activeBytes + knownMarker.byteLength);
       }
-      const committed = yield* ingestAndCommit(backend, expected, source, asserted, dataName, generation, operation);
+      const committed = yield* ingestAndCommit(backend, expected, source, asserted, dataName, generation, operation, progress.emit);
       const descriptor = Object.freeze({ kind: "sparse-pcm" as const, data: committed.data, index: committed.marker.index });
+      yield* checkSignal(operation.signal);
+      progress.flush();
+      yield* checkSignal(operation.signal);
+      progress.emit({ stage: "source-ready", identity: expected.identity, bytes: expected.canonicalBytes });
       yield* Ref.set(operation.ref, { _tag: "committed" } as Lifecycle);
       operation.dispose();
       return descriptor;
@@ -403,25 +436,70 @@ class SparseProgram extends Context.Service<SparseProgram, {
     });
     const openSession = Effect.fn("SparseProgram.openSession")(function*(input: unknown) {
       const checked = yield* decodeSessionOptions(input);
+      const progress = sparseProgressReporter(checked.onProgress);
+      yield* Effect.addFinalizer(() => Effect.sync(progress.close));
       const operation = yield* makeOperation(lifecycle.signal, checked.signal);
       const descriptors = new Map<StemIdentity, SparsePcmDescriptor>();
-      let retainedMetadataBytes = checked.declarationMetadataBytes;
-      for (const unique of checked.unique) {
+      const metadataBytes = yield* Ref.make(checked.declarationMetadataBytes);
+      const scheduling = checked.resolve === undefined ? undefined : sparseResolverScheduling(checked.resolve);
+      const concurrency = scheduling?.concurrency ?? 1;
+      const prepareUnique = (unique: SparsePcmExpectation) => Effect.scoped(Effect.gen(function*() {
         yield* checkSignal(operation.signal);
+        const sourceId = checked.sources.find((source) => source.identity === unique.identity)?.sourceId;
+        const sourceProgress = sparseProgressReporter(checked.onProgress, unique.identity, sourceId);
+        yield* Effect.addFinalizer(() => Effect.sync(sourceProgress.close));
+        const reportSourceProgress: ProgressObserver = (event) => {
+          if (event.stage === "source-ready" || event.stage === "ready") return;
+          sourceProgress.emit(event);
+        };
+        registerForcedProgressObserver(reportSourceProgress, (event) => {
+          if (event.stage === "source-ready" || event.stage === "ready") return;
+          sourceProgress.emitForced(event);
+        });
         const descriptor = checked.resolve === undefined
-          ? yield* Effect.scoped(openSource(unique, operation.signal))
+          ? yield* Effect.scoped(openSource(unique, { signal: operation.signal, onProgress: reportSourceProgress }))
           : yield* Effect.scoped(installSource(unique, {
-            resolve: (signal) => checked.resolve!(unique, signal),
+            resolve: (signal) => checked.resolve!(unique, signal, { onProgress: reportSourceProgress }),
             signal: operation.signal,
+            onProgress: reportSourceProgress,
           }));
         if (descriptor === undefined) return yield* new SparseNotFoundError({ message: `Sparse PCM source is not committed: ${unique.identity}` });
+        yield* checkSignal(operation.signal);
+        sourceProgress.flush();
+        yield* checkSignal(operation.signal);
         const charge = retainedDescriptorMetadataBytes(descriptor.index);
         if (charge === undefined) return yield* new SparseBoundaryError({ message: "Sparse descriptor metadata charge is outside its safe bound" });
-        const next = safeAdd(retainedMetadataBytes, charge);
-        if (next === undefined || next > checked.maximumMetadataBytes) return yield* new SparseBoundaryError({ message: "Sparse session metadata budget is exhausted" });
-        retainedMetadataBytes = next;
+        const accepted = yield* Ref.modify(metadataBytes, (retained) => {
+          const next = safeAdd(retained, charge);
+          return next === undefined || next > checked.maximumMetadataBytes
+            ? [false, retained]
+            : [true, next];
+        });
+        if (!accepted) return yield* new SparseBoundaryError({ message: "Sparse session metadata budget is exhausted" });
         descriptors.set(unique.identity, descriptor);
-      }
+        for (const source of checked.sources) {
+          if (source.identity !== unique.identity) continue;
+          progress.emit({ stage: "source-ready", identity: unique.identity, sourceId: source.sourceId, bytes: unique.canonicalBytes });
+          yield* checkSignal(operation.signal);
+        }
+      }));
+      // Keep the resolver's retained worker epoch alive through every source
+      // scope, then close that epoch before publishing aggregate readiness.
+      // A physical release failure must prevent `ready` while preserving any
+      // source-ready facts already committed by completed tasks.
+      yield* Effect.scoped(Effect.gen(function*() {
+        if (scheduling?.pool.canRetain) {
+          yield* Effect.acquireRelease(
+            Effect.sync(() => scheduling.pool.retain()),
+            (lease) => Effect.promise(() => lease.release()),
+          );
+        }
+        yield* Effect.forEach(checked.unique, prepareUnique, { concurrency, discard: true });
+      }));
+      yield* checkSignal(operation.signal);
+      progress.flush();
+      yield* checkSignal(operation.signal);
+      progress.emit({ stage: "ready", sourcesReady: checked.sources.length, sourcesTotal: checked.sources.length });
       yield* checkSignal(operation.signal);
       const lease = new SparsePcmSessionLeaseImpl(checked.leaseId, checked.sources, descriptors);
       const handoffState: { storeSignal: AbortSignal | undefined; callerSignal: AbortSignal | undefined } = {
@@ -467,9 +545,9 @@ export class VerifiedSparsePcmStore {
     this.#runtime = ManagedRuntime.make(SparseProgram.layer.pipe(Layer.provide(SparseCoordination.layer), Layer.provide(backendLayer), Layer.provide(lifecycle)));
   }
 
-  openSource(expected: SparsePcmExpectation, options: { readonly signal?: AbortSignal } = {}): Promise<SparsePcmDescriptor | undefined> {
+  openSource(expected: SparsePcmExpectation, options: { readonly signal?: AbortSignal; readonly onProgress?: ProgressObserver } = {}): Promise<SparsePcmDescriptor | undefined> {
     this.assertOpen();
-    return this.run(Effect.scoped(SparseProgram.use((program) => program.openSource(expected, options.signal))));
+    return this.run(Effect.scoped(SparseProgram.use((program) => program.openSource(expected, options))));
   }
 
   installSource(expected: SparsePcmExpectation, options: SparsePcmInstallOptions): Promise<SparsePcmDescriptor> {
@@ -587,6 +665,7 @@ interface CheckedSparsePcmSession {
   readonly declarationMetadataBytes: number;
   readonly resolve: SparsePcmSessionOptions["resolve"];
   readonly signal: AbortSignal | undefined;
+  readonly onProgress: ProgressObserver | undefined;
 }
 
 const decodeSessionOptions = Effect.fn("SparseProgram.decodeSessionOptions")(function*(input: unknown) {
@@ -594,6 +673,7 @@ const decodeSessionOptions = Effect.fn("SparseProgram.decodeSessionOptions")(fun
   const value = yield* Schema.decodeUnknownEffect(SessionOptionsSchema, { onExcessProperty: "error" })(captured.snapshot).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse PCM session options schema is invalid", cause })));
   if (value.resolve !== undefined && typeof value.resolve !== "function") return yield* new SparseBoundaryError({ message: "Sparse PCM session resolver is invalid" });
   if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) return yield* new SparseBoundaryError({ message: "Sparse PCM session signal is invalid" });
+  if (value.onProgress !== undefined && typeof value.onProgress !== "function") return yield* new SparseBoundaryError({ message: "Sparse PCM session progress observer is invalid" });
   const declarations: SparsePcmSessionSource[] = [];
   const unique: SparsePcmExpectation[] = [];
   const identities = new Map<StemIdentity, SparsePcmExpectation>();
@@ -625,6 +705,7 @@ const decodeSessionOptions = Effect.fn("SparseProgram.decodeSessionOptions")(fun
     declarationMetadataBytes: captured.declarationMetadataBytes,
     resolve: value.resolve as SparsePcmSessionOptions["resolve"],
     signal: value.signal as AbortSignal | undefined,
+    onProgress: value.onProgress as ProgressObserver | undefined,
   };
 });
 
@@ -644,7 +725,7 @@ const captureSessionOptions = Effect.fn("SparseProgram.captureSessionOptions")(f
 function captureSessionOptionsSnapshot(input: unknown): CapturedSparsePcmSession {
   if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0) throw new Error("session options must be a plain object");
   const keys = Object.keys(input).sort();
-  const allowed = ["leaseId", "maximumMetadataBytes", "resolve", "signal", "sources"];
+  const allowed = ["leaseId", "maximumMetadataBytes", "onProgress", "resolve", "signal", "sources"];
   if (keys.some((key) => !allowed.includes(key)) || keys.length < 2 || keys.length > allowed.length) throw new Error("session options contain unknown keys");
   const candidate = input as Record<string, unknown>;
   const maximumMetadataValue = ownValue(candidate, "maximumMetadataBytes");
@@ -670,6 +751,8 @@ function captureSessionOptionsSnapshot(input: unknown): CapturedSparsePcmSession
   if (resolve !== undefined && typeof resolve !== "function") throw new Error("session resolver must be a function");
   const signal = ownValue(candidate, "signal");
   if (signal !== undefined && !(signal instanceof AbortSignal)) throw new Error("session signal is invalid");
+  const onProgress = ownValue(candidate, "onProgress");
+  if (onProgress !== undefined && typeof onProgress !== "function") throw new Error("session progress observer must be a function");
   const snapshot: Record<string, unknown> = {
     leaseId,
     maximumMetadataBytes,
@@ -677,6 +760,7 @@ function captureSessionOptionsSnapshot(input: unknown): CapturedSparsePcmSession
   };
   if (resolve !== undefined) snapshot.resolve = resolve;
   if (signal !== undefined) snapshot.signal = signal;
+  if (onProgress !== undefined) snapshot.onProgress = onProgress;
   return { snapshot: Object.freeze(snapshot), maximumMetadataBytes, declarationMetadataBytes };
 }
 
@@ -749,11 +833,37 @@ function retainedDescriptorMetadataBytes(index: SparsePcmIndex): number | undefi
 
 function decodeInstallOptions(input: unknown): Effect.Effect<SparsePcmInstallOptions, SparseBoundaryError> {
   return Effect.gen(function*() {
-    if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0 || Object.keys(input).some((key) => key !== "resolve" && key !== "signal")) return yield* new SparseBoundaryError({ message: "Sparse install options contain unknown keys" });
-    const value = yield* Schema.decodeUnknownEffect(InstallOptionsSchema, { onExcessProperty: "error" })(input).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse install options schema is invalid", cause })));
+    if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0 || Object.keys(input).some((key) => key !== "resolve" && key !== "signal" && key !== "onProgress")) return yield* new SparseBoundaryError({ message: "Sparse install options contain unknown keys" });
+    const candidate = input as Record<string, unknown>;
+    const resolve = ownValue(candidate, "resolve");
+    const signal = ownValue(candidate, "signal");
+    const onProgress = ownValue(candidate, "onProgress");
+    const snapshot = {
+      resolve,
+      ...(signal === undefined ? {} : { signal }),
+      ...(onProgress === undefined ? {} : { onProgress }),
+    };
+    const value = yield* Schema.decodeUnknownEffect(InstallOptionsSchema, { onExcessProperty: "error" })(snapshot).pipe(Effect.mapError((cause) => new SparseBoundaryError({ message: "Sparse install options schema is invalid", cause })));
     if (typeof value.resolve !== "function") return yield* new SparseBoundaryError({ message: "Sparse PCM install needs a resolve callback" });
     if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) return yield* new SparseBoundaryError({ message: "Sparse install signal is invalid" });
-    return value as SparsePcmInstallOptions;
+    if (value.onProgress !== undefined && typeof value.onProgress !== "function") return yield* new SparseBoundaryError({ message: "Sparse install progress observer is invalid" });
+    return Object.freeze(value) as SparsePcmInstallOptions;
+  });
+}
+
+function decodeOpenOptions(input: unknown): { readonly signal?: AbortSignal; readonly onProgress?: ProgressObserver } {
+  if (input === undefined) return Object.freeze({});
+  if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0 || Object.keys(input).some((key) => key !== "signal" && key !== "onProgress")) {
+    throw new Error("Sparse open options contain unknown keys");
+  }
+  const candidate = input as Record<string, unknown>;
+  const signal = ownValue(candidate, "signal");
+  const onProgress = ownValue(candidate, "onProgress");
+  if (signal !== undefined && !(signal instanceof AbortSignal)) throw new Error("Sparse open signal is invalid");
+  if (onProgress !== undefined && typeof onProgress !== "function") throw new Error("Sparse open progress observer is invalid");
+  return Object.freeze({
+    ...(signal === undefined ? {} : { signal }),
+    ...(onProgress === undefined ? {} : { onProgress: onProgress as ProgressObserver }),
   });
 }
 
@@ -804,14 +914,19 @@ function isRecord(value: unknown): value is Record<string, unknown> { return typ
 function checkSignal(signal: AbortSignal): Effect.Effect<void, SparseCancelledError> { return signal.aborted ? Effect.fail(new SparseCancelledError({ message: "Sparse operation was cancelled", cause: signal.reason })) : Effect.void; }
 
 interface ResolvedInput extends SparsePcmResolved { readonly sourceController: AbortController }
-function resolveSource(resolve: SparsePcmInstallOptions["resolve"], signal: AbortSignal, deadlineMs: number): Effect.Effect<ResolvedInput, SparseFailure> {
+function resolveSource(
+  resolve: SparsePcmInstallOptions["resolve"],
+  signal: AbortSignal,
+  deadlineMs: number,
+  context?: SparseStemResolverContext,
+): Effect.Effect<ResolvedInput, SparseFailure> {
   return Effect.gen(function*() {
     const child = new AbortController();
     if (signal.aborted) child.abort(signal.reason);
     else signal.addEventListener("abort", () => child.abort(signal.reason), { once: true });
     const resolving = Effect.callback<SparsePcmResolved, SparseFailure>((resume, effectSignal) => {
       let pending: Promise<SparsePcmResolved>;
-      try { pending = Promise.resolve(resolve(child.signal)); }
+      try { pending = Promise.resolve(resolve(child.signal, context)); }
       catch (cause) { resume(Effect.fail(isAbort(cause) ? new SparseCancelledError({ message: "Sparse resolver was cancelled", cause }) : new SparseIoError({ message: "Sparse resolver failed", cause }))); return Effect.sync(() => { child.abort(cause); }); }
       pending.then(
         (resolved) => { if (!effectSignal.aborted) resume(Effect.succeed(resolved)); },
@@ -850,7 +965,16 @@ function uniqueGeneration(backend: BackendShape, identity: StemIdentity): Effect
 }
 
 interface CommittedSparse { readonly marker: Marker; readonly data: Blob }
-function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, source: SourceLease, asserted: SparsePcmIndex | undefined, dataName: string, generation: string, operation: OperationState): Effect.Effect<CommittedSparse, SparseFailure, ScopeRequirement> {
+function ingestAndCommit(
+  backend: BackendShape,
+  expected: SparsePcmExpectation,
+  source: SourceLease,
+  asserted: SparsePcmIndex | undefined,
+  dataName: string,
+  generation: string,
+  operation: OperationState,
+  onProgress?: (progress: StemProgress) => void,
+): Effect.Effect<CommittedSparse, SparseFailure, ScopeRequirement> {
   let dataOwned = false;
   let markerOwned = false;
   let markerCommitted = false;
@@ -890,7 +1014,9 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
         intervalBytes += encodedIntervalBytes(prospective) - encodedIntervalBytes(prior);
       }
       if (prospectiveMarkerBytes(expected, generation, dataName, activeBytes + span.bytes.byteLength, intervalBytes) > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse marker metadata exceeds its bound" });
-      yield* hashZeros(hash, (span.startFrame - previousEnd) * frameBytes, operation.signal);
+      yield* hashZeros(hash, (span.startFrame - previousEnd) * frameBytes, operation.signal, (bytes) => onProgress?.({
+        stage: "ingesting", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
+      }), previousEnd * frameBytes);
       hash.update(span.bytes);
       // A deterministic backend only accounts a generation when its writer
       // closes. OPFS already accounts the persisted active file, so reserve
@@ -909,10 +1035,16 @@ function ingestAndCommit(backend: BackendShape, expected: SparsePcmExpectation, 
       else intervals.push(Object.freeze({ startFrame: span.startFrame, frames: spanFrames, byteOffset: activeBytes }));
       activeBytes += span.bytes.byteLength;
       previousEnd = span.startFrame + spanFrames;
+      onProgress?.({
+        stage: "ingesting", identity: expected.identity,
+        bytes: previousEnd * frameBytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
+      });
     });
     const stream = sourceStream(source, backend.readDeadlineMs);
     yield* Stream.runForEach(stream, processSpan);
-    yield* hashZeros(hash, (expected.frames - previousEnd) * frameBytes, operation.signal);
+    yield* hashZeros(hash, (expected.frames - previousEnd) * frameBytes, operation.signal, (bytes) => onProgress?.({
+      stage: "ingesting", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
+    }), previousEnd * frameBytes);
     const index = yield* Effect.try({ try: () => validateSparsePcmIndex({ format: SPARSE_PCM_FORMAT, identity: expected.identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth, frames: expected.frames, intervals, activeBytes, canonicalBytes: expected.canonicalBytes }, activeBytes), catch: (cause) => new SparseCorruptError({ message: "Derived sparse index is invalid", cause }) });
     if (asserted !== undefined) compareIndexes(asserted, index);
     if (hash.digestHex() !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse active spans do not match canonical identity" });
@@ -1039,12 +1171,20 @@ export function sparseSourceProgramForTest(source: AsyncIterable<SparsePcmSpan>,
 async function settlePhysical<T>(promise: PromiseLike<T>): Promise<void> {
   await Promise.resolve(promise).then(() => undefined, () => undefined);
 }
-function hashZeros(hash: IncrementalSha256, bytes: number, signal: AbortSignal): Effect.Effect<void, SparseFailure> {
+function hashZeros(
+  hash: IncrementalSha256,
+  bytes: number,
+  signal: AbortSignal,
+  onProgress?: (bytes: number) => void,
+  baseBytes = 0,
+): Effect.Effect<void, SparseFailure> {
   return Effect.fn("SparseProgram.hashZeros")(function*() {
-    if (!Number.isSafeInteger(bytes) || bytes < 0) return yield* new SparseCorruptError({ message: "Sparse zero gap arithmetic is unsafe" });
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isSafeInteger(baseBytes) || baseBytes < 0 || baseBytes + bytes > Number.MAX_SAFE_INTEGER) return yield* new SparseCorruptError({ message: "Sparse zero gap arithmetic is unsafe" });
     for (let offset = 0; offset < bytes; offset += ZERO_BLOCK.byteLength) {
       yield* checkSignal(signal);
-      hash.update(ZERO_BLOCK.subarray(0, Math.min(ZERO_BLOCK.byteLength, bytes - offset)));
+      const count = Math.min(ZERO_BLOCK.byteLength, bytes - offset);
+      hash.update(ZERO_BLOCK.subarray(0, count));
+      onProgress?.(baseBytes + offset + count);
       yield* Effect.yieldNow;
     }
   })();
@@ -1103,7 +1243,13 @@ function admitMarkerMetadata(backend: BackendShape, marker: Marker, expected: Sp
     return { marker, data };
   })();
 }
-function verifyMarker(backend: BackendShape, marker: Marker, expected: SparsePcmExpectation, signal: AbortSignal): Effect.Effect<SparsePcmDescriptor, SparseFailure> {
+function verifyMarker(
+  backend: BackendShape,
+  marker: Marker,
+  expected: SparsePcmExpectation,
+  signal: AbortSignal,
+  onProgress?: (progress: StemProgress) => void,
+): Effect.Effect<SparsePcmDescriptor, SparseFailure> {
   return Effect.fn("SparseProgram.verifyMarker")(function*() {
     const admitted = yield* admitMarkerMetadata(backend, marker, expected, signal);
     const data = admitted.data;
@@ -1112,19 +1258,29 @@ function verifyMarker(backend: BackendShape, marker: Marker, expected: SparsePcm
     let frameCursor = 0;
     const frameBytes = expected.channels * (expected.bitDepth / 8);
     for (const interval of marker.index.intervals) {
-      yield* hashZeros(hash, (interval.startFrame - frameCursor) * frameBytes, signal);
+      yield* hashZeros(hash, (interval.startFrame - frameCursor) * frameBytes, signal, (bytes) => onProgress?.({
+        stage: "verifying", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
+      }), frameCursor * frameBytes);
       for (let offset = 0; offset < interval.frames * frameBytes; offset += MAX_SPAN_BYTES) {
         yield* checkSignal(signal);
         const end = Math.min(offset + MAX_SPAN_BYTES, interval.frames * frameBytes);
         const bytes = yield* readBlobBytes(backend, data, payloadCursor + offset, payloadCursor + end, signal, "Sparse payload read");
         if (bytes.byteLength !== end - offset) return yield* new SparseCorruptError({ message: "Sparse payload read was short" });
         hash.update(new Uint8Array(bytes));
+        onProgress?.({
+          stage: "verifying", identity: expected.identity,
+          bytes: interval.startFrame * frameBytes + end,
+          totalBytes: expected.canonicalBytes, byteKind: "pcm",
+        });
       }
       payloadCursor += interval.frames * frameBytes;
       frameCursor = interval.startFrame + interval.frames;
     }
-    yield* hashZeros(hash, (expected.frames - frameCursor) * frameBytes, signal);
+    yield* hashZeros(hash, (expected.frames - frameCursor) * frameBytes, signal, (bytes) => onProgress?.({
+      stage: "verifying", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
+    }), frameCursor * frameBytes);
     if (payloadCursor !== data.size || hash.digestHex() !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse payload failed canonical verification" });
+    yield* checkSignal(signal);
     return Object.freeze({ kind: "sparse-pcm", data, index: marker.index });
   })();
 }

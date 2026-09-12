@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createIngestDiagnostics } from "../src/index.js";
 import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { MemoryStemStorageBackend } from "../src/stems/storage.js";
-import { OpfsStorageBackend, VerifiedSparsePcmStore } from "../src/stems/index.js";
+import { createSparseStemResolver, OpfsStorageBackend, serializeSparseStemIndex, VerifiedSparsePcmStore } from "../src/stems/index.js";
 import { BrowserBootError, Msb1RingWriter, PcmFeedError } from "@misofm/engine/browser";
 import { scratchBootWithWorker, prepareBrowserSessionWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
@@ -15,7 +16,7 @@ import { assertEngineWebCapabilities } from "../src/capabilities.js";
 import { MSB1_CONTROL } from "../src/stems/ring.js";
 import type { EngineAudioContext, EnginePump, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
 import type { FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
-import type { DeclaredStemSource, StemResolver, StemSessionLease, StemStore } from "../src/stems/types.js";
+import type { DeclaredStemSource, StemProgress, StemResolver, StemSessionLease, StemStore } from "../src/stems/types.js";
 import type { SparsePcmExpectation, SparsePcmSessionLease, SparsePcmSessionOptions } from "../src/stems/sparse-store.js";
 import type { SparsePcmPumpSource } from "../src/stems/pump.js";
 import type { OpfsWorkerLike, OpfsWorkerRequest, OpfsWorkerResponse } from "../src/stems/opfs-worker-protocol.js";
@@ -402,6 +403,208 @@ test("sparse session prepares complete authoritative sources through the shared 
   assert.equal(leaseClosed, 1);
   assert.equal(storeClosed, 0, "injected sparse stores remain caller-owned");
   assert.ok(events.indexOf("pump.close") < events.indexOf("sparse.map.close"));
+});
+
+test("sparse sessions retain common and scratch asset overrides", async () => {
+  const events: string[] = [];
+  const context = fakeContext(events);
+  const sources: DeclaredStemSource[] = [
+    { id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
+    { id: "source-z", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY_Z } },
+  ];
+  const hostModuleUrl = `data:text/javascript,${encodeURIComponent(`
+    export async function createMisoAudioWorkletHost(request) {
+      if (request.simd128ModuleUrl !== "sparse-wasm" || request.workletModuleUrl !== "sparse-worklet"
+        || request.context.modules.at(-1) !== "sparse-feed") throw new Error("sparse asset override was dropped");
+      return { node: { connect() {}, disconnect() {} }, async dispose() {} };
+    }
+  `)}`;
+  const lease: SparsePcmSessionLease = {
+    leaseId: "sparse-assets",
+    sources: [],
+    async read() { throw new Error("custom pump does not read descriptors"); },
+    async close() { events.push("sparse.map.close"); },
+  };
+  const store = {
+    async openSession(options: SparsePcmSessionOptions) {
+      assert.equal(options.sources.length, sources.length);
+      return lease;
+    },
+  };
+  const scratchWorkerUrl = new URL("https://caller.invalid/sparse-scratch.js");
+  const session = await openSparseEngineWebSession({
+    document: documentFor(sources), sources, leaseId: "sparse-assets", console: false,
+    capabilityScope: capabilities(), store,
+    assets: {
+      scratchWorkerUrl,
+      engineWasmUrl: "sparse-wasm",
+      engineWorkletModuleUrl: "sparse-worklet",
+      engineHostModuleUrl: hostModuleUrl,
+      feedWorkletModuleUrl: "sparse-feed",
+      createWorker: (url, options) => {
+        assert.equal(String(url), String(scratchWorkerUrl));
+        assert.deepEqual(options, { type: "module" });
+        return new ScratchWorker(events) as unknown as Worker;
+      },
+    },
+    createContext: () => context,
+    createAttachNode: () => ({ port: { postMessage(message: unknown) {
+      const request = message as { readonly op: string; readonly rings?: readonly SharedArrayBuffer[] };
+      if (request.op === "attach") for (const ring of request.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+    } }, disconnect() {} }),
+    createPump: async ({ sources: pumpSources }) => {
+      for (const source of pumpSources) fillRing(source.ring, source.frames);
+      return { async seekFrames() { return 0n; }, close() { events.push("pump.close"); } };
+    },
+    createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+  });
+  assert.ok(events.includes("scratch"), "sparse scratch preparation uses the caller Worker factory");
+  await session.close();
+  assert.ok(events.includes("sparse.map.close"));
+});
+
+test("public sparse sessions report cold, warm, and all-silent progress through prefill", async () => {
+  const flac = new Uint8Array(readFileSync("tests/fixtures/native-silence.flac"));
+  const activeFrames = 2_048;
+  const activePcm = new Uint8Array(activeFrames * 2);
+  const coldFixture = sessionSparseProgressFixture(flac, activePcm, 50_000, 12_000);
+  const silentFixture = sessionSparseProgressFixture(undefined, undefined, 60_000, 0);
+  const bodies = new Map<`sha256:${string}`, Uint8Array>([
+    [coldFixture.expected.identity, coldFixture.body],
+    [silentFixture.expected.identity, silentFixture.body],
+  ]);
+  const locations: string[] = [];
+  const fetched: string[] = [];
+  const workers: SessionProgressDecodeWorker[] = [];
+  const resolver = createSparseStemResolver({
+    locate: (identity) => {
+      locations.push(identity);
+      return `https://fixture.invalid/${identity}`;
+    },
+    fetch: async (input) => {
+      const identity = new URL(String(input)).pathname.slice(1) as `sha256:${string}`;
+      const body = bodies.get(identity);
+      assert.ok(body, `fixture body for ${identity}`);
+      fetched.push(identity);
+      return new Response(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, {
+        status: 200,
+        headers: { "Content-Length": String(body.byteLength) },
+      });
+    },
+    createWorker: () => {
+      const worker = new SessionProgressDecodeWorker(activePcm);
+      workers.push(worker);
+      return worker;
+    },
+  });
+  const backend = new MemoryStemStorageBackend();
+  const store = new VerifiedSparsePcmStore({ backend, instanceId: "public-session-progress" });
+  let leaseNumber = 0;
+  const open = async (
+    fixture: { readonly expected: SparsePcmExpectation },
+    sourceId: string,
+    events: StemProgress[],
+    throwOnDecoding = false,
+  ) => {
+    const source: DeclaredStemSource = { id: sourceId, spec: {
+      channels: fixture.expected.channels,
+      bitDepth: fixture.expected.bitDepth,
+      frames: fixture.expected.frames,
+      content: fixture.expected.identity,
+    } };
+    const context = fakeContext([]);
+    let callbackThrows = 0;
+    const session = await openSparseEngineWebSession({
+      document: documentFor([source]),
+      sources: [source],
+      leaseId: `public-session-progress-${leaseNumber++}`,
+      console: false,
+      capabilityScope: capabilities(),
+      store,
+      resolver,
+      scratchBoot: async () => ({
+        sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
+        tracks: [], sources: [{ id: source.id, channels: source.spec.channels, frames: BigInt(source.spec.frames) }],
+      }),
+      createContext: () => context,
+      createHost: async () => ({ node: { connect() {}, disconnect() {} }, async dispose() {} }) as unknown as BrowserEngine["host"],
+      createAttachNode: () => ({ port: { postMessage(message: unknown) {
+        const request = message as { readonly op: string; readonly rings?: readonly SharedArrayBuffer[] };
+        if (request.op === "attach") for (const ring of request.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+      } }, disconnect() {} }),
+      createPump: async ({ sources }) => {
+        for (const item of sources) fillRing(item.ring, item.frames);
+        return { async seekFrames() { return 0n; }, close() {} };
+      },
+      createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+      onProgress: (event) => {
+        events.push(event);
+        if (throwOnDecoding && event.stage === "decoding" && callbackThrows === 0) {
+          callbackThrows += 1;
+          throw new Error("progress observer failed");
+        }
+      },
+    });
+    assert.equal(callbackThrows, throwOnDecoding ? 1 : 0);
+    return session;
+  };
+
+  const assertLifecycle = (events: readonly StemProgress[], expected: SparsePcmExpectation): void => {
+    assert.equal(events[0]?.stage, "loading");
+    const sourceReady = events.findIndex((event) => event.stage === "source-ready");
+    const ready = events.findIndex((event) => event.stage === "ready");
+    const prefilling = events.findIndex((event) => event.stage === "prefilling");
+    assert.ok(sourceReady > 0, "source-ready follows loading");
+    assert.ok(ready > sourceReady, "aggregate ready follows source-ready");
+    assert.ok(prefilling > ready, "prefilling follows aggregate ready");
+    assert.equal(events.at(-1)?.stage, "prefilling");
+    const sourceReadyEvents = events.filter((event): event is StemProgress & { readonly stage: "source-ready" } => event.stage === "source-ready");
+    assert.deepEqual(sourceReadyEvents.map((event) => event.bytes), [expected.canonicalBytes]);
+    const readyEvents = events.filter((event): event is StemProgress & { readonly stage: "ready" } => event.stage === "ready");
+    assert.deepEqual(readyEvents.map((event) => [event.sourcesReady, event.sourcesTotal]), [[1, 1]]);
+  };
+
+  try {
+    const coldEvents: StemProgress[] = [];
+    const cold = await open(coldFixture, "cold-source", coldEvents, true);
+    assertLifecycle(coldEvents, coldFixture.expected);
+    const coldDecoding = coldEvents.filter((event): event is StemProgress & { readonly stage: "decoding" } => event.stage === "decoding");
+    const coldIngesting = coldEvents.filter((event): event is StemProgress & { readonly stage: "ingesting" } => event.stage === "ingesting");
+    assert.ok(coldDecoding.length >= 2, "public wrapper retains a coalesced final decoding boundary");
+    assert.equal(coldDecoding.at(-1)?.bytes, activePcm.byteLength);
+    assert.equal(coldDecoding.at(-1)?.totalBytes, coldFixture.expected.canonicalBytes);
+    assert.equal(coldIngesting.at(-1)?.bytes, coldFixture.expected.canonicalBytes);
+    assert.equal(coldIngesting.at(-1)?.totalBytes, coldFixture.expected.canonicalBytes);
+    assert.equal(locations.length, 1);
+    assert.equal(fetched.length, 1);
+    assert.equal(workers.length, 1);
+    await cold.close();
+
+    const warmEvents: StemProgress[] = [];
+    const warm = await open(coldFixture, "warm-source", warmEvents);
+    assertLifecycle(warmEvents, coldFixture.expected);
+    const warmVerifying = warmEvents.filter((event): event is StemProgress & { readonly stage: "verifying" } => event.stage === "verifying");
+    assert.ok(warmVerifying.length > 0, "warm public open verifies the committed sparse payload");
+    assert.equal(warmVerifying.at(-1)?.bytes, coldFixture.expected.canonicalBytes);
+    assert.equal(warmVerifying.at(-1)?.totalBytes, coldFixture.expected.canonicalBytes);
+    assert.equal(warmEvents.some((event) => event.stage === "decoding"), false);
+    assert.equal(locations.length, 1, "warm open does not locate the source again");
+    assert.equal(fetched.length, 1, "warm open does not fetch the source again");
+    assert.equal(workers.length, 1, "warm open does not create a decoder Worker");
+    await warm.close();
+
+    const silentEvents: StemProgress[] = [];
+    const silent = await open(silentFixture, "silent-source", silentEvents);
+    assertLifecycle(silentEvents, silentFixture.expected);
+    assert.equal(silentEvents.some((event) => event.stage === "decoding"), false, "an all-silent source has no decoder work");
+    assert.equal(locations.length, 2);
+    assert.equal(fetched.length, 2);
+    assert.equal(workers.length, 1, "an all-silent source does not create a decoder Worker");
+    await silent.close();
+  } finally {
+    await store.close();
+    for (const worker of workers) assert.equal(worker.terminated, true);
+  }
 });
 
 test("sparse entry refuses dense and FLAC-shaped paths before any boot or store work", async () => {
@@ -1392,6 +1595,124 @@ function nativeFlacFixture(shape: { readonly sampleRateHz: number; readonly chan
     bytes.set([0xff, 0xf8, index, 0], audioStart + (index * 4));
   }
   return { bytes, audioStart };
+}
+
+function sessionSparseProgressFixture(
+  flac: Uint8Array | undefined,
+  pcm: Uint8Array | undefined,
+  frames: number,
+  activeStartFrame: number,
+): { readonly body: Uint8Array; readonly expected: SparsePcmExpectation } {
+  const canonical = new Uint8Array(frames * 2);
+  const identity = `sha256:${createHash("sha256").update(canonical).digest("hex")}` as `sha256:${string}`;
+  const expected: SparsePcmExpectation = {
+    identity, sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames, canonicalBytes: canonical.byteLength,
+  };
+  const intervals = flac === undefined || pcm === undefined
+    ? []
+    : [{ startFrame: activeStartFrame, frames: pcm.byteLength / 2, packedFrameOffset: 0 }];
+  const chunks = flac === undefined || pcm === undefined
+    ? []
+    : [{
+      offset: 0, bytes: flac.byteLength, frames: pcm.byteLength / 2, packedStartFrame: 0,
+      flacSha256: createHash("sha256").update(flac).digest("hex"),
+      pcmSha256: createHash("sha256").update(pcm).digest("hex"),
+    }];
+  const manifest = {
+    format: "miso_sparse_stem_v1" as const,
+    identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth,
+    frames, intervals, chunks,
+  };
+  const encoded = serializeSparseStemIndex(manifest);
+  const header = new Uint8Array(16);
+  header.set(new TextEncoder().encode("MISOSTM1"));
+  new DataView(header.buffer).setUint32(8, encoded.byteLength, true);
+  return { expected, body: new Uint8Array([...header, ...encoded, ...(flac ?? [])]) };
+}
+
+class SessionProgressDecodeWorker {
+  readonly posted: FlacWorkerRequest[] = [];
+  terminated = false;
+  #slot: Extract<FlacWorkerRequest, { readonly type: "start" }>["inputSlot"] | undefined;
+  #listeners = new Set<(event: { readonly data: FlacWorkerResponse }) => void>();
+  #pendingOutputs: Array<{ readonly bytes: ArrayBuffer; readonly frames: number }> = [];
+  #outputCredits = 0;
+  #completeRequestId: number | undefined;
+  #completePcmBytes = 0;
+  #completeFrames = 0;
+
+  constructor(readonly pcm: Uint8Array) {}
+
+  postMessage(message: FlacWorkerRequest): void {
+    if (this.terminated) return;
+    this.posted.push(message);
+    if (message.type === "start") {
+      this.#slot = message.inputSlot;
+      setTimeout(() => this.emit({ type: "ready", requestId: message.requestId }), 0);
+    } else if (message.type === "initialize") {
+      setTimeout(() => this.emit({ type: "input-credit", requestId: message.requestId, maximumBytes: 256 * 1024, phase: "audio", phaseBytesRemaining: 0 }), 0);
+      setTimeout(() => this.poll(message.requestId, message.expectedFrames, message.totalPcmBytes), 0);
+    } else if (message.type === "output-credit") {
+      this.#outputCredits += 1;
+      this.flushOutputs();
+    }
+  }
+
+  terminate(): void { this.terminated = true; }
+
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
+    if (type === "message") this.#listeners.add(listener);
+  }
+
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
+    if (type === "message") this.#listeners.delete(listener);
+  }
+
+  private emit(message: FlacWorkerResponse): void {
+    for (const listener of this.#listeners) listener({ data: message });
+  }
+
+  private poll(requestId: number, frames: number, pcmBytes: number): void {
+    if (this.terminated || this.#slot === undefined) return;
+    const control = new Int32Array(this.#slot.control);
+    if (Atomics.load(control, 0) !== 1) {
+      setTimeout(() => this.poll(requestId, frames, pcmBytes), 0);
+      return;
+    }
+    const final = Atomics.load(control, 3) === 1;
+    Atomics.store(control, 0, 0);
+    if (!final) {
+      setTimeout(() => this.emit({ type: "input-credit", requestId, maximumBytes: 256 * 1024, phase: "audio", phaseBytesRemaining: 0 }), 0);
+      setTimeout(() => this.poll(requestId, frames, pcmBytes), 0);
+      return;
+    }
+    const firstFrames = Math.floor(frames / 2);
+    const frameBytes = pcmBytes / frames;
+    const firstBytes = firstFrames * frameBytes;
+    this.#pendingOutputs.push(
+      { bytes: this.pcm.slice(0, firstBytes).buffer, frames: firstFrames },
+      { bytes: this.pcm.slice(firstBytes).buffer, frames: frames - firstFrames },
+    );
+    this.#outputCredits = 2;
+    this.#completeRequestId = requestId;
+    this.#completePcmBytes = pcmBytes;
+    this.#completeFrames = frames;
+    this.flushOutputs();
+  }
+
+  private flushOutputs(): void {
+    if (this.terminated || this.#completeRequestId === undefined) return;
+    while (this.#outputCredits > 0 && this.#pendingOutputs.length > 0) {
+      const output = this.#pendingOutputs.shift()!;
+      this.#outputCredits -= 1;
+      this.emit({ type: "pcm", requestId: this.#completeRequestId, bytes: output.bytes, frames: output.frames, totalPcmBytes: this.#completePcmBytes });
+    }
+    if (this.#pendingOutputs.length === 0) {
+      const requestId = this.#completeRequestId;
+      this.#completeRequestId = undefined;
+      this.emit({ type: "complete", requestId, pcmBytes: this.#completePcmBytes, frames: this.#completeFrames });
+    }
+  }
 }
 
 function documentValue(sources: readonly DeclaredStemSource[]) {

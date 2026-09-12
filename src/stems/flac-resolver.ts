@@ -157,6 +157,8 @@ export interface FlacChunkDecodeOptions extends Omit<FlacDeliveryOptions, "locat
     /** Host-computed expected digest for this chunk's packed PCM. */
     readonly pcmSha256: string;
   }>;
+  /** Forwards private chunk decode progress to the owning sparse source. */
+  readonly onProgress?: (progress: StemProgress) => void;
 }
 
 export interface ResolvedFlacChunk {
@@ -180,7 +182,9 @@ export function createFlacStemChunkResolver(options: FlacChunkDecodeOptions): {
   return {
     resolve(signal) {
       return resolver.resolve(options.wholeSourceIdentity, {
-        ...(signal === undefined ? {} : { signal }), expected: options.chunk.expected,
+        ...(signal === undefined ? {} : { signal }),
+        ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
+        expected: options.chunk.expected,
       });
     },
   };
@@ -244,6 +248,10 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
       let worker: FlacWorkerLike | undefined;
       let decoderInput: FlacInputSlotProducer | undefined;
       let ended = false;
+      let workDone = false;
+      let outputDrained = false;
+      let resolveOutputDrained!: () => void;
+      const outputDrain = new Promise<void>((resolve) => { resolveOutputDrained = resolve; });
       let failure: unknown;
       let verifiedDigest: string | undefined;
       let resumeConsumer: (() => void) | undefined;
@@ -251,16 +259,24 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
       const blocks: ArrayBuffer[] = [];
       let checkedOut: { readonly buffer: ArrayBuffer; readonly release: () => void } | undefined;
       let borrowOutput: ((buffer: ArrayBuffer) => BorrowedFlacPcm) | undefined;
+      const settleOutputDrain = () => {
+        if (!outputDrained && workDone && blocks.length === 0 && checkedOut === undefined) {
+          outputDrained = true;
+          resolveOutputDrained();
+        }
+      };
       const retainRange = deliveredRangeOwner(diagnostics);
       const discardBlocks = () => {
         let block: ArrayBuffer | undefined;
         while ((block = blocks.shift()) !== undefined) releaseDecoded(block);
         checkedOut?.release();
+        settleOutputDrain();
       };
       const releaseBorrowedOutput = (buffer: ArrayBuffer) => {
         const owner = checkedOut;
         if (owner?.buffer === buffer) owner.release();
         else releaseDecoded(buffer);
+        settleOutputDrain();
       };
       let wake: (() => void) | undefined;
       const notify = () => { const current = wake; wake = undefined; current?.(); };
@@ -283,11 +299,24 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
       if (resolveOptions.signal?.aborted) abort();
       else resolveOptions.signal?.addEventListener("abort", abort, { once: true });
 
+      const releaseRunnable = () => { runnable?.release(); runnable = undefined; };
+      // Dense public streams preserve their historical one-job Worker
+      // lifetime. Private borrowed sparse streams own an epoch so their
+      // bounded chunk jobs may share healthy realms.
+      const epoch = invocation.mode === "borrowed" ? pool.retain() : { release: () => Promise.resolve() };
       const workflow = pool.run({
+        requestId,
         signal: controller.signal,
-        onTerminated: () => { runnable?.release(); runnable = undefined; },
+        onReleased: releaseRunnable,
+        onTerminated: releaseRunnable,
+        moduleLoadTimeoutMs: decodeNoProgressMs,
+        onModuleLoadTimeout: () => new EngineWebAdapterError(
+          "stem.decode.stall", `FLAC decoder made no progress for ${decodeNoProgressMs}ms`,
+          { identity, phase: "decoder-load", milliseconds: decodeNoProgressMs, retryable: false },
+        ),
+        ...(invocation.mode === "borrowed" ? { waitForRelease: () => outputDrain } : {}),
         ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
-        work: (physical) => new Promise<void>((resolve, reject) => {
+        work: (physical, context) => new Promise<void>((resolve, reject) => {
           const finishWorker = beginIngestStage(diagnostics, "workers");
           runnable = ownRunnableWorker(diagnostics);
           worker = physical;
@@ -369,6 +398,10 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
             }
             if (!successful) controller.abort(error);
             if (!successful) physical.terminate();
+            if (successful) {
+              workDone = true;
+              settleOutputDrain();
+            }
             void inputLane.then((exit) => {
               if (successful) resolve(); else reject(laneSettled ? error : mergeInputCause(error, exit));
             });
@@ -389,6 +422,7 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
                   try { physical.postMessage({ type: "output-credit", requestId }); } catch { /* terminal cleanup wins */ }
                 }
                 resumeConsumer?.();
+                settleOutputDrain();
                 notify();
               },
             };
@@ -574,6 +608,7 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
               type: "start", requestId, identity,
               decoderWasmUrl: String(options.assets?.flacDecoderWasmUrl ?? ADAPTER_ASSETS.flacDecoderWasm),
               inputSlot: decoderInput!.buffers,
+              ...(context?.decoderModule === undefined ? {} : { decoderModule: context.decoderModule }),
               verifyPcm: workerHashes,
               ...(runnable === undefined ? {} : { runnable: runnable.buffer, runnableMask: runnable.mask }),
               ...(chunk === undefined && resolveOptions.expected === undefined ? {} :
@@ -584,14 +619,18 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
       }).then(() => {
         worker = undefined;
         ended = true;
+        settleOutputDrain();
         notify();
       }, (error) => {
         worker = undefined;
         failure = error;
         discardBlocks();
+        ended = true;
+        settleOutputDrain();
         notify();
       }).finally(() => {
         resolveOptions.signal?.removeEventListener("abort", abort);
+        void epoch.release();
       });
 
       if (invocation.mode === "legacy") {
@@ -601,6 +640,7 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
             for (;;) {
               const block = blocks.shift();
               if (block !== undefined) {
+                settleOutputDrain();
                 try {
                   streamController.enqueue(new Uint8Array(block));
                 } catch (error) { releaseDecoded(block); throw error; }

@@ -5,8 +5,10 @@ import test from "node:test";
 
 import { EngineWebAdapterError } from "../src/errors.js";
 import { serializeSparseStemIndex, MemoryStemStorageBackend, VerifiedSparsePcmStore, createSparseStemResolver } from "../src/stems/index.js";
+import { sparseProgressReporter } from "../src/stems/progress.js";
 import type { FlacWorkerLike, FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
 import type { SparsePcmExpectation } from "../src/stems/sparse-store.js";
+import type { StemProgress } from "../src/stems/types.js";
 
 const ZERO_IDENTITY = `sha256:${createHash("sha256").update(new Uint8Array(4096)).digest("hex")}` as const;
 
@@ -164,6 +166,22 @@ function packageBody(flac: Uint8Array, options: {
   return { body: new Uint8Array([...header, ...encoded, ...flac]), expected };
 }
 
+function padSilenceFlac(flac: Uint8Array, extraPaddingBytes: number): Uint8Array {
+  const paddingHeaderOffset = 118;
+  const paddingBytes = new DataView(flac.buffer, flac.byteOffset, flac.byteLength).getUint8(paddingHeaderOffset + 1) * 0x1_00_00 +
+    new DataView(flac.buffer, flac.byteOffset, flac.byteLength).getUint8(paddingHeaderOffset + 2) * 0x100 +
+    new DataView(flac.buffer, flac.byteOffset, flac.byteLength).getUint8(paddingHeaderOffset + 3);
+  const audioOffset = paddingHeaderOffset + 4 + paddingBytes;
+  const padded = new Uint8Array(flac.byteLength + extraPaddingBytes);
+  padded.set(flac.subarray(0, paddingHeaderOffset));
+  padded.set(flac.subarray(paddingHeaderOffset, paddingHeaderOffset + 4), paddingHeaderOffset);
+  padded[paddingHeaderOffset + 1] = (paddingBytes + extraPaddingBytes) >>> 16;
+  padded[paddingHeaderOffset + 2] = (paddingBytes + extraPaddingBytes) >>> 8;
+  padded[paddingHeaderOffset + 3] = paddingBytes + extraPaddingBytes;
+  padded.set(flac.subarray(audioOffset), audioOffset + extraPaddingBytes);
+  return padded;
+}
+
 function multiblockPcm(frames: number): Uint8Array {
   const output = new Uint8Array(frames * 6);
   const view = new DataView(output.buffer);
@@ -270,6 +288,107 @@ test("factory validates locator and decoder deadlines before the first request",
   assert.throws(() => createSparseStemResolver({ ...options, locate: null as never }), TypeError);
   assert.throws(() => createSparseStemResolver({ ...options, readDeadlineMs: 0 }), RangeError);
   assert.throws(() => createSparseStemResolver({ ...options, decodeNoProgressMs: 0 }), RangeError);
+});
+
+test("successful sparse progress flushes its latest coalesced boundary before close", () => {
+  const identity = `sha256:${"c".repeat(64)}` as const;
+  const observed: Array<StemProgress & { readonly bytes: number }> = [];
+  const reporter = sparseProgressReporter((event) => {
+    if ("bytes" in event) observed.push(event);
+  }, identity);
+  const event = (bytes: number): StemProgress => ({
+    stage: "decoding", identity, bytes, totalBytes: 100_000, byteKind: "pcm",
+  });
+  reporter.emit(event(10_000));
+  reporter.emit(event(20_000));
+  reporter.emit(event(21_000));
+  assert.deepEqual(observed.map((progress) => progress.bytes), [10_000, 20_000]);
+  reporter.flush();
+  assert.deepEqual(observed.map((progress) => progress.bytes), [10_000, 20_000, 21_000]);
+  reporter.close();
+  reporter.emit(event(22_000));
+  reporter.flush();
+  assert.deepEqual(observed.map((progress) => progress.bytes), [10_000, 20_000, 21_000]);
+});
+
+test("successful sparse progress forces a boundary through an outer coalescer", () => {
+  const identity = `sha256:${"d".repeat(64)}` as const;
+  const observed: number[] = [];
+  const outer = sparseProgressReporter((event) => {
+    if (event.stage === "decoding" && "bytes" in event) observed.push(event.bytes);
+  });
+  const inner = sparseProgressReporter(outer.emit, identity);
+  const event = (bytes: number): StemProgress => ({
+    stage: "decoding", identity, bytes, totalBytes: 100_000, byteKind: "pcm",
+  });
+  const clock = [0, 10, 20, 30, 70, 70.1];
+  let clockIndex = 0;
+  Object.defineProperty(performance, "now", {
+    configurable: true,
+    value: () => clock[Math.min(clockIndex++, clock.length - 1)],
+  });
+  try {
+    inner.emit(event(10_000));
+    inner.emit(event(20_000));
+    // The inner reporter delivers this after its 50 ms boundary, while the
+    // outer reporter coalesces it at its own clock position.
+    inner.emit(event(21_000));
+    inner.emitForced(event(21_000));
+    assert.deepEqual(observed, [10_000, 20_000, 21_000]);
+    inner.close();
+    outer.close();
+  } finally {
+    Reflect.deleteProperty(performance, "now");
+  }
+});
+
+test("native decoder asset loading is bounded by the decoder progress deadline", async () => {
+  const pcm = new Uint8Array([1, 2]);
+  const expected: SparsePcmExpectation = {
+    identity: `sha256:${createHash("sha256").update(pcm).digest("hex")}`,
+    sampleRateHz: 48_000,
+    channels: 1,
+    bitDepth: 16,
+    frames: 1,
+    canonicalBytes: pcm.byteLength,
+  };
+  const packed = packageBody(new Uint8Array([0]), { expected, pcm, packedFrames: 1 });
+  const originalFetch = globalThis.fetch;
+  let moduleFetches = 0;
+  globalThis.fetch = (async () => {
+    moduleFetches += 1;
+    return new Promise<Response>(() => undefined);
+  }) as typeof fetch;
+  try {
+    const resolver = createSparseStemResolver({
+      locate: () => "https://fixture.invalid/module-timeout",
+      fetch: async () => new Response(responseBytes(packed.body), {
+        status: 200,
+        headers: { "Content-Length": String(packed.body.byteLength) },
+      }),
+      decodeNoProgressMs: 10,
+    });
+    const resolved = await resolver(expected, new AbortController().signal);
+    const iterator = resolved.spans[Symbol.asyncIterator]();
+    let settled = false;
+    const next = iterator.next().finally(() => { settled = true; });
+    const outcome = await Promise.race([
+      next.then(() => "settled" as const, () => "settled" as const),
+      new Promise<"timeout">(resolve => setTimeout(() => resolve("timeout"), 100)),
+    ]);
+    assert.equal(outcome, "settled", "module acquisition must not outrun the decoder watchdog");
+    assert.equal(settled, true);
+    await assert.rejects(next, (error: unknown) => {
+      if (!(error instanceof EngineWebAdapterError)) return false;
+      assert.equal(error.code, "stem.decode.stall");
+      assert.equal(error.details.phase, "decoder-load");
+      assert.equal(error.details.milliseconds, 10);
+      return true;
+    });
+    assert.equal(moduleFetches, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("operation abort reaches an executing full fetch and waits for its physical settlement", async () => {
@@ -590,12 +709,28 @@ test("sparse full GET installs an actual FLAC payload cold and resolves warm wit
     createWorker: () => { workers += 1; return new DecodeWorker(); },
     hardwareConcurrency: 2,
   });
-  const cold = await store.installSource(packed.expected, { resolve: signal => resolver(packed.expected, signal) });
+  const progress: import("../src/stems/types.js").StemProgress[] = [];
+  const cold = await store.installSource(packed.expected, {
+    resolve: (signal, context) => resolver(packed.expected, signal, context),
+    onProgress: (event) => progress.push(event),
+  });
   assert.equal(cold.data.size, packed.expected.canonicalBytes);
   assert.equal(cold.index.activeBytes, packed.expected.canonicalBytes);
   assert.equal(fetches, 1);
   assert.equal(locates, 1);
   assert.equal(workers, 1);
+  const probing = progress.filter((event): event is StemProgress & { readonly stage: "probing" } => event.stage === "probing");
+  const fetching = progress.filter((event): event is StemProgress & { readonly stage: "fetching" } => event.stage === "fetching");
+  assert.ok(probing.length > 0);
+  assert.ok(fetching.length > 0);
+  const finalFetching = fetching.at(-1);
+  assert.equal(finalFetching?.byteKind, "flac");
+  assert.equal(finalFetching?.bytes, packed.body.byteLength);
+  assert.equal(finalFetching?.totalBytes, packed.body.byteLength);
+  const decoding = progress.filter((event): event is StemProgress & { readonly stage: "decoding" } => event.stage === "decoding");
+  assert.ok(decoding.length > 0);
+  assert.equal(decoding.at(-1)?.bytes, packed.expected.canonicalBytes);
+  assert.equal(decoding.at(-1)?.totalBytes, packed.expected.canonicalBytes);
 
   let warmResolverCalls = 0;
   const warm = await store.installSource(packed.expected, {
@@ -606,6 +741,72 @@ test("sparse full GET installs an actual FLAC payload cold and resolves warm wit
   assert.equal(fetches, 1);
   assert.equal(locates, 1);
   assert.equal(workers, 1);
+  await store.close();
+});
+
+test("sparse decoding flushes the final active PCM boundary below the canonical total", async () => {
+  const flac = new Uint8Array(readFileSync("tests/fixtures/native-silence.flac"));
+  const paddedFlac = padSilenceFlac(flac, 17);
+  const activeFrames = 2_048;
+  const canonicalFrames = 50_000;
+  const frameBytes = 2;
+  const activePcm = new Uint8Array(activeFrames * frameBytes);
+  const canonicalPcm = new Uint8Array(canonicalFrames * frameBytes);
+  const expected: SparsePcmExpectation = {
+    identity: `sha256:${createHash("sha256").update(canonicalPcm).digest("hex")}`,
+    sampleRateHz: 48_000,
+    channels: 1,
+    bitDepth: 16,
+    frames: canonicalFrames,
+    canonicalBytes: canonicalPcm.byteLength,
+  };
+  const chunks = [flac, paddedFlac];
+  let offset = 0;
+  const manifest = {
+    format: "miso_sparse_stem_v1" as const,
+    identity: expected.identity,
+    sampleRateHz: expected.sampleRateHz,
+    channels: expected.channels,
+    bitDepth: expected.bitDepth,
+    frames: expected.frames,
+    intervals: [
+      { startFrame: 0, frames: activeFrames, packedFrameOffset: 0 },
+      { startFrame: 40_000, frames: activeFrames, packedFrameOffset: activeFrames },
+    ],
+    chunks: chunks.map((chunk, index) => {
+      const chunkOffset = offset;
+      offset += chunk.byteLength;
+      return {
+        offset: chunkOffset,
+        bytes: chunk.byteLength,
+        frames: activeFrames,
+        packedStartFrame: index * activeFrames,
+        flacSha256: createHash("sha256").update(chunk).digest("hex"),
+        pcmSha256: createHash("sha256").update(activePcm).digest("hex"),
+      };
+    }),
+  };
+  const encoded = serializeSparseStemIndex(manifest);
+  const header = new Uint8Array(16);
+  header.set(new TextEncoder().encode("MISOSTM1"));
+  new DataView(header.buffer).setUint32(8, encoded.byteLength, true);
+  const body = new Uint8Array([...header, ...encoded, ...chunks.flatMap((chunk) => [...chunk])]);
+  const events: StemProgress[] = [];
+  const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "decode-final-boundary" });
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/decode-final-boundary",
+    fetch: async () => new Response(responseBytes(body), { status: 200, headers: { "Content-Length": String(body.byteLength) } }),
+    createWorker: () => new DecodeWorker(),
+  });
+  await store.installSource(expected, {
+    resolve: (signal, context) => resolver(expected, signal, context),
+    onProgress: (event) => events.push(event),
+  });
+  const decoding = events.filter((event): event is StemProgress & { readonly stage: "decoding" } => event.stage === "decoding");
+  assert.ok(decoding.length > 0);
+  assert.equal(decoding.at(-1)?.bytes, activePcm.byteLength * chunks.length);
+  assert.equal(decoding.at(-1)?.totalBytes, expected.canonicalBytes);
+  assert.ok(decoding.every((event, index) => index === 0 || event.bytes > decoding[index - 1]!.bytes));
   await store.close();
 });
 

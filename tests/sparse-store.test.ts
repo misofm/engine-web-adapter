@@ -12,10 +12,13 @@ import {
   OpfsStorageBackend,
   VerifiedSparsePcmStore,
   VerifiedStemStore,
+  createSparseStemResolver,
+  serializeSparseStemIndex,
   validateSparsePcmIndex,
   type SparsePcmExpectation,
 } from "../src/stems/index.js";
 import { acquireNamedLock } from "../src/stems/lock.js";
+import { registerSparseResolver } from "../src/stems/sparse-scheduling.js";
 import { sparseSourceProgramForTest } from "../src/stems/sparse-store.js";
 
 function expectation(bytes: Uint8Array, frames: number, shape: { readonly channels?: 1 | 2; readonly bitDepth?: 16 | 24 } = {}): SparsePcmExpectation {
@@ -39,6 +42,28 @@ function deferred(): { readonly promise: Promise<void>; readonly resolve: () => 
   let resolve!: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
+}
+
+function emptySparsePackage(expected: SparsePcmExpectation): Uint8Array {
+  const encoded = serializeSparseStemIndex({
+    format: "miso_sparse_stem_v1" as const,
+    identity: expected.identity,
+    sampleRateHz: expected.sampleRateHz,
+    channels: expected.channels,
+    bitDepth: expected.bitDepth,
+    frames: expected.frames,
+    intervals: [],
+    chunks: [],
+  });
+  const header = new Uint8Array(16);
+  header.set(new TextEncoder().encode("MISOSTM1"));
+  new DataView(header.buffer).setUint32(8, encoded.byteLength, true);
+  return new Uint8Array([...header, ...encoded]);
+}
+
+function responseBody(bytes: Uint8Array | undefined): ArrayBuffer {
+  if (bytes === undefined) throw new Error("missing sparse package fixture");
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 describe("VerifiedSparsePcmStore", () => {
@@ -1063,6 +1088,260 @@ describe("VerifiedSparsePcmStore", () => {
     const store = new VerifiedSparsePcmStore({ backend, instanceId: "snapshot-array-bound" });
     await assert.rejects(store.openSession({ leaseId: "x", maximumMetadataBytes: 1_024, sources: sources as never[] }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
     assert.equal(elementReads, 0);
+    await store.close();
+  });
+
+  it("reports cumulative cold ingest and warm verification work, including zero gaps", async () => {
+    const canonical = new Uint8Array(200_000);
+    for (let index = 20_000; index < 40_000; index += 1) canonical[index] = index % 251 + 1;
+    for (let index = 160_000; index < 180_000; index += 1) canonical[index] = index % 241 + 1;
+    const expected = expectation(canonical, canonical.byteLength / 2);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "progress" });
+    const cold: import("../src/stems/types.js").StemProgress[] = [];
+    await store.installSource(expected, {
+      resolve: async () => ({ spans: spans(
+        { startFrame: 10_000, bytes: canonical.slice(20_000, 40_000) },
+        { startFrame: 80_000, bytes: canonical.slice(160_000, 180_000) },
+      ) }),
+      onProgress: (event) => cold.push(event),
+    });
+    const coldBytes = cold.filter((event): event is Extract<typeof event, { bytes: number; totalBytes: number }> => "bytes" in event && "totalBytes" in event && event.stage === "ingesting");
+    assert.ok(coldBytes.length >= 3, "large logical gaps need more than one ingest advance");
+    assert.equal(coldBytes.at(-1)?.bytes, expected.canonicalBytes);
+    assert.ok(coldBytes.every((event) => event.identity === expected.identity && event.byteKind === "pcm" && event.totalBytes === expected.canonicalBytes && event.bytes >= 0 && event.bytes <= event.totalBytes));
+    assert.equal(cold.filter((event) => event.stage === "source-ready").length, 1);
+
+    const warm: import("../src/stems/types.js").StemProgress[] = [];
+    await store.installSource(expected, {
+      resolve: async () => { throw new Error("warm sparse install must not resolve"); },
+      onProgress: (event) => warm.push(event),
+    });
+    const warmBytes = warm.filter((event): event is Extract<typeof event, { bytes: number; totalBytes: number }> => "bytes" in event && "totalBytes" in event && event.stage === "verifying");
+    assert.ok(warmBytes.length >= 3, "large logical gaps need more than one verification advance");
+    assert.equal(warmBytes.at(-1)?.bytes, expected.canonicalBytes);
+    assert.equal(warm.some((event) => event.stage === "ingesting"), false);
+    assert.equal(warm.filter((event) => event.stage === "source-ready").length, 1);
+    const observedDespiteThrow = await store.openSource(expected, { onProgress: () => { throw new Error("observer failure"); } });
+    assert.equal(observedDespiteThrow?.data.size, 40_000);
+    await store.close();
+  });
+
+  it("rejects direct warm open when the final verification callback cancels", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const expected = expectation(bytes, 1);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-final-direct" });
+    await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+    const controller = new AbortController();
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    await assert.rejects(store.openSource(expected, {
+      signal: controller.signal,
+      onProgress: (event) => {
+        events.push(event);
+        if (event.stage === "verifying" && event.bytes === event.totalBytes) controller.abort("final byte");
+      },
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.ok(events.some((event) => event.stage === "verifying" && event.bytes === event.totalBytes));
+    assert.equal(events.some((event) => event.stage === "source-ready"), false);
+    await store.close();
+  });
+
+  it("rejects warm sessions before publishing aliases after final verification cancellation", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const expected = expectation(bytes, 1);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-final-session" });
+    await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+    const controller = new AbortController();
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    await assert.rejects(store.openSession({
+      leaseId: "warm-final-session",
+      sources: [{ ...expected, sourceId: "left" }, { ...expected, sourceId: "right" }],
+      signal: controller.signal,
+      onProgress: (event) => {
+        events.push(event);
+        if (event.stage === "verifying" && event.bytes === event.totalBytes) controller.abort("final byte");
+      },
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.ok(events.some((event) => event.stage === "verifying" && event.bytes === event.totalBytes));
+    assert.equal(events.some((event) => event.stage === "source-ready"), false);
+    assert.equal(events.some((event) => event.stage === "ready"), false);
+    await store.close();
+  });
+
+  it("forwards resolver progress context and emits one ready proof per alias", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const expected = expectation(bytes, 2);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "progress-alias" });
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    let contextSeen = false;
+    const lease = await store.openSession({
+      leaseId: "progress-alias",
+      sources: [{ ...expected, sourceId: "left" }, { ...expected, sourceId: "right" }],
+      resolve: async (_source, _signal, context) => {
+        contextSeen = typeof context?.onProgress === "function";
+        context?.onProgress?.({ stage: "probing", identity: expected.identity, bytes: 0, totalBytes: expected.canonicalBytes, byteKind: "flac" });
+        return { spans: spans({ startFrame: 0, bytes }) };
+      },
+      onProgress: (event) => events.push(event),
+    });
+    assert.equal(contextSeen, true);
+    const readySources = events.filter((event): event is Extract<typeof event, { stage: "source-ready" }> => event.stage === "source-ready");
+    assert.deepEqual(readySources.map((event) => event.sourceId), ["left", "right"]);
+    assert.deepEqual(events.filter((event) => event.stage === "ready").map((event) => [event.sourcesReady, event.sourcesTotal]), [[2, 2]]);
+    assert.ok(events.find((event) => event.stage === "probing" && event.identity === expected.identity));
+    await lease.close();
+    await store.close();
+  });
+
+  it("waits for native epoch release before aggregate readiness", async () => {
+    const expected = expectation(new Uint8Array(2), 1);
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    const lifecycle: string[] = [];
+    const resolver = async () => ({ spans: spans() });
+    registerSparseResolver(resolver, {
+      concurrency: 1,
+      pool: {
+        canRetain: true,
+        retain: () => ({
+          release: async () => {
+            lifecycle.push("physical-release");
+            throw new Error("physical termination failed");
+          },
+        }),
+      },
+    });
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "release-before-ready" });
+    await assert.rejects(store.openSession({
+      leaseId: "release-before-ready",
+      sources: [{ ...expected, sourceId: "source" }],
+      resolve: resolver,
+      onProgress: (event) => events.push(event),
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+    const sourceReady = events.findIndex((event) => event.stage === "source-ready");
+    const physicalRelease = lifecycle.indexOf("physical-release");
+    assert.ok(sourceReady >= 0, "a committed source remains observable");
+    assert.equal(events.some((event) => event.stage === "ready"), false, "aggregate readiness waits for physical release");
+    assert.ok(physicalRelease >= 0, "the retained epoch was physically released");
+    await store.close();
+  });
+
+  it("uses native sparse scheduling for bounded parallel sources while wrappers stay sequential", async () => {
+    const first = expectation(new Uint8Array(4), 2);
+    const second = expectation(new Uint8Array(6), 3);
+    const packages = new Map([
+      ["first", emptySparsePackage(first)],
+      ["second", emptySparsePackage(second)],
+    ]);
+    let active = 0;
+    let peak = 0;
+    const resolver = createSparseStemResolver({
+      locate: (identity) => `https://fixture.invalid/${identity === first.identity ? "first" : "second"}`,
+      fetch: async (input) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        const key = new URL(String(input)).pathname.slice(1);
+        active -= 1;
+        return new Response(responseBody(packages.get(key)), { status: 200 });
+      },
+      createWorker: () => { throw new Error("silent sources must not create workers"); },
+      hardwareConcurrency: 3,
+    });
+    const parallelStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "native-parallel" });
+    const parallelLease = await parallelStore.openSession({
+      leaseId: "native-parallel",
+      sources: [{ ...first, sourceId: "first" }, { ...second, sourceId: "second" }],
+      resolve: resolver,
+    });
+    assert.equal(peak, 2, "the registered native resolver uses its bounded processing width");
+    await parallelLease.close();
+    await parallelStore.close();
+
+    active = 0;
+    peak = 0;
+    const wrapped = (expected: SparsePcmExpectation, signal: AbortSignal, context?: import("../src/stems/types.js").SparseStemResolverContext) => resolver(expected, signal, context);
+    const sequentialStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "wrapped-sequential" });
+    const sequentialLease = await sequentialStore.openSession({
+      leaseId: "wrapped-sequential",
+      sources: [{ ...first, sourceId: "first" }, { ...second, sourceId: "second" }],
+      resolve: wrapped,
+    });
+    assert.equal(peak, 1, "wrapping the native function does not claim private scheduling metadata");
+    await sequentialLease.close();
+    await sequentialStore.close();
+  });
+
+  it("charges concurrent native descriptors atomically and preserves earlier verified commits", async () => {
+    const first = expectation(new Uint8Array(4), 2);
+    const second = expectation(new Uint8Array(6), 3);
+    const packages = new Map([
+      [first.identity, emptySparsePackage(first)],
+      [second.identity, emptySparsePackage(second)],
+    ]);
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    const resolver = createSparseStemResolver({
+      locate: (identity) => `https://fixture.invalid/${identity.slice(7)}`,
+      fetch: async (input) => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        const identity = new URL(String(input)).pathname.slice(1);
+        return new Response(responseBody(packages.get(`sha256:${identity}`)), { status: 200 });
+      },
+      createWorker: () => { throw new Error("silent sources must not create workers"); },
+      hardwareConcurrency: 3,
+    });
+    const sourceIds = ["first", "second"] as const;
+    const declarationBytes = 2 * "metadata".length + sourceIds.reduce((sum, sourceId) => sum + 256 + 2 * sourceId.length, 0);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "metadata-race" });
+    await assert.rejects(store.openSession({
+      leaseId: "metadata",
+      sources: [{ ...first, sourceId: sourceIds[0] }, { ...second, sourceId: sourceIds[1] }],
+      maximumMetadataBytes: declarationBytes + 512,
+      resolve: resolver,
+      onProgress: (event) => events.push(event),
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    assert.equal(events.some((event) => event.stage === "ready"), false);
+    assert.ok(events.filter((event) => event.stage === "source-ready").length <= 1);
+    assert.ok((await store.inspectSourcePresence(first)).status === "present" || (await store.inspectSourcePresence(second)).status === "present");
+    await store.close();
+  });
+
+  it("interrupts an active native sparse sibling after the first source fails", async () => {
+    const failing = expectation(new Uint8Array(4), 2);
+    const slow = expectation(new Uint8Array(6), 3);
+    const slowBody = emptySparsePackage(slow);
+    let slowStarted = false;
+    let slowCancelled = 0;
+    let releaseStarted!: () => void;
+    const started = new Promise<void>((resolve) => { releaseStarted = resolve; });
+    const resolver = createSparseStemResolver({
+      locate: (identity) => `https://fixture.invalid/${identity === failing.identity ? "failing" : "slow"}`,
+      fetch: async (input) => {
+        if (new URL(String(input)).pathname.slice(1) === "failing") return new Response(null, { status: 500 });
+        slowStarted = true;
+        releaseStarted();
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { controller.enqueue(slowBody); },
+          cancel() { slowCancelled += 1; },
+        }), { status: 200 });
+      },
+      createWorker: () => { throw new Error("silent sources must not create workers"); },
+      hardwareConcurrency: 3,
+    });
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "sibling-failure" });
+    const opening = store.openSession({
+      leaseId: "sibling-failure",
+      sources: [{ ...failing, sourceId: "failing" }, { ...slow, sourceId: "slow" }],
+      resolve: resolver,
+    });
+    let timer!: ReturnType<typeof setTimeout>;
+    const sawSlow = await Promise.race([
+      started.then(() => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), 1_000); }),
+    ]);
+    clearTimeout(timer);
+    assert.equal(sawSlow, true, "native bounded scheduling must admit the sibling before failure cleanup");
+    await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.delivery.http");
+    assert.equal(slowStarted, true);
+    assert.ok(slowCancelled >= 1, "the sibling response body was physically cancelled");
     await store.close();
   });
 });

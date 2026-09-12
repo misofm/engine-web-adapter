@@ -28,6 +28,7 @@ export type { OpfsWorkerLike } from "./opfs-worker-protocol.js";
 export type { FlacProcessingOptions, StemAdmissionLease } from "./flac-admission.js";
 export type { FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";
 export type { SparseStemLocator, SparseStemDeliveryOptions } from "./sparse-resolver.js";
+export type { ProgressObserver } from "./progress.js";
 export type { FlacDeliveryOptions } from "./flac-resolver.js";
 export type {
   StemStorageBackend,
@@ -57,6 +58,7 @@ export type {
   StemProgressStage,
   StemRequirement,
   StemResolver,
+  SparseStemResolverContext,
   StemSessionLease,
   StemStore,
 } from "./types.js";

@@ -16,6 +16,8 @@ export interface SparseResponseOptions {
   readonly signal: AbortSignal;
   /** The owner of `signal` can abort the complete resolver operation. */
   readonly abortOperation?: (reason: unknown) => void;
+  /** Cumulative bytes consumed from this response, reported after each read. */
+  readonly onProgress?: (bytes: number) => void;
 }
 
 export interface SparseResponseCursor {
@@ -275,6 +277,16 @@ export const openSparseResponse = Effect.fn("SparseResponse.open")(function*(opt
         written += count;
         carryOffset += count;
         position += count;
+        try {
+          const result = options.onProgress?.(position) as unknown;
+          if ((typeof result === "object" && result !== null || typeof result === "function") &&
+            typeof (result as { readonly then?: unknown }).then === "function") {
+            void Promise.resolve(result).catch(() => undefined);
+          }
+        } catch {
+          // Delivery accounting is observational; it cannot alter response
+          // integrity or the physical cleanup result.
+        }
         if (carryOffset === chunk.value.byteLength) { carry = undefined; carryOffset = 0; }
       }
       return output;

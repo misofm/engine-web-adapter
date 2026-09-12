@@ -55,6 +55,11 @@ export interface StemResolver {
   ): Promise<ResolvedStem>;
 }
 
+/** Optional context supplied to sparse resolver invocations. */
+export interface SparseStemResolverContext {
+  readonly onProgress?: (progress: StemProgress) => void;
+}
+
 export interface CanonicalPcmExpectation {
   readonly sampleRateHz: number;
   readonly channels: 1 | 2;
