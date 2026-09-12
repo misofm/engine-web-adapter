@@ -11,6 +11,8 @@ export type FlacWorkerRequest =
       readonly requestId: number;
       readonly identity: StemIdentity;
       readonly decoderWasmUrl: string;
+      /** Immutable compiled code shared by reusable jobs. Structured-cloned, never transferred. */
+      readonly decoderModule?: WebAssembly.Module;
       readonly inputSlot: FlacInputSlotBuffers;
       readonly expected?: CanonicalPcmExpectation;
       readonly verifyPcm?: boolean;
@@ -44,7 +46,16 @@ export type FlacWorkerResponse =
       readonly totalPcmBytes: number;
       readonly metrics?: WorkerProcessingMetrics;
     }
-  | { readonly type: "complete"; readonly requestId: number; readonly pcmBytes: number; readonly frames: number; readonly digest?: string; readonly metrics?: WorkerProcessingMetrics }
+  | {
+      readonly type: "complete";
+      readonly requestId: number;
+      readonly pcmBytes: number;
+      readonly frames: number;
+      readonly digest?: string;
+      readonly metrics?: WorkerProcessingMetrics;
+      /** True only after the worker destroyed and cleared the job decoder state. */
+      readonly reset?: boolean;
+    }
   | {
       readonly type: "error";
       readonly requestId: number;

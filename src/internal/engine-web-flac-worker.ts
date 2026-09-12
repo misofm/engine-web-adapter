@@ -35,6 +35,19 @@ function setRunnable(value: boolean): void {
   }
 }
 
+function clearJobState(): void {
+  setRunnable(false);
+  active = 0;
+  credits = undefined;
+  decoder = undefined;
+  hash = undefined;
+  runnable = undefined;
+  runnableMask = 0;
+  processing = false;
+  inputWaitStart = 0;
+  inputWaitMs = 0;
+}
+
 function serialize(error: unknown): Extract<FlacWorkerResponse, { type: "error" }>["error"] {
   if (error instanceof Error) {
     const record = error as Error & { readonly code?: unknown; readonly details?: unknown };
@@ -48,10 +61,19 @@ function serialize(error: unknown): Extract<FlacWorkerResponse, { type: "error" 
 }
 
 function fail(error: unknown): void {
+  const requestId = active;
+  if (requestId === 0) return;
   setRunnable(false);
-  if (!credits?.cancelled) scope.postMessage({ type: "error", requestId: active, error: serialize(error) });
-  try { decoder?.destroy(); } catch { /* the first typed failure remains authoritative */ }
-  scope.close?.();
+  try {
+    if (!credits?.cancelled) {
+      try { scope.postMessage({ type: "error", requestId, error: serialize(error) }); }
+      catch { /* a reply clone failure still poisons this realm */ }
+    }
+  } finally {
+    try { decoder?.destroy(); } catch { /* the first typed failure remains authoritative */ }
+    clearJobState();
+    scope.close?.();
+  }
 }
 
 scope.onmessage = (event) => {
@@ -63,20 +85,26 @@ scope.onmessage = (event) => {
     hash = message.verifyPcm ? new IncrementalSha256() : undefined;
     runnable = message.runnable === undefined ? undefined : new Int32Array(message.runnable);
     runnableMask = message.runnableMask ?? 0;
+    const requestId = message.requestId;
     void NativeFlacDecoder.load({
       url: message.decoderWasmUrl,
       inputSlot: message.inputSlot,
+      ...(message.decoderModule === undefined ? {} : { module: message.decoderModule }),
       onInputWait: waiting => {
         if (waiting) { inputWaitStart = performance.now(); setRunnable(false); }
         else { inputWaitMs += performance.now() - inputWaitStart; setRunnable(true); }
       },
       requestRefill: () => scope.postMessage({
-        type: "input-credit", requestId: active, maximumBytes: 256 * 1024,
+        type: "input-credit", requestId, maximumBytes: 256 * 1024,
         phase: "audio", phaseBytesRemaining: 0,
       }),
     }).then((loaded) => {
+      if (active !== requestId || credits?.cancelled) {
+        try { loaded.destroy(); } catch { /* cancellation already owns the failure */ }
+        return;
+      }
       decoder = loaded;
-      scope.postMessage({ type: "ready", requestId: active });
+      scope.postMessage({ type: "ready", requestId });
     }, fail);
     return;
   }
@@ -85,11 +113,13 @@ scope.onmessage = (event) => {
   if (message.type === "cancel") {
     credits.cancel();
     try { decoder?.destroy(); } catch { /* physical Worker close is authoritative */ }
+    clearJobState();
     scope.close?.();
     return;
   }
   if (message.type === "initialize") {
     if (decoder === undefined) { fail(new EngineWebAdapterError("stem.decode.worker", "FLAC decoder initialized before asset readiness")); return; }
+    const requestId = message.requestId;
     try { decoder.initialize(message.streamInfo, message.expectedFrames); }
     catch (error) { fail(error); return; }
     const current = decoder;
@@ -117,7 +147,7 @@ scope.onmessage = (event) => {
         frames += result.frames;
         bytes += result.bytes.byteLength;
         const output = result.bytes.buffer as ArrayBuffer;
-        scope.postMessage({ type: "pcm", requestId: active, bytes: output, frames: result.frames,
+        scope.postMessage({ type: "pcm", requestId, bytes: output, frames: result.frames,
           totalPcmBytes: message.totalPcmBytes,
           metrics: { decodeMs, hashMs, inputWaitMs, outputWaitMs, blocks: 1 },
         }, [output]);
@@ -125,13 +155,16 @@ scope.onmessage = (event) => {
       }
       current.finish();
       current.destroy();
-      decoder = undefined;
       const digest = hash?.digestHex();
-      scope.postMessage({ type: "complete", requestId: active, pcmBytes: bytes, frames,
+      const complete = { type: "complete" as const, requestId, pcmBytes: bytes, frames,
         ...(digest === undefined ? {} : { digest }),
-        metrics: { decodeMs, hashMs: 0, inputWaitMs, outputWaitMs, blocks: 0 },
-      });
-      scope.close?.();
+        metrics: { decodeMs, hashMs: 0, inputWaitMs, outputWaitMs, blocks: 0 }, reset: true,
+      };
+      // Reset all mutable job state before acknowledging completion. The host
+      // may only lease this realm again after observing this acknowledgement.
+      clearJobState();
+      try { scope.postMessage(complete); }
+      catch { /* a completion clone failure leaves this realm unusable */ scope.close?.(); }
     })().catch(fail);
   }
 };
