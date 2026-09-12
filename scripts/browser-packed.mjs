@@ -495,6 +495,8 @@ function assertIndexedResult(raw, fixture, requests, requestCounts, requestFailu
   assert.equal(new Set(raw?.cold?.workerInputSlotIds).size, raw?.cold?.jobs, "indexed jobs reused a mutable input slot");
   assert.equal(raw?.cold?.workerModuleFlags?.every((provided) => provided), true, "indexed job did not receive the compiled decoder module");
   assert.ok((raw?.cold?.spanCount ?? 0) > 4, "indexed mapper did not emit multiple bounded spans");
+  assert.equal(raw?.cold?.workersAtOpen?.length, 1, "indexed cold preparation did not construct its expected Worker");
+  assert.equal(raw?.cold?.workersAtOpen?.every((worker) => worker.terminated), true, "indexed cold Worker remained alive after preparation resolved");
   assert.equal(raw?.warm?.locateCalls, 0, "indexed warm open reacquired a locator");
   assert.equal(raw?.warm?.networkRequests, 0, "indexed warm open made a network request");
   assert.equal(raw?.warm?.physicalWorkers, 0, "indexed warm open created a decoder Worker");
@@ -503,14 +505,29 @@ function assertIndexedResult(raw, fixture, requests, requestCounts, requestFailu
   assert.equal(raw?.warm?.jobs, 0, "indexed warm open launched a decoder job");
   assert.equal(raw?.warm?.spanCount, 0, "indexed warm open remapped stored PCM");
   assert.deepEqual(raw?.warm?.progress?.stages, ["verifying", "source-ready", "ready"], "indexed warm progress reacquired cold stages");
+  const multiSourceJobs = fixture.sources.length * fixture.sources[0].profile.chunks.length;
+  assert.equal(raw?.serial?.maximumWorkers, 1, "indexed serial comparison used the wrong worker policy");
+  assert.equal(raw?.serial?.physicalWorkers, 1, "indexed serial comparison constructed more than one Worker");
+  assert.equal(raw?.serial?.jobs, multiSourceJobs, "indexed serial comparison did not process every source chunk");
+  assert.deepEqual(raw?.serial?.workerJobCounts, [multiSourceJobs], "indexed serial comparison did not reuse its Worker across sources");
+  assert.equal(raw?.serial?.runnablePeak, 1, "indexed serial comparison reported overlapping runnable workers");
+  assert.equal(raw?.serial?.decoderAssetFetches, 1, "indexed serial comparison fetched more than one decoder asset");
+  assert.equal(raw?.serial?.decoderCompileCalls, 1, "indexed serial comparison compiled more than one decoder module");
+  assert.ok(raw?.serial?.elapsedMs > 0, "indexed serial preparation elapsed time was not recorded");
+  assert.equal(raw?.serial?.workersAtOpen?.length, 1, "indexed serial preparation did not construct its expected Worker");
+  assert.equal(raw?.serial?.workersAtOpen?.every((worker) => worker.terminated), true, "indexed serial Worker remained alive after preparation resolved");
   assert.equal(raw?.concurrent?.physicalWorkers, 2, "eligible indexed sources must use two physical Workers");
-  assert.equal(raw?.concurrent?.jobs, fixture.sources.length * fixture.sources[0].profile.chunks.length, "eligible indexed sources must decode every chunk");
+  assert.equal(raw?.concurrent?.maximumWorkers, 2, "eligible indexed comparison used the wrong worker policy");
+  assert.equal(raw?.concurrent?.jobs, multiSourceJobs, "eligible indexed sources must decode every chunk");
   assert.equal(raw?.concurrent?.processingOverlap, true, "eligible indexed sources never overlapped real Worker PCM processing: " + JSON.stringify(raw?.concurrent));
   assert.ok((raw?.concurrent?.processingOutputWorkers?.length ?? 0) > 1, "eligible indexed sources produced PCM from only one Worker");
   assert.ok(raw?.concurrent?.workerJobCounts?.every((count) => count > 1), "eligible indexed Worker pool did not reuse each Worker");
   assert.equal(raw?.concurrent?.decoderAssetFetches, 1, "concurrent indexed sources must share one decoder asset fetch");
   assert.equal(raw?.concurrent?.decoderCompileCalls, 1, "concurrent indexed sources must share one decoder module compile");
   assert.ok((raw?.concurrent?.runnablePeak ?? 0) > 1, "eligible indexed sources did not overlap worker-side runnable decode sections");
+  assert.ok(raw?.concurrent?.elapsedMs > 0, "indexed concurrent preparation elapsed time was not recorded");
+  assert.equal(raw?.concurrent?.workersAtOpen?.length, 2, "eligible indexed preparation did not construct two Workers");
+  assert.equal(raw?.concurrent?.workersAtOpen?.every((worker) => worker.terminated), true, "indexed concurrent Worker remained alive after preparation resolved");
   assert.deepEqual(raw?.concurrent?.workerResetCounts, fixture.sources.map((source) => source.profile.chunks.length), "concurrent chunks did not complete reset handshakes");
   assert.equal(new Set(raw?.concurrent?.workerInputSlotIds).size, raw?.concurrent?.jobs, "concurrent jobs reused a mutable input slot");
   assert.equal(raw?.concurrent?.workerModuleFlags?.every((provided) => provided), true, "concurrent job did not receive the compiled decoder module");
@@ -524,13 +541,14 @@ function assertIndexedResult(raw, fixture, requests, requestCounts, requestFailu
   assert.deepEqual(raw?.workers?.errors, []);
   assert.deepEqual(requestFailures, []);
   assert.deepEqual(consoleErrors, []);
-  for (const [delivery, expectedCount] of [[fixture.sources[0], 2], [fixture.sources[1], 1], [fixture.silent, 1]]) {
+  for (const [delivery, expectedCount] of [[fixture.sources[0], 3], [fixture.sources[1], 2], [fixture.silent, 1]]) {
     assert.equal(requestCounts.get(delivery.profile.url), expectedCount, `${delivery.profile.name} was fetched an unexpected number of times`);
     assert.equal(requests.get(delivery.profile.url), "application/octet-stream", `${delivery.profile.name} MIME changed`);
   }
   const decoderPaths = [...requests.keys()].filter((path) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm"));
   assert.equal(decoderPaths.length, 1, "decoder Wasm URL changed or was fetched through multiple assets");
   assert.equal(requests.get(decoderPaths[0]), "application/wasm", "decoder Wasm MIME changed");
+  assert.equal(requestCounts.get(decoderPaths[0]), 3, "each native resolver did not fetch its decoder asset exactly once");
   console.log(JSON.stringify({ profile: "indexed-sparse-reuse", origin: `http://127.0.0.1:${port}`,
     sources: fixture.sources.map((delivery) => ({ name: delivery.profile.name, ...delivery.profile })),
     silent: fixture.silent.profile, ...raw, requests: [...requests.entries()], requestCounts: [...requestCounts.entries()], requestFailures, consoleErrors }));
@@ -751,6 +769,10 @@ function counters() {
 function runnablePeaks(phase: RunnablePhase | undefined): number[] {
   return phase === undefined ? [] : [...phase.buffers].map((buffer) => Atomics.load(new Int32Array(buffer), 1));
 }
+function workersAtOpen(before: Counters) {
+  return workerRecords.slice(before.workerCount).filter((worker) => worker.label.includes("flac-worker"))
+    .map((worker) => ({ id: worker.id, jobs: worker.jobs.length, terminated: worker.terminated }));
+}
 function delta(before: Counters) {
   const workers = workerRecords.slice(before.workerCount).filter((worker) => worker.label.includes("flac-worker"));
   const outputJobs = workers.flatMap((worker) => worker.jobs.filter((job) => job.pcmBlocks > 0).map((job) => ({ workerId: worker.id, job })));
@@ -892,6 +914,7 @@ try {
   const coldResolver = resolverFor(1);
   const coldBefore = startPhase();
   const coldLease = await openCold(coldResources.store, coldResolver, first, "cold-source", coldEvents);
+  const coldWorkersAtOpen = workersAtOpen(coldBefore);
   const coldDescriptor = await coldLease.read(first.expected.identity);
   const coldProof = await proveDescriptor(coldDescriptor, first);
   const coldProgress = assertProgress(coldEvents, [first], ["probing", "fetching", "decoding", "ingesting", "source-ready", "ready"]);
@@ -909,21 +932,42 @@ try {
   await warmLease.close();
   await coldResources.store.close();
   coldResources.backend.close();
-  const cold = { ...delta(coldBefore), progress: coldProgress, proof: coldProof };
-  const warm = { ...delta(warmBefore), progress: warmProgress, proof: warmProof };
+  const cold = { ...delta(coldBefore), maximumWorkers: 1, workersAtOpen: coldWorkersAtOpen, progress: coldProgress, proof: coldProof };
+  const warm = { ...delta(warmBefore), maximumWorkers: 0, workersAtOpen: [], progress: warmProgress, proof: warmProof };
+
+  const serialEvents: Record<string, unknown>[] = [];
+  const serialResources = newStore("serial");
+  const serialResolver = resolverFor(1);
+  const serialBefore = startPhase();
+  const serialStartedAt = performance.now();
+  const serialLease = await openConcurrent(serialResources.store, serialResolver, [first, second], serialEvents);
+  const serialElapsedMs = performance.now() - serialStartedAt;
+  const serialWorkersAtOpen = workersAtOpen(serialBefore);
+  const serialProofs = [];
+  for (const source of [first, second]) serialProofs.push(await proveDescriptor(await serialLease.read(source.expected.identity), source));
+  const serialProgress = assertProgress(serialEvents, [first, second], ["probing", "fetching", "decoding", "ingesting", "source-ready", "ready"]);
+  await serialLease.close();
+  await serialResources.store.close();
+  serialResources.backend.close();
+  const serial = { ...delta(serialBefore), maximumWorkers: 1, elapsedMs: serialElapsedMs, workersAtOpen: serialWorkersAtOpen,
+    progress: serialProgress, proofs: serialProofs };
 
   const concurrentEvents: Record<string, unknown>[] = [];
   const concurrentResources = newStore("concurrent");
   const concurrentResolver = resolverFor(2);
   const concurrentBefore = startPhase();
+  const concurrentStartedAt = performance.now();
   const concurrentLease = await openConcurrent(concurrentResources.store, concurrentResolver, [first, second], concurrentEvents);
+  const concurrentElapsedMs = performance.now() - concurrentStartedAt;
+  const concurrentWorkersAtOpen = workersAtOpen(concurrentBefore);
   const concurrentProofs = [];
   for (const source of [first, second]) concurrentProofs.push(await proveDescriptor(await concurrentLease.read(source.expected.identity), source));
   const concurrentProgress = assertProgress(concurrentEvents, [first, second], ["probing", "fetching", "decoding", "ingesting", "source-ready", "ready"]);
   await concurrentLease.close();
   await concurrentResources.store.close();
   concurrentResources.backend.close();
-  const concurrent = { ...delta(concurrentBefore), progress: concurrentProgress, proofs: concurrentProofs };
+  const concurrent = { ...delta(concurrentBefore), maximumWorkers: 2, elapsedMs: concurrentElapsedMs, workersAtOpen: concurrentWorkersAtOpen,
+    progress: concurrentProgress, proofs: concurrentProofs };
 
   const silentEvents: Record<string, unknown>[] = [];
   const silentResources = newStore("silent");
@@ -940,7 +984,7 @@ try {
 
   // Let reset/completion and terminate tasks publish their final browser events before reporting evidence.
   await new Promise((resolve) => setTimeout(resolve, 0));
-  result = { cold, warm, concurrent, silent, workers: { allTerminated: workerRecords.filter((worker) => worker.label.includes("flac-worker")).every((worker) => worker.terminated), records: workerRecords.filter((worker) => worker.label.includes("flac-worker")).map((worker) => ({ id: worker.id, jobs: worker.jobs.length, completions: worker.completions, resetCount: worker.resetCount, terminated: worker.terminated })), errors: workerErrors } };
+  result = { cold, warm, serial, concurrent, silent, workers: { allTerminated: workerRecords.filter((worker) => worker.label.includes("flac-worker")).every((worker) => worker.terminated), records: workerRecords.filter((worker) => worker.label.includes("flac-worker")).map((worker) => ({ id: worker.id, jobs: worker.jobs.length, completions: worker.completions, resetCount: worker.resetCount, terminated: worker.terminated })), errors: workerErrors } };
 } catch (error) {
   failure = error;
 }
