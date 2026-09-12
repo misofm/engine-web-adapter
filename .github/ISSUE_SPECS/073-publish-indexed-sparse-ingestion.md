@@ -15,4 +15,4 @@ Publish `@misofm/engine-web-adapter@0.3.7` so the existing app audio-open seam c
 
 ## Evidence
 
-Pending.
+Registry preflight returned parsed `E404` for 0.3.7. With the frozen lockfile installed, `npm run check` passes all 304 tests plus format, type, source, decoder, and package guards; package policy reports 190 files / 232,846 bytes. `npm publish --dry-run` succeeds with 190 files, 232.8 kB packed, shasum `00030673838ac63d54d74d63497e39c8f65792e4`. The diff is limited to package/lock version, two existing publication workflow literals, current README release text, and this issue record. Merge/registry publication remain pending.
