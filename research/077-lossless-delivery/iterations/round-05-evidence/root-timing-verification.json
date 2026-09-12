@@ -1,0 +1,51 @@
+{
+  "format": "issue77-round5-root-timing-audit-v1",
+  "allChecksPassed": true,
+  "timingSha256": "6d6d431ce02ccea1d49f4c3d4afe7c4b9bf1918eb674535d2851cd6f0eb4521e",
+  "timingFreezeSha256": "a3f06214354c789419b0f74079e2eec3052697752d4d014fe3823d9575034f0c",
+  "logicalStemDecodes": 540,
+  "customSummaryChecks": 360,
+  "nativeChildReceiptChecks": 861,
+  "uniqueFrozenFileChecks": 428,
+  "timedPcmVerifiedByHarness": true,
+  "timedPcmIndependentlyRehashedByRoot": false,
+  "medians": {
+    "flac": {
+      "wallSeconds": 5.77652600791771,
+      "minimumWallSeconds": 5.769952094182372,
+      "maximumWallSeconds": 5.785524971783161,
+      "peakRssKiB": 2816
+    },
+    "wavpack": {
+      "wallSeconds": 11.280595574411564,
+      "minimumWallSeconds": 11.275266546173953,
+      "maximumWallSeconds": 11.28683012491092,
+      "peakRssKiB": 2048
+    },
+    "r3-p3-rans": {
+      "wallSeconds": 55.21298976079561,
+      "minimumWallSeconds": 55.19406446185894,
+      "maximumWallSeconds": 55.2228871738771,
+      "peakRssKiB": 4864
+    },
+    "r5-p0-rans": {
+      "wallSeconds": 15.891522073419765,
+      "minimumWallSeconds": 15.853482521953993,
+      "maximumWallSeconds": 15.893313449108973,
+      "peakRssKiB": 4864
+    },
+    "r5-p1-rans": {
+      "wallSeconds": 48.62086236686446,
+      "minimumWallSeconds": 48.616564821102656,
+      "maximumWallSeconds": 48.62135334999766,
+      "peakRssKiB": 4864
+    },
+    "r5-p2-rans": {
+      "wallSeconds": 38.13220675336197,
+      "minimumWallSeconds": 38.12149142101407,
+      "maximumWallSeconds": 38.132703242241405,
+      "peakRssKiB": 4864
+    }
+  },
+  "completedUtc": "2026-09-12T19:22:47Z"
+}

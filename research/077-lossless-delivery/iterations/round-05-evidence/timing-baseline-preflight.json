@@ -1,0 +1,30 @@
+{
+  "format": "issue77-round5-timing-baseline-preflight-v1",
+  "allChecksPassed": true,
+  "measuredExecution": false,
+  "recipe": {
+    "format": "issue77-round5-timing-baseline-recipe-v1",
+    "allChecksPassed": true,
+    "manifestCount": 30,
+    "flacSha256": "0dc864415c16c4ea729f6c3ce6487f89d85b231cf3f4a8dd66813c10fa2f6b74",
+    "wvunpackSha256": "15ecb12fa24763bc8540ada85dd420694c7bfb3b2b1c7603f8e375be5d95166c"
+  },
+  "artifacts": {
+    "format": "issue77-round5-timing-baseline-preflight-v1",
+    "stemCount": 30,
+    "counts": {
+      "manifests": 30,
+      "r3P3Rice": 30,
+      "r3P3Rans": 30,
+      "r4P2Rice": 30,
+      "r4P2Rans": 30,
+      "flacChunks": 137,
+      "wavpack": 30
+    },
+    "allChecksPassed": true
+  },
+  "r3ResultsSha256": "095d88dbcf2901e25af8ad05b5b90854cb2d831db64541a2135144c49edc641e",
+  "r4ResultsSha256": "9f4452056a6ac93a4a76f3d2820c5a2c224ad987ea08f01c5a55f4b8412b3056",
+  "evidenceResultsSha256": "840f81d2b79dc1f2b5c19dc21318319e9275c2f22c9fc5a010f38a7de6a0b8bf",
+  "evidenceFreezeSha256": "621de3a6baedcde0edc82e0c5f20db2aaea6006c30a2b3f1719cd8efe482e4a1"
+}

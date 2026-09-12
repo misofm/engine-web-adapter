@@ -1,0 +1,90 @@
+{
+  "buildCommands": {
+    "optimizedDriver": "gcc -std=c11 -fno-fast-math -ffp-contract=off -Wall -Wextra -Wconversion -Wshadow -O2 /home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-05/native/round5_integer_driver.c /data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a -lm -o /data/issue-77-lossless/iterations/round-05/round5-integer-driver",
+    "optimizedHelper": "gcc -std=c11 -fno-fast-math -ffp-contract=off -Wall -Wextra -Wconversion -Wshadow -O2 /home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-05/native/round5.c /data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a -lm -o /data/issue-77-lossless/iterations/round-05/round5-helper",
+    "sanitizerDriver": "gcc -std=c11 -fno-fast-math -ffp-contract=off -Wall -Wextra -Wconversion -Wshadow -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined /home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-05/native/round5_integer_driver.c /data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a -lm -o /data/issue-77-lossless/iterations/round-05/round5-integer-driver-san",
+    "sanitizerHelper": "gcc -std=c11 -fno-fast-math -ffp-contract=off -Wall -Wextra -Wconversion -Wshadow -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined /home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-05/native/round5.c /data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a -lm -o /data/issue-77-lossless/iterations/round-05/round5-helper-san"
+  },
+  "command": [
+    "python3",
+    "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-05/test_native.py",
+    "--helper",
+    "/data/issue-77-lossless/iterations/round-05/round5-helper-san",
+    "--driver",
+    "/data/issue-77-lossless/iterations/round-05/round5-integer-driver-san"
+  ],
+  "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "completedUtc": "2026-09-12T18:33:58.302487Z",
+  "environment": {
+    "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "UBSAN_OPTIONS": "halt_on_error=1"
+  },
+  "flags": "-std=c11 -fno-fast-math -ffp-contract=off -Wall -Wextra -Wconversion -Wshadow -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined",
+  "format": "issue77-round5-native-test-receipt-v1",
+  "inputs": {
+    "driver": {
+      "path": "/data/issue-77-lossless/iterations/round-05/round5-integer-driver-san",
+      "sha256": "376aac3c3b8906093128d4a90db741113949075a7f91cc1cd23e3cc58109f9eb"
+    },
+    "gcc": {
+      "path": "/usr/bin/x86_64-linux-gnu-gcc-13",
+      "sha256": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26"
+    },
+    "helper": {
+      "path": "/data/issue-77-lossless/iterations/round-05/round5-helper-san",
+      "sha256": "f91c1edfa55ecdb3a0bf7ef40cc5390acbf2129d71aa76c0001177f316441b0a"
+    },
+    "libFLAC.a": {
+      "path": "/data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a",
+      "sha256": "a485b5d7e8f5cec078c954e8d8cc7ab02af4e5e172024a149ce6b6f941921026"
+    },
+    "libm.so.6": {
+      "path": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "sha256": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0"
+    },
+    "round1.c": {
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-01/native/round1.c",
+      "sha256": "9d90b5ed1eda3d58d3b5209fc9caeb48e04959760ddd8cc86e53c333a2de8f0a"
+    },
+    "round2.c": {
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-02/native/round2.c",
+      "sha256": "9dc86f2423fd7aba13e8a9e3058448dd36c0f6c53b144ec17f283cd4c88cf960"
+    },
+    "round3.c": {
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/native/round3.c",
+      "sha256": "f1cb8f3b9f22266631c6dd3886cda935c7ae0a59c7852fc58c4b958f25feec03"
+    },
+    "round3_test_native.py": {
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/test_native.py",
+      "sha256": "3c3fdbb84a61a26dca56c28eb8d630c5c3cdd218446c94289523ffdd4d4108d7"
+    },
+    "round4.c": {
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/native/round4.c",
+      "sha256": "ff24a34a4baa96efb3a24d995cbb4fc52253f183381cec3106e1fa2b61288033"
+    },
+    "round4_test_native.py": {
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/test_native.py",
+      "sha256": "afecc96428c343bcda7b96ae29f63b7d2e514bf263cb90e3155b8a6ebd6d5c7e"
+    },
+    "round5.c": {
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-05/native/round5.c",
+      "sha256": "fe72d12dcaa475cc3f864ff10fe37fa5afd7a66374f2a4c839ef36c1d552eb8a"
+    },
+    "round5_integer_driver.c": {
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-05/native/round5_integer_driver.c",
+      "sha256": "c63d7f4ccf315cadfb928f8c17f788a26a9c0b17a0f6858d123fe5c18fd8f222"
+    },
+    "test_native.py": {
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-05/test_native.py",
+      "sha256": "d9588292af8f7e7a1d33bf023ba5359ccd5c67b72d0b4dd888f5cd2c7b9944a7"
+    }
+  },
+  "label": "asan-ubsan",
+  "platform": "Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
+  "returnCode": 0,
+  "status": "pass",
+  "stderr": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.955s\n\nOK\n",
+  "stdout": "",
+  "testCount": 3
+}
