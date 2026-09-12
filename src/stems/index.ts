@@ -15,6 +15,7 @@ export { MemoryStemStorageBackend, OpfsStorageBackend } from "./storage.js";
 export { OpfsStemStore, VerifiedStemStore } from "./store.js";
 export { BoundedStemAdmission } from "./flac-admission.js";
 export { createFlacStemResolver } from "./flac-resolver.js";
+export { createSparseStemResolver } from "./sparse-resolver.js";
 export { MSB1_CONTROL } from "./ring.js";
 export { PcmPumpWorkerClient } from "./worker-client.js";
 export type { PcmPumpSource, SparsePcmPumpSource, SparsePcmPumpOptions } from "./pump.js";
@@ -26,6 +27,7 @@ export type { Msb1RingCounters } from "./ring.js";
 export type { OpfsWorkerLike } from "./opfs-worker-protocol.js";
 export type { FlacProcessingOptions, StemAdmissionLease } from "./flac-admission.js";
 export type { FlacLocator, FlacRangeAttempt } from "./flac-delivery.js";
+export type { SparseStemLocator, SparseStemDeliveryOptions } from "./sparse-resolver.js";
 export type { FlacDeliveryOptions } from "./flac-resolver.js";
 export type {
   StemStorageBackend,

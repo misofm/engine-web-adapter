@@ -9,11 +9,13 @@ import { assertStemIdentity } from "./identity.js";
 import { readExactFlacRangeEffect, type FlacLocator } from "./flac-delivery.js";
 import { FLAC_INPUT_SLOT_BYTES, FlacInputSlotProducer } from "./flac-input-slot.js";
 import { FlacWorkerPool, type FlacWorkerPoolOptions } from "./flac-worker-pool.js";
+import { IncrementalSha256 } from "./sha256.js";
 import {
   DecoderByteSourceError,
   makeDecoderByteSource,
   type DecoderByteSource,
   type DecoderByteSourceOptions,
+  type FiniteDecoderByteSourceFactory,
 } from "./decoder-byte-source.js";
 import type { FlacWorkerLike, FlacWorkerResponse } from "./flac-worker-protocol.js";
 import type { ResolvedStem, StemIdentity, StemProgress, StemResolver } from "./types.js";
@@ -126,10 +128,90 @@ export function createFlacStemResolverWithSource(options: FlacDeliveryOptions, s
   return makeFlacStemResolver(options, undefined, undefined, undefined, undefined, sourceFactory);
 }
 
-type DecoderByteSourceFactory = (options: DecoderByteSourceOptions) => DecoderByteSource;
+export type DecoderByteSourceFactory = (options: DecoderByteSourceOptions) => DecoderByteSource;
 
-function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: IngestDiagnostics, sharedPool?: FlacWorkerPool, sharedDownloads?: BoundedStemAdmission, sharedVerification?: BoundedStemAdmission, sourceFactory: DecoderByteSourceFactory = makeDecoderByteSource): StemResolver {
-  if (typeof options.locate !== "function") throw new TypeError("createFlacStemResolver requires locate");
+type FlacResolverOptions = Omit<FlacDeliveryOptions, "locate"> & { readonly locate?: FlacLocator };
+
+/** A PCM block borrowed from the private chunk consumer. */
+export interface BorrowedFlacPcm {
+  readonly bytes: Uint8Array;
+  readonly release: () => void;
+}
+
+/**
+ * The private indexed-acquisition seam. It is deliberately not exported from
+ * `./stems`; the full-response resolver owns the source factory and consumes
+ * the borrowed stream one chunk at a time.
+ */
+export interface FlacChunkDecodeOptions extends Omit<FlacDeliveryOptions, "locate"> {
+  readonly sourceFactory: FiniteDecoderByteSourceFactory;
+  readonly diagnostics?: IngestDiagnostics;
+  readonly workerPool?: FlacWorkerPool;
+  readonly downloadAdmission?: BoundedStemAdmission;
+  readonly verificationAdmission?: BoundedStemAdmission;
+  /** Identity used for worker diagnostics and all operation failures. */
+  readonly wholeSourceIdentity: StemIdentity;
+  /** Shape of this packed chunk, independent of the whole source identity. */
+  readonly chunk: Readonly<{
+    readonly expected: import("./types.js").CanonicalPcmExpectation;
+    /** Host-computed expected digest for this chunk's packed PCM. */
+    readonly pcmSha256: string;
+  }>;
+}
+
+export interface ResolvedFlacChunk {
+  /** One borrowed block at a time; release returns the shared worker credit. */
+  readonly output: ReadableStream<BorrowedFlacPcm>;
+  readonly expectedFrames: number;
+  readonly totalPcmBytes: number;
+}
+
+/** @internal Private same-controller invocation for indexed full-response acquisition. */
+export function createFlacStemChunkResolver(options: FlacChunkDecodeOptions): {
+  resolve(signal?: AbortSignal): Promise<ResolvedFlacChunk>;
+} {
+  if (!/^[a-f0-9]{64}$/u.test(options.chunk.pcmSha256)) {
+    throw new RangeError("private FLAC chunk PCM digest must be lowercase SHA-256");
+  }
+  const resolver = makeFlacStemResolver(options, options.diagnostics, options.workerPool,
+    options.downloadAdmission, options.verificationAdmission, options.sourceFactory, {
+    mode: "borrowed", wholeSourceIdentity: options.wholeSourceIdentity, chunk: options.chunk,
+  });
+  return {
+    resolve(signal) {
+      return resolver.resolve(options.wholeSourceIdentity, {
+        ...(signal === undefined ? {} : { signal }), expected: options.chunk.expected,
+      });
+    },
+  };
+}
+
+interface FlacDecodeInvocationLegacy {
+  readonly mode: "legacy";
+}
+
+interface FlacDecodeInvocationBorrowed {
+  readonly mode: "borrowed";
+  readonly wholeSourceIdentity: StemIdentity;
+  readonly chunk: FlacChunkDecodeOptions["chunk"];
+}
+
+type FlacDecodeInvocation = FlacDecodeInvocationLegacy | FlacDecodeInvocationBorrowed;
+
+interface FlacResolveOptions {
+  readonly signal?: AbortSignal;
+  readonly onProgress?: (progress: StemProgress) => void;
+  readonly expected?: import("./types.js").CanonicalPcmExpectation;
+}
+
+interface PrivateFlacResolver {
+  resolve(identity: StemIdentity, options?: FlacResolveOptions): Promise<ResolvedFlacChunk>;
+}
+
+function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: IngestDiagnostics, sharedPool?: FlacWorkerPool, sharedDownloads?: BoundedStemAdmission, sharedVerification?: BoundedStemAdmission, sourceFactory?: DecoderByteSourceFactory, invocation?: FlacDecodeInvocationLegacy): StemResolver;
+function makeFlacStemResolver(options: FlacResolverOptions, diagnostics: IngestDiagnostics | undefined, sharedPool: FlacWorkerPool | undefined, sharedDownloads: BoundedStemAdmission | undefined, sharedVerification: BoundedStemAdmission | undefined, sourceFactory: DecoderByteSourceFactory, invocation: FlacDecodeInvocationBorrowed): PrivateFlacResolver;
+function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: IngestDiagnostics, sharedPool?: FlacWorkerPool, sharedDownloads?: BoundedStemAdmission, sharedVerification?: BoundedStemAdmission, sourceFactory: DecoderByteSourceFactory = makeDecoderByteSource, invocation: FlacDecodeInvocation = { mode: "legacy" }): StemResolver | PrivateFlacResolver {
+  if (invocation.mode === "legacy" && typeof options.locate !== "function") throw new TypeError("createFlacStemResolver requires locate");
   const decodeNoProgressMs = options.decodeNoProgressMs ?? 30_000;
   if (!Number.isSafeInteger(decodeNoProgressMs) || decodeNoProgressMs < 1) {
     throw new RangeError("decodeNoProgressMs must be positive");
@@ -138,7 +220,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
   const downloads = sharedDownloads ?? new BoundedStemAdmission(widths.downloads);
   const verification = sharedVerification ?? new BoundedStemAdmission(widths.verification);
   configureProcessingDiagnostics(diagnostics, widths);
-  const workerHashes = options.processing !== undefined && options.createWorker === undefined &&
+  const workerHashes = invocation.mode === "legacy" && options.processing !== undefined && options.createWorker === undefined &&
     options.assets?.createWorker === undefined && options.assets?.flacWorkerUrl === undefined &&
     options.assets?.flacDecoderWasmUrl === undefined;
   const poolOptions: FlacWorkerPoolOptions = {
@@ -152,9 +234,11 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
     ...(options.maximumWorkers === undefined ? {} : { maximumWorkers: options.maximumWorkers }),
   };
   const pool = sharedPool ?? new FlacWorkerPool(poolOptions);
-  const resolver: StemResolver = {
-    resolve(identity, resolveOptions = {}): Promise<ResolvedStem> {
-      assertStemIdentity(identity);
+  const runResolve = (identity: StemIdentity, resolveOptions: FlacResolveOptions = {}):
+    Promise<ResolvedStem | ResolvedFlacChunk> => {
+      const chunk = invocation.mode === "borrowed" ? invocation.chunk : undefined;
+      const parentIdentity = invocation.mode === "borrowed" ? invocation.wholeSourceIdentity : identity;
+      assertStemIdentity(parentIdentity);
       const controller = new AbortController();
       const requestId = nextRequestId++;
       let worker: FlacWorkerLike | undefined;
@@ -165,10 +249,18 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
       let resumeConsumer: (() => void) | undefined;
       let runnable: ReturnType<typeof ownRunnableWorker>;
       const blocks: ArrayBuffer[] = [];
+      let checkedOut: { readonly buffer: ArrayBuffer; readonly release: () => void } | undefined;
+      let borrowOutput: ((buffer: ArrayBuffer) => BorrowedFlacPcm) | undefined;
       const retainRange = deliveredRangeOwner(diagnostics);
       const discardBlocks = () => {
         let block: ArrayBuffer | undefined;
         while ((block = blocks.shift()) !== undefined) releaseDecoded(block);
+        checkedOut?.release();
+      };
+      const releaseBorrowedOutput = (buffer: ArrayBuffer) => {
+        const owner = checkedOut;
+        if (owner?.buffer === buffer) owner.release();
+        else releaseDecoded(buffer);
       };
       let wake: (() => void) | undefined;
       const notify = () => { const current = wake; wake = undefined; current?.(); };
@@ -181,10 +273,11 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
       );
       const cancel = (reason: unknown) => {
         const error = cancelled(reason);
-        discardBlocks();
         decoderInput?.abort();
-        if (stopActive === undefined) controller.abort(error);
-        else stopActive(error, true);
+        if (stopActive === undefined) {
+          discardBlocks();
+          controller.abort(error);
+        } else stopActive(error, true);
       };
       const abort = () => cancel(resolveOptions.signal?.reason);
       if (resolveOptions.signal?.aborted) abort();
@@ -202,6 +295,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           let stopping = false;
           let decodedBytes = 0;
           let decodedFrames = 0;
+          const hostPcmHash = chunk === undefined ? undefined : new IncrementalSha256();
           let networkPending = 0;
           const deliveryState: { totalBytes?: number; etag?: string } = {};
           type InputCommand =
@@ -235,7 +329,7 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           const resetWatchdog = (phase: "decoder-load" | "metadata" | "frame" | "finish") => {
             if (watchdog !== undefined) clearTimeout(watchdog);
             watchdog = undefined;
-            if (stopping || networkPending > 0 || sourcePending > 0 || blocks.length >= 2) return;
+            if (stopping || networkPending > 0 || sourcePending > 0 || blocks.length + (checkedOut === undefined ? 0 : 1) >= 2) return;
             watchdog = setTimeout(() => stop(new EngineWebAdapterError(
               "stem.decode.stall", `FLAC decoder made no progress for ${decodeNoProgressMs}ms`,
               { identity, phase, milliseconds: decodeNoProgressMs, retryable: false },
@@ -280,6 +374,28 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             });
           };
           stopActive = stop;
+          const takeBorrowed = (buffer: ArrayBuffer): BorrowedFlacPcm => {
+            let released = false;
+            const owned = {
+              buffer,
+              release: () => {
+                if (released) return;
+                released = true;
+                if (checkedOut?.buffer === buffer) checkedOut = undefined;
+                releaseDecoded(buffer);
+                // Completion closes production. A release racing terminal
+                // settlement must never enqueue a late credit.
+                if (!stopping && !terminal && worker === physical) {
+                  try { physical.postMessage({ type: "output-credit", requestId }); } catch { /* terminal cleanup wins */ }
+                }
+                resumeConsumer?.();
+                notify();
+              },
+            };
+            checkedOut = owned;
+            return { bytes: new Uint8Array(buffer), release: owned.release };
+          };
+          borrowOutput = takeBorrowed;
           const onWorkerFailure = (event: ErrorEvent) => stop(new EngineWebAdapterError(
             "stem.decode.worker", event.message || "FLAC Worker stopped unexpectedly", {}, event.error,
           ), false);
@@ -287,11 +403,12 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
             new EngineWebAdapterError("stem.decode.worker", "FLAC Worker reply could not be cloned"),
             false,
           );
-          const range = (phase: "probe" | "metadata" | "audio", start: number, end: number) => {
+          const locate = options.locate;
+          const range = locate === undefined ? undefined : (phase: "probe" | "metadata" | "audio", start: number, end: number) => {
             networkPending += 1;
             resetWatchdog("frame");
             return readExactFlacRangeEffect({
-            locate: options.locate,
+            locate,
             ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
             ...(options.readDeadlineMs === undefined ? {} : { readDeadlineMs: options.readDeadlineMs }),
             ...(options.maximumAttempts === undefined ? {} : { maximumAttempts: options.maximumAttempts }),
@@ -310,18 +427,32 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           };
           const inputProgram = Effect.scoped(Effect.gen(function*() {
             yield* Effect.addFinalizer(() => Effect.sync(releaseBorrow));
-            const source = sourceFactory({
+            const sourceOptions = {
               identity,
               borrow: { adopt: adoptBorrow, release: releaseBorrow },
-              range,
-              ...(resolveOptions.expected === undefined ? {} : { expected: resolveOptions.expected }),
-            });
+              ...(range === undefined ? {} : { range }),
+              ...(chunk?.expected ?? resolveOptions.expected) === undefined ? {} :
+                { expected: chunk?.expected ?? resolveOptions.expected },
+            };
+            const source = sourceFactory(sourceOptions);
             let initialized = false;
             for (;;) {
               const command = yield* Queue.take(inputQueue);
               if (command.type === "ready") {
                 if (initialized) return yield* new DecoderByteSourceError({ operation: "prepare", message: "FLAC Worker sent ready twice" });
                 preparedMetadata = yield* runSource(source.prepare, "metadata");
+                if (chunk !== undefined && (
+                  preparedMetadata.streamInfo.sampleRateHz !== chunk.expected.sampleRateHz ||
+                  preparedMetadata.streamInfo.channels !== chunk.expected.channels ||
+                  preparedMetadata.streamInfo.bitDepth !== chunk.expected.bitDepth ||
+                  preparedMetadata.expectedFrames !== chunk.expected.frames ||
+                  preparedMetadata.totalPcmBytes !== chunk.expected.canonicalBytes
+                )) {
+                  return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "FLAC chunk preparation does not match its declared shape", {
+                    identity, expectedFrames: chunk.expected.frames,
+                    expectedPcmBytes: chunk.expected.canonicalBytes,
+                  }));
+                }
                 initialized = true;
                 try {
                   physical.postMessage({
@@ -352,6 +483,8 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
                 const message = command.message;
                 if (message.pcmBytes !== decodedBytes || message.frames !== decodedFrames ||
                   (options.processing !== undefined && (decodedBytes !== preparedMetadata!.totalPcmBytes || decodedFrames !== preparedMetadata!.expectedFrames)) ||
+                  (chunk !== undefined && (decodedBytes !== chunk.expected.canonicalBytes || decodedFrames !== chunk.expected.frames ||
+                    hostPcmHash?.digestHex() !== chunk.pcmSha256)) ||
                   (workerHashes && (message.digest !== identity.slice(7) || !/^[a-f0-9]{64}$/u.test(message.digest)))) {
                   return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "FLAC Worker completion does not verify canonical PCM", { identity }));
                 }
@@ -386,13 +519,21 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               }
               enqueue({ type: "input-credit", message });
             } else if (message.type === "pcm") {
-              if (terminal || !(message.bytes instanceof ArrayBuffer) || message.bytes.byteLength > MAXIMUM_CANONICAL_OUTPUT_BYTES || blocks.length >= 2) {
+              const expected = chunk?.expected;
+              const frameBytes = expected === undefined ? 0 : expected.channels * (expected.bitDepth / 8);
+              if (terminal || !(message.bytes instanceof ArrayBuffer) || (chunk !== undefined && message.bytes.byteLength < 1) ||
+                message.bytes.byteLength > MAXIMUM_CANONICAL_OUTPUT_BYTES ||
+                blocks.length + (checkedOut === undefined ? 0 : 1) >= 2 ||
+                (expected !== undefined && (!Number.isSafeInteger(message.frames) || message.frames < 1 ||
+                  frameBytes < 1 || message.bytes.byteLength % frameBytes !== 0 ||
+                  message.frames !== message.bytes.byteLength / frameBytes))) {
                 stop(new EngineWebAdapterError("stem.decode.worker", "FLAC Worker exceeded two unconsumed PCM outputs", {
                   identity, limit: 2,
                 }), true);
                 return;
               }
               retainDecoded(diagnostics, message.bytes);
+              hostPcmHash?.update(message.bytes);
               blocks.push(message.bytes);
               decodedBytes += message.bytes.byteLength;
               decodedFrames += message.frames;
@@ -435,7 +576,8 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
               inputSlot: decoderInput!.buffers,
               verifyPcm: workerHashes,
               ...(runnable === undefined ? {} : { runnable: runnable.buffer, runnableMask: runnable.mask }),
-              ...(resolveOptions.expected === undefined ? {} : { expected: resolveOptions.expected }),
+              ...(chunk === undefined && resolveOptions.expected === undefined ? {} :
+                { expected: chunk?.expected ?? resolveOptions.expected }),
             });
           } catch (error) { stop(error, false); }
         }),
@@ -452,17 +594,49 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
         resolveOptions.signal?.removeEventListener("abort", abort);
       });
 
-      const stream = new ReadableStream<Uint8Array>({
+      if (invocation.mode === "legacy") {
+        const stream = new ReadableStream<Uint8Array>({
+          cancel(reason) { cancel(reason); return workflow; },
+          async pull(streamController) {
+            for (;;) {
+              const block = blocks.shift();
+              if (block !== undefined) {
+                try {
+                  streamController.enqueue(new Uint8Array(block));
+                } catch (error) { releaseDecoded(block); throw error; }
+                worker?.postMessage({ type: "output-credit", requestId });
+                resumeConsumer?.();
+                return;
+              }
+              if (failure !== undefined) throw failure;
+              if (ended) { streamController.close(); return; }
+              await new Promise<void>((resolve) => { wake = resolve; });
+            }
+          },
+        }, { highWaterMark: 0 });
+        const resolved: ResolvedStem = {
+          stream,
+          ...(resolveOptions.expected === undefined ? {} : { canonicalBytes: resolveOptions.expected.canonicalBytes }),
+        };
+        registerFlacResult(resolved, workerHashes ? () => verifiedDigest : undefined);
+        return Promise.resolve<ResolvedStem>(resolved);
+      }
+
+      const output = new ReadableStream<BorrowedFlacPcm>({
         cancel(reason) { cancel(reason); return workflow; },
         async pull(streamController) {
           for (;;) {
+            if (checkedOut !== undefined) {
+              await new Promise<void>((resolve) => { wake = resolve; });
+              continue;
+            }
             const block = blocks.shift();
             if (block !== undefined) {
-              try {
-                streamController.enqueue(new Uint8Array(block));
-              } catch (error) { releaseDecoded(block); throw error; }
-              worker?.postMessage({ type: "output-credit", requestId });
-              resumeConsumer?.();
+              try { streamController.enqueue(borrowOutput!(block)); }
+              catch (error) {
+                releaseBorrowedOutput(block);
+                throw error;
+              }
               return;
             }
             if (failure !== undefined) throw failure;
@@ -471,15 +645,34 @@ function makeFlacStemResolver(options: FlacDeliveryOptions, diagnostics?: Ingest
           }
         },
       }, { highWaterMark: 0 });
-      const resolved: ResolvedStem = {
-        stream,
-        ...(resolveOptions.expected === undefined ? {} : { canonicalBytes: resolveOptions.expected.canonicalBytes }),
+      const resolved: ResolvedFlacChunk = {
+        output,
+        expectedFrames: invocation.chunk.expected.frames,
+        totalPcmBytes: invocation.chunk.expected.canonicalBytes,
       };
-      registerFlacResult(resolved, workerHashes ? () => verifiedDigest : undefined);
-      return Promise.resolve(resolved);
+      return Promise.resolve<ResolvedFlacChunk>(resolved);
+    };
+
+  if (invocation.mode === "legacy") {
+    const resolver: StemResolver = {
+      resolve(identity, resolveOptions = {}) {
+        return runResolve(identity, resolveOptions).then(result => {
+          if ("stream" in result) return result;
+          throw new Error("legacy FLAC resolver returned private output");
+        });
+      },
+    };
+    registerFlacResolver(resolver, collector => makeFlacStemResolver(options, collector, pool, downloads, verification, sourceFactory, invocation),
+      options.processing === undefined ? undefined : { limit: widths.processing, verification });
+    return resolver;
+  }
+  const resolver: PrivateFlacResolver = {
+    resolve(identity, resolveOptions = {}) {
+      return runResolve(identity, resolveOptions).then(result => {
+        if ("output" in result) return result;
+        throw new Error("private FLAC resolver returned legacy output");
+      });
     },
   };
-  registerFlacResolver(resolver, collector => makeFlacStemResolver(options, collector, pool, downloads, verification),
-    options.processing === undefined ? undefined : { limit: widths.processing, verification });
   return resolver;
 }
