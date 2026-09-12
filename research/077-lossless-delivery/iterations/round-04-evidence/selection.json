@@ -1,0 +1,21 @@
+{
+  "format": "issue77-round4-selection-v1",
+  "profiles": [
+    {
+      "profile": 2,
+      "ransBytes": 65283171
+    },
+    {
+      "profile": 1,
+      "ransBytes": 65296102
+    }
+  ],
+  "selectedProfile": 2,
+  "pilotIdentities": [
+    "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+    "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+    "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+    "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+  ],
+  "pilotResultsSha256": "d3872fd71c3bf6f73769d90650ccfebb847251f0c13b7a81ac9ce6e063b6d273"
+}

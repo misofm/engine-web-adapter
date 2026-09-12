@@ -1,0 +1,102 @@
+{
+  "format": "issue77-round2-hash-index-v2",
+  "pathBase": "/home/bl/misofm/engine-web-adapter",
+  "evidenceRoot": "research/077-lossless-delivery/iterations/round-02-evidence",
+  "scratchRoot": "/data/issue-77-lossless/iterations/round-02",
+  "files": {
+    "research/077-lossless-delivery/iterations/round-02-evidence/freeze.json": {
+      "bytes": 13135,
+      "sha256": "a89e22f202263fa7368e0ff03102f7ad590979d1b9f3be6afa4e2f57c55140a1"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/per-session.csv": {
+      "bytes": 190,
+      "sha256": "ac29a91d61d5323480f4ffe06677cbfc4dd00108ecde9eab60ca85f1b5fa9a20"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/per-stem.csv": {
+      "bytes": 15628,
+      "sha256": "ed8ce027be8a16edbc2c0c1d8808b7f730691841ad78a717066ff4ab12425eff"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/pilot-per-session.csv": {
+      "bytes": 181,
+      "sha256": "626e732adf39b2ab82bdcf9ef6864fbb44aa4147769f3b10f035952656296e11"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/pilot-per-stem.csv": {
+      "bytes": 2232,
+      "sha256": "411e7881a446fe6f855a82de8096a19c2e4661b3f7ffd9c266b0fdcbacc8259e"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/pilot-results.json": {
+      "bytes": 19581,
+      "sha256": "10993562612c885d6d6efbb7175078ad54a42f4848331128a9edda8ec77f7420"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/pilot-totals.csv": {
+      "bytes": 156,
+      "sha256": "93d3de8e08e62548b214d483d899a0d79ad91d23e91afb1ef9be6dff36201327"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/results.json": {
+      "bytes": 131899,
+      "sha256": "613890624a56ca2d0487aafa863557712c6ae0104e21514ce12be35409b514ca"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/root-verification.json": {
+      "bytes": 38692,
+      "sha256": "5fa184372a743be3c007b02a4e40bd6d575f68a164ad8145e6069b26dffd0ec6"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/timing-freeze.json": {
+      "bytes": 2898,
+      "sha256": "10021d9842afe5cb15d0164bbf43613f4baba6eb4c0362327881a04471881368"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/timing.json": {
+      "bytes": 43130,
+      "sha256": "a56338e2df9d5acaa83948bd20400290a321ede1df7049b65b3fc0fea689f409"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/totals.csv": {
+      "bytes": 163,
+      "sha256": "4e54b80c327695241f11e3372a2bf1dd909a137756096db08773ed026dc11999"
+    },
+    "research/077-lossless-delivery/iterations/round-02-evidence/validation.json": {
+      "bytes": 6877,
+      "sha256": "16e4828cc887765c92e5d54cbab44f448f2f3570c39d9a68357c4df2235f7457"
+    },
+    "research/077-lossless-delivery/iterations/round-02-report.md": {
+      "bytes": 6092,
+      "sha256": "db835b989ccbea69420ce1d51e73dff79fa96236bf0f583b77d7e3ae1d68136e"
+    },
+    "research/077-lossless-delivery/iterations/round-02/REPRODUCTION.md": {
+      "bytes": 4408,
+      "sha256": "07fa6587688100afecbca2ffa61180475234f244d47fd998e8bbea1747745264"
+    },
+    "research/077-lossless-delivery/iterations/round-02/native/round2.c": {
+      "bytes": 68567,
+      "sha256": "9dc86f2423fd7aba13e8a9e3058448dd36c0f6c53b144ec17f283cd4c88cf960"
+    },
+    "research/077-lossless-delivery/iterations/round-02/round2.py": {
+      "bytes": 28398,
+      "sha256": "18348582d1301b95207aef977e2a108f7be35c0c3babc574a0272f8ae9189480"
+    },
+    "research/077-lossless-delivery/iterations/round-02/timing.py": {
+      "bytes": 9754,
+      "sha256": "2bad9da68316da075abcd31f0650cfb34238ef52b7c911c2ae3dec8d9b4e47f8"
+    },
+    "research/077-lossless-delivery/iterations/round-02/test_native.py": {
+      "bytes": 41700,
+      "sha256": "d2ff4220bc1a9dccd81ce47ec12d7dfea657928d1b40d222b294aeb8128518c5"
+    },
+    "research/077-lossless-delivery/iterations/round-02-scope.md": {
+      "bytes": 13678,
+      "sha256": "a86267983d2496c9dc569a5883ee57b445cc8bd0b904bba785d9e7f97fb41155"
+    },
+    "research/077-lossless-delivery/iterations/round-01/native/round1.c": {
+      "bytes": 54829,
+      "sha256": "9d90b5ed1eda3d58d3b5209fc9caeb48e04959760ddd8cc86e53c333a2de8f0a"
+    },
+    "research/077-lossless-delivery/iterations/round-02/root_audit.py": {
+      "bytes": 5426,
+      "sha256": "3dcc5920b0a8e97312cea0b34f5a35c46b47d16c643fd8f118335897e4e72e45"
+    }
+  },
+  "scratchReceipts": {
+    "pilot": "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot-results.json",
+    "full": "/data/issue-77-lossless/iterations/round-02/final-full2/results.json",
+    "timing": "/data/issue-77-lossless/iterations/round-02/timing-final5/timing.json",
+    "timingFreeze": "/data/issue-77-lossless/iterations/round-02/timing-final5/timing-freeze.json"
+  }
+}

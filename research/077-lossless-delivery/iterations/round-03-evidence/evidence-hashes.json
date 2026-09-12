@@ -1,0 +1,320 @@
+{
+  "format": "issue77-round3-evidence-hashes-v2",
+  "createdUtc": "2026-09-12T17:13:40Z",
+  "pathBases": {
+    "repo": "/home/bl/misofm/engine-web-adapter",
+    "evidence": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence",
+    "scratch": "/data/issue-77-lossless/iterations/round-03",
+    "tooling": "/data/issue-77-lossless/tooling"
+  },
+  "files": {
+    "full-freeze.json": {
+      "base": "evidence",
+      "relativePath": "full-freeze.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/full-freeze.json",
+      "bytes": 13454,
+      "sha256": "4aab18dbc93f457f280596bee3ba11398da68c4408ba3d6b697ade6b6a650265"
+    },
+    "full-per-session.csv": {
+      "base": "evidence",
+      "relativePath": "full-per-session.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/full-per-session.csv",
+      "bytes": 294,
+      "sha256": "07c782b0d83a1852106e02070e26b671dcf77f0e48cdf182033f30d9f2c42970"
+    },
+    "full-per-stem.csv": {
+      "base": "evidence",
+      "relativePath": "full-per-stem.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/full-per-stem.csv",
+      "bytes": 11678,
+      "sha256": "700f2a30670d4f5c06fff2197fba446265de87a20a337367e051adac1af979b6"
+    },
+    "full-results.json": {
+      "base": "evidence",
+      "relativePath": "full-results.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/full-results.json",
+      "bytes": 331920,
+      "sha256": "095d88dbcf2901e25af8ad05b5b90854cb2d831db64541a2135144c49edc641e"
+    },
+    "integer-reference-opt.json": {
+      "base": "evidence",
+      "relativePath": "integer-reference-opt.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/integer-reference-opt.json",
+      "bytes": 1535,
+      "sha256": "8767ccc9195a48730d87b1eb1290624e7a5ae8c55924b8acdeadb8264664a7aa"
+    },
+    "integer-reference-san.json": {
+      "base": "evidence",
+      "relativePath": "integer-reference-san.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/integer-reference-san.json",
+      "bytes": 1707,
+      "sha256": "4d3a2e6ea0f400ae52677e6a2ba7aa428247347760f9c53d3a64958ea6bc692a"
+    },
+    "integerDriver": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03/native/round3_integer_driver.c",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/native/round3_integer_driver.c",
+      "bytes": 9185,
+      "sha256": "466ea081a95af51afd82d108ef82ab106445bf186d479d2f6d42a13e4a9b3cf8"
+    },
+    "integerOptimizedDriver": {
+      "base": "scratch",
+      "relativePath": "integer-audit-opt/round3-integer",
+      "path": "/data/issue-77-lossless/iterations/round-03/integer-audit-opt/round3-integer",
+      "bytes": 256880,
+      "sha256": "f1aa3474e84857828fe9355dc7084633bfea142e275510eca2aebe80e4d4bde6"
+    },
+    "integerOptimizedGeneratedSource": {
+      "base": "scratch",
+      "relativePath": "integer-audit-opt/round3_integer_source.c",
+      "path": "/data/issue-77-lossless/iterations/round-03/integer-audit-opt/round3_integer_source.c",
+      "bytes": 30978,
+      "sha256": "227de9802b456c10ca2a3182d92378ba5b6f2bd63f53217ba9e996f799441934"
+    },
+    "integerSanitizedDriver": {
+      "base": "scratch",
+      "relativePath": "integer-audit-san/round3-integer-san",
+      "path": "/data/issue-77-lossless/iterations/round-03/integer-audit-san/round3-integer-san",
+      "bytes": 1446808,
+      "sha256": "2ef45917e4d4e7127565c78854df923c228a8b92bce001eafb3edae145fa054c"
+    },
+    "integerSanitizedGeneratedSource": {
+      "base": "scratch",
+      "relativePath": "integer-audit-san/round3_integer_source.c",
+      "path": "/data/issue-77-lossless/iterations/round-03/integer-audit-san/round3_integer_source.c",
+      "bytes": 30978,
+      "sha256": "227de9802b456c10ca2a3182d92378ba5b6f2bd63f53217ba9e996f799441934"
+    },
+    "integerTests": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03/test_integer.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/test_integer.py",
+      "bytes": 12834,
+      "sha256": "46571c7b88c300d85abc8708efd3b62595006c09328c6f0aee9421677bb02af2"
+    },
+    "libFLAC": {
+      "base": "tooling",
+      "relativePath": "flac-build/src/libFLAC/libFLAC.a",
+      "path": "/data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a",
+      "bytes": 563712,
+      "sha256": "a485b5d7e8f5cec078c954e8d8cc7ab02af4e5e172024a149ce6b6f941921026"
+    },
+    "nativeTests": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03/test_native.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/test_native.py",
+      "bytes": 17060,
+      "sha256": "3c3fdbb84a61a26dca56c28eb8d630c5c3cdd218446c94289523ffdd4d4108d7"
+    },
+    "optimizedHelper": {
+      "base": "scratch",
+      "relativePath": "round3-helper",
+      "path": "/data/issue-77-lossless/iterations/round-03/round3-helper",
+      "bytes": 248200,
+      "sha256": "f42afa201f29d6d9ff0e8789df2856b1409b88f1379e9379db1ec487f0ef8487"
+    },
+    "pilot-freeze.json": {
+      "base": "evidence",
+      "relativePath": "pilot-freeze.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/pilot-freeze.json",
+      "bytes": 13353,
+      "sha256": "f7f081629a4f4be3c83c0215e31833ce7327ce7aab84559e0c5ebda4e4162a0f"
+    },
+    "pilot-per-session.csv": {
+      "base": "evidence",
+      "relativePath": "pilot-per-session.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/pilot-per-session.csv",
+      "bytes": 561,
+      "sha256": "cd6abed9cf70da243187a816689b6005be67f5290e9f209c7d42706a6c4f8e37"
+    },
+    "pilot-per-stem.csv": {
+      "base": "evidence",
+      "relativePath": "pilot-per-stem.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/pilot-per-stem.csv",
+      "bytes": 3603,
+      "sha256": "b24eba5a3827461613b5ed790f1dcdc065b7e236058efc7b5f77312c55ecb18f"
+    },
+    "pilot-results.json": {
+      "base": "evidence",
+      "relativePath": "pilot-results.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/pilot-results.json",
+      "bytes": 113019,
+      "sha256": "8bccd1719873635d16c1fc245e43911b1756aefefdac5e88ed5a43a6d5dd1cf2"
+    },
+    "pilot-selection.json": {
+      "base": "evidence",
+      "relativePath": "pilot-selection.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/pilot-selection.json",
+      "bytes": 769,
+      "sha256": "7a2a93eec0ed610fa81a4bfa69e04bda6cd01943eb9bbbb8e9e78e1a6fd93258"
+    },
+    "report": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03-report.md",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-report.md",
+      "bytes": 6850,
+      "sha256": "53807d25b57ad2649884ac678d3e1cc6794666a6010ac4922cc13ecb1d4a5692"
+    },
+    "reproduction": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03/REPRODUCTION.md",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/REPRODUCTION.md",
+      "bytes": 4665,
+      "sha256": "4fe1e6ba5fb5a3a12edeadefe6e1619f86d49622d49a3e442b2ab51f2d7a28be"
+    },
+    "root-full-verification.json": {
+      "base": "evidence",
+      "relativePath": "root-full-verification.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/root-full-verification.json",
+      "bytes": 59202,
+      "sha256": "fa77087139381b1d03220710b454a11ec052a062d326c3475ec31c9cde3988b4"
+    },
+    "root-original-audit.json": {
+      "base": "evidence",
+      "relativePath": "root-original-audit.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/root-original-audit.json",
+      "bytes": 10886,
+      "sha256": "be636862f2fd7bfdab0791ad2bc84e6dce1b6c9af2bb650641fac442535db9d9"
+    },
+    "root-pilot-verification.json": {
+      "base": "evidence",
+      "relativePath": "root-pilot-verification.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/root-pilot-verification.json",
+      "bytes": 19353,
+      "sha256": "942eb9e9b1e76a29374467c96b03da53d5e86bc09e85507657d5870d03fcda7b"
+    },
+    "root-sanitized-pilot-verification.json": {
+      "base": "evidence",
+      "relativePath": "root-sanitized-pilot-verification.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/root-sanitized-pilot-verification.json",
+      "bytes": 4806,
+      "sha256": "dc629d39fc0d5115b00fd7fbd29cd894dddf3068503060bca4fe9ea6be679bb0"
+    },
+    "rootAuditRunScript": {
+      "base": "scratch",
+      "relativePath": "root-audit.py",
+      "path": "/data/issue-77-lossless/iterations/round-03/root-audit.py",
+      "bytes": 5271,
+      "sha256": "d8666d9558dd25ee01a7540b7b7e0d7a902a710cddcbad2cca6e218bf1afe7c8"
+    },
+    "rootAuditSource": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03/root_audit.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/root_audit.py",
+      "bytes": 5271,
+      "sha256": "d8666d9558dd25ee01a7540b7b7e0d7a902a710cddcbad2cca6e218bf1afe7c8"
+    },
+    "rootOriginalAuditRunScript": {
+      "base": "scratch",
+      "relativePath": "root-original-audit.py",
+      "path": "/data/issue-77-lossless/iterations/round-03/root-original-audit.py",
+      "bytes": 2188,
+      "sha256": "18b5e1ad00d9ba37116da344b056c8ba745b806d7b4cef74f8e94f911d076bbe"
+    },
+    "rootOriginalAuditSource": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03/root_original_audit.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/root_original_audit.py",
+      "bytes": 2188,
+      "sha256": "18b5e1ad00d9ba37116da344b056c8ba745b806d7b4cef74f8e94f911d076bbe"
+    },
+    "round2Native": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-02/native/round2.c",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-02/native/round2.c",
+      "bytes": 68567,
+      "sha256": "9dc86f2423fd7aba13e8a9e3058448dd36c0f6c53b144ec17f283cd4c88cf960"
+    },
+    "round2Runner": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-02/round2.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-02/round2.py",
+      "bytes": 28398,
+      "sha256": "18348582d1301b95207aef977e2a108f7be35c0c3babc574a0272f8ae9189480"
+    },
+    "round3Native": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03/native/round3.c",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/native/round3.c",
+      "bytes": 30883,
+      "sha256": "f1cb8f3b9f22266631c6dd3886cda935c7ae0a59c7852fc58c4b958f25feec03"
+    },
+    "round3Runner": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03/round3.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/round3.py",
+      "bytes": 26620,
+      "sha256": "6958856e16c4e744f29872538f261307c93e11243b980e8fdc07c0fc9e5ee3e4"
+    },
+    "sanitized-pilot-freeze.json": {
+      "base": "evidence",
+      "relativePath": "sanitized-pilot-freeze.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/sanitized-pilot-freeze.json",
+      "bytes": 13326,
+      "sha256": "164863bf56a50242140aee3ddff709c6e6c2b0cfcdfc5a6412ececccf1fd4fdc"
+    },
+    "sanitized-pilot-results.json": {
+      "base": "evidence",
+      "relativePath": "sanitized-pilot-results.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/sanitized-pilot-results.json",
+      "bytes": 25622,
+      "sha256": "555cd44c4cf3ad32653b41622b97a8684a81215fa0931cb40cd7b57b20d70317"
+    },
+    "sanitizedHelper": {
+      "base": "scratch",
+      "relativePath": "round3-helper-san",
+      "path": "/data/issue-77-lossless/iterations/round-03/round3-helper-san",
+      "bytes": 1360680,
+      "sha256": "60ae3edca9d2e746fe2c82631292a0ef509512f5aabec2a2d1916749f0a3c8ac"
+    },
+    "sanitizer-build.json": {
+      "base": "evidence",
+      "relativePath": "sanitizer-build.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/sanitizer-build.json",
+      "bytes": 1215,
+      "sha256": "bb4477422f1ee5fd2ed99bd426d7ebdb15962743ee87bc9ea0a4eed77155488f"
+    },
+    "scope": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03-scope.md",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-scope.md",
+      "bytes": 12428,
+      "sha256": "9004f79c506e3107bea34741f9436e434711635710e29042ab2b7d1c5fadfefb"
+    },
+    "sources": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/sources.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/sources.json",
+      "bytes": 34789,
+      "sha256": "2ab3f51138c6d537f3ba312cbac5001556e0d930c649a7ddee95fb223d472085"
+    },
+    "timing": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-03/timing.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03/timing.py",
+      "bytes": 22623,
+      "sha256": "ef967c30e486d1e27ad55512a5c4d94c916fdecdd5b0a44cbc24eac01398c28f"
+    },
+    "timing-freeze.json": {
+      "base": "evidence",
+      "relativePath": "timing-freeze.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/timing-freeze.json",
+      "bytes": 13123,
+      "sha256": "71f5a199929b7ba842ab44d7855c22e0407f2872040d094952daea010ff11f96"
+    },
+    "timing.json": {
+      "base": "evidence",
+      "relativePath": "timing.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/timing.json",
+      "bytes": 105451,
+      "sha256": "5dbf8ad2cc58b87bf524e26d2d67b7e5184c031824c8dd31cf1fc3bc7aceba9f"
+    },
+    "validation.json": {
+      "base": "evidence",
+      "relativePath": "validation.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-03-evidence/validation.json",
+      "bytes": 2662,
+      "sha256": "9785baf8a75b68e353dd579d432ec63d25ebff3992624cb2ebe1bb37918e74dd"
+    }
+  }
+}

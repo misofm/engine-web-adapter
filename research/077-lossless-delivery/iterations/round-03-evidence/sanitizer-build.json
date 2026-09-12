@@ -1,0 +1,15 @@
+{
+  "format": "issue77-round3-sanitizer-build-v1",
+  "createdUtc": "2026-09-12T17:00:14Z",
+  "command": "gcc -std=c11 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Wconversion -Wshadow -I/data/issue-77-lossless/tooling/flac-1.5.0/include research/077-lossless-delivery/iterations/round-03/native/round3.c /data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a -lm -o /data/issue-77-lossless/iterations/round-03/round3-helper-san",
+  "asanOptions": "detect_leaks=1:halt_on_error=1",
+  "ubsanOptions": "halt_on_error=1",
+  "nativeSha256": "f1cb8f3b9f22266631c6dd3886cda935c7ae0a59c7852fc58c4b958f25feec03",
+  "runnerSha256": "6958856e16c4e744f29872538f261307c93e11243b980e8fdc07c0fc9e5ee3e4",
+  "testsSha256": "3c3fdbb84a61a26dca56c28eb8d630c5c3cdd218446c94289523ffdd4d4108d7",
+  "helperPath": "/data/issue-77-lossless/iterations/round-03/round3-helper-san",
+  "helperSha256": "60ae3edca9d2e746fe2c82631292a0ef509512f5aabec2a2d1916749f0a3c8ac",
+  "pilotWork": "/data/issue-77-lossless/iterations/round-03/sanitized-pilot3",
+  "pilotResultSha256": "555cd44c4cf3ad32653b41622b97a8684a81215fa0931cb40cd7b57b20d70317",
+  "nativeTests": "2/2 passed; ASan/UBSan diagnostics absent"
+}

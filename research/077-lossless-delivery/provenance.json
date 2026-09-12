@@ -1,0 +1,36 @@
+{
+  "releaseBinding": "PASS: all 30 published digest/blob ID pairs and all four original session IDs match the pinned release JSON",
+  "release": {
+    "repository": "misofm/releases",
+    "revision": "aab52d13309a191494bcb02dc706519c31bc1a97",
+    "path": "gatewaygirl-between-the-doors/release.json",
+    "sha256": "dbb5a69e7dc0cb71eeb06cae304002e843e49ff313aeb9173355b5e0c43c4322"
+  },
+  "sourceArchives": [
+    {
+      "name": "flac-1.5.0.tar.xz",
+      "url": "https://downloads.xiph.org/releases/flac/flac-1.5.0.tar.xz",
+      "sha256": "f2c1c76592a82ffff8413ba3c4a1299b6c7ab06c734dee03fd88630485c2b920"
+    },
+    {
+      "name": "wavpack-5.9.0.tar.xz",
+      "url": "https://www.wavpack.com/wavpack-5.9.0.tar.xz",
+      "sha256": "b5291bc4e6d69ebbd3da3800c5bf4a70f19bb92679b23e09b3b612c1e648d1ff"
+    }
+  ],
+  "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "cmake": "cmake version 3.28.3",
+  "build": "Native static Release builds; exact CMake arguments in README.md; CMake default Release optimization (-O3 -DNDEBUG).",
+  "adapterRevision": "338b633b1971f699147643536cd8c8060a81b4ce",
+  "existingFlacWasm": {
+    "path": "src/internal/engine-web-flac-decoder.wasm",
+    "bytes": 56762,
+    "gzip9Bytes": 22392,
+    "sha256": "b18990c13c17d05ef1d5c337a6a21c15b731a4a3669e6ab3557b5b9bd16beabb",
+    "scope": "Existing asset only; excludes JavaScript glue/worker; local gzip size is not a measured network transfer"
+  },
+  "wavpackBrowserDecoder": {
+    "status": "not built or measured; no browser decoder size/memory claim"
+  },
+  "separatedStems": "No separated stem set supplied; no substitute synthetic corpus represented as artist data"
+}

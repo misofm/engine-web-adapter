@@ -1,0 +1,867 @@
+{
+  "format": "issue77-source-catalog-v1",
+  "release": {
+    "repository": "misofm/releases",
+    "revision": "aab52d13309a191494bcb02dc706519c31bc1a97",
+    "path": "gatewaygirl-between-the-doors/release.json",
+    "sha256": "dbb5a69e7dc0cb71eeb06cae304002e843e49ff313aeb9173355b5e0c43c4322"
+  },
+  "publicationReceiptSha256": "e3744888c2de13c4bc11804e8c2e49a291141a49a2f5b978de7d6156b8f79b28",
+  "publicationCompletedAt": "2026-09-11T21:48:24.317111+00:00",
+  "baselineEncoder": {
+    "version": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "argv": [
+      "-v",
+      "error",
+      "-nostdin",
+      "-f",
+      "s24le",
+      "-ar",
+      "44100",
+      "-ac",
+      "2",
+      "-i",
+      "pipe:0",
+      "-map_metadata",
+      "-1",
+      "-map_chapters",
+      "-1",
+      "-fflags",
+      "+bitexact",
+      "-flags:a",
+      "+bitexact",
+      "-metadata_header_padding",
+      "0",
+      "-compression_level",
+      "5",
+      "-sample_fmt",
+      "s32",
+      "-bits_per_raw_sample",
+      "24",
+      "-f",
+      "flac",
+      "-"
+    ]
+  },
+  "stems": [
+    {
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "drums"
+      ],
+      "identity": "sha256:03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6207923
+      },
+      "originalSessionBlobId": "PeqJYPS46oXjALZ9KbH0ZNCESLx8bssjvGWWanXZfl4",
+      "originalBlobId": "XSYrXP7tceQfnsz6Fjh5avzkuf7MP1G7qLZN48rg7B8",
+      "originalTransportBytes": 16483526,
+      "blobId": "irRv66MNy564Z4_eqSf96hOgh_Q6bbyhlZI6l3_ZmjM",
+      "bytes": 16542989,
+      "sha256": "9e12a781f0596d78f177463570203389999bd6312f1b340506a163b10b370824",
+      "chunkCount": 4,
+      "payloadBytes": 16538208,
+      "manifestBytes": 4765,
+      "activePcmBytes": 30791214,
+      "omittedPcmBytes": 6456324,
+      "originalFlacSha256": "52b7efdb0d761b11759206775970406293f9ca6cf2a7b46bb7526cc34b597400",
+      "manifestPath": "manifests/03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2.json",
+      "manifestSha256": "07ed7864b554d2640a2fdda72957759323c41cecdf88e19bfc77a8fcc2141f67"
+    },
+    {
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "lead-vox"
+      ],
+      "identity": "sha256:27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6207923
+      },
+      "originalSessionBlobId": "PeqJYPS46oXjALZ9KbH0ZNCESLx8bssjvGWWanXZfl4",
+      "originalBlobId": "CHPYU6AUePMnIQe2H3jInBxIf89Cx1sxxQJ_YURz18E",
+      "originalTransportBytes": 19618899,
+      "blobId": "kwXT26ZKcIDy8Fy6J_GhmsWdETfx7tGak7-NhwsOeYM",
+      "bytes": 19754378,
+      "sha256": "8d9595ec06be9422d2a8bd5622790c2e78a03451d92db294ee6c391eba74dbc9",
+      "chunkCount": 5,
+      "payloadBytes": 19752920,
+      "manifestBytes": 1442,
+      "activePcmBytes": 37247538,
+      "omittedPcmBytes": 0,
+      "originalFlacSha256": "d4e9075615156dd19000a1b8d7fbd21f34b2d31f1b67304e4a91653645d905da",
+      "manifestPath": "manifests/27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac.json",
+      "manifestSha256": "8a0649029b8dfb52e2b9dc5f2442a8aac4c238a7a82fe0f6bde807a207aca146"
+    },
+    {
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "vocal-fx"
+      ],
+      "identity": "sha256:361eb2581ace51a5a34c59d83c06ebe6dad73300115db995e6c0692fb4061ae3",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6207923
+      },
+      "originalSessionBlobId": "PeqJYPS46oXjALZ9KbH0ZNCESLx8bssjvGWWanXZfl4",
+      "originalBlobId": "SUFJwXVrlnxin2EuvKZjPygFDchKHYUQdffS8vvaLY8",
+      "originalTransportBytes": 4129372,
+      "blobId": "lIl1_2W4wpNFd1X1TPSltB7whqbl5dDAwYWOlNpNiwA",
+      "bytes": 4223284,
+      "sha256": "b703951ff75704a35a5c3aa0254da5d8fe10e9d4a0d54efe21732eeee9062f82",
+      "chunkCount": 4,
+      "payloadBytes": 4217158,
+      "manifestBytes": 6110,
+      "activePcmBytes": 30161286,
+      "omittedPcmBytes": 7086252,
+      "originalFlacSha256": "d1a13184f9ddcdc54e568b687146a341d01821b23b209026a4ddcbd365fb4664",
+      "manifestPath": "manifests/361eb2581ace51a5a34c59d83c06ebe6dad73300115db995e6c0692fb4061ae3.json",
+      "manifestSha256": "637ad1fff76a25439b95996f9be2d5d88244c290321dedee31d9424b61b442a0"
+    },
+    {
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "fx"
+      ],
+      "identity": "sha256:9184f49ee35fa748ecf4d898eb06058d2f499b8348b80736c5c252a99fe36b98",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6207923
+      },
+      "originalSessionBlobId": "PeqJYPS46oXjALZ9KbH0ZNCESLx8bssjvGWWanXZfl4",
+      "originalBlobId": "mF3BXlIR9Y7am7_M2nk1_BvOyJNEEbcTe4ty_CFKIEY",
+      "originalTransportBytes": 8840180,
+      "blobId": "SAX17-PFiyS7s6G8f6_geHEBQvQtWa3HixkUXiUn31c",
+      "bytes": 8777838,
+      "sha256": "e7a2b1ba6519adffc8618c12e9d4331840f7b02b9abda0b7e8e915bd2c2303f3",
+      "chunkCount": 4,
+      "payloadBytes": 8766086,
+      "manifestBytes": 11736,
+      "activePcmBytes": 26982702,
+      "omittedPcmBytes": 10264836,
+      "originalFlacSha256": "297c3e9d9673b3b736c3f750a1542cb032e3d4b8dcd5a5cfb60be601e6a20f60",
+      "manifestPath": "manifests/9184f49ee35fa748ecf4d898eb06058d2f499b8348b80736c5c252a99fe36b98.json",
+      "manifestSha256": "75b42e78d4a0d7ebff9590325989cda16fbf70bacd1180175ec51e269a175fce"
+    },
+    {
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "synth-6"
+      ],
+      "identity": "sha256:9a57207ac802bad426435d920b77048ba9dd391797c6a462444c6e375716d36f",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6207923
+      },
+      "originalSessionBlobId": "PeqJYPS46oXjALZ9KbH0ZNCESLx8bssjvGWWanXZfl4",
+      "originalBlobId": "c0PMSpzwzMmyhoH7izXqgvw6ujTnd1LZmWgDnVF2nds",
+      "originalTransportBytes": 8479926,
+      "blobId": "1eXSLMWzPFzoj2yWPKRZfeCY14c5yQh1EaaUzT8tv98",
+      "bytes": 8486166,
+      "sha256": "b951265b6d86af8c93148d77e547d36e8015e2d370e5ea58c73937ad1bc9c68a",
+      "chunkCount": 4,
+      "payloadBytes": 8481847,
+      "manifestBytes": 4303,
+      "activePcmBytes": 24399084,
+      "omittedPcmBytes": 12848454,
+      "originalFlacSha256": "d6501be66fc3aab94527fb0f9a199729e325fde66cdc14ff564985f0ae4a756a",
+      "manifestPath": "manifests/9a57207ac802bad426435d920b77048ba9dd391797c6a462444c6e375716d36f.json",
+      "manifestSha256": "609bc74aca151303b186092fc3a7ef27354a5ffa5b17047419164afabac717cb"
+    },
+    {
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "bass"
+      ],
+      "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6207923
+      },
+      "originalSessionBlobId": "PeqJYPS46oXjALZ9KbH0ZNCESLx8bssjvGWWanXZfl4",
+      "originalBlobId": "jvHC9wQwEl8l_NR4u5fX7n8tV6A5GrgWn2E47Y0eYS4",
+      "originalTransportBytes": 4174193,
+      "blobId": "HhY0-HiUf0X5oditYBZr-aAdTgT2suMht6O7LG26VBs",
+      "bytes": 4192048,
+      "sha256": "0724e73b3b3f737deedd3dfe685be7323674596cef963ec5331a1eab19700bd3",
+      "chunkCount": 4,
+      "payloadBytes": 4186111,
+      "manifestBytes": 5921,
+      "activePcmBytes": 25258248,
+      "omittedPcmBytes": 11989290,
+      "originalFlacSha256": "630e05d9fba27a810d45c8a462cc57b3ddb668f57c44ef9772e528d0d9097756",
+      "manifestPath": "manifests/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.json",
+      "manifestSha256": "2e7eedf3406b979ff46ccfd1fe9cfeb45a74e9ec46de45637a205e027c8382c0"
+    },
+    {
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "bv_s"
+      ],
+      "identity": "sha256:c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6207923
+      },
+      "originalSessionBlobId": "PeqJYPS46oXjALZ9KbH0ZNCESLx8bssjvGWWanXZfl4",
+      "originalBlobId": "PQm-spMZeCPGv4R74Xpih8bdYLQKSui_cxfkyF2bE3c",
+      "originalTransportBytes": 22149667,
+      "blobId": "tmzL4NJ601cjoJqLbggwzmfsiYV57Bh_YJbxNM1SVDI",
+      "bytes": 22224639,
+      "sha256": "376641bd8b9d97160d26e9cff6ecce224676f0674d4d5b40e64130cd4200e354",
+      "chunkCount": 5,
+      "payloadBytes": 22223178,
+      "manifestBytes": 1445,
+      "activePcmBytes": 37235790,
+      "omittedPcmBytes": 11748,
+      "originalFlacSha256": "ba0ef79c50c7fbdfcdc56d7e7d88da60bbc20f4b0df599c4dc848aff5d276ab2",
+      "manifestPath": "manifests/c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f.json",
+      "manifestSha256": "dd0545375dc2b6bfa35c829a011ce2cd0c54710a2fe718970baef7ce51e6378e"
+    },
+    {
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "guitar"
+      ],
+      "identity": "sha256:e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6207923
+      },
+      "originalSessionBlobId": "PeqJYPS46oXjALZ9KbH0ZNCESLx8bssjvGWWanXZfl4",
+      "originalBlobId": "nNROGLwfsh201PWv8buFLoahZl4PHdDoeKdgBe28IQM",
+      "originalTransportBytes": 8486496,
+      "blobId": "1HVFJZvIhTivllFg0xPXHKpGQRXYDTP367kSHdz0QS8",
+      "bytes": 8521302,
+      "sha256": "bbed614e9d8020e592657fd6e8ce726f89eb1d5a42317bd58c04b0bd7457df97",
+      "chunkCount": 5,
+      "payloadBytes": 8519846,
+      "manifestBytes": 1440,
+      "activePcmBytes": 37247538,
+      "omittedPcmBytes": 0,
+      "originalFlacSha256": "eeec40ac53571e56d1515de7d309c00b8e86e8e90a576788333ed4ebd4b1c402",
+      "manifestPath": "manifests/e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62.json",
+      "manifestSha256": "0448374e47ffe651f4332b75f2f6f19f21eea0c0b8e1df9d370ab8ce083666e2"
+    },
+    {
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "chorus-vox"
+      ],
+      "identity": "sha256:1d0544c63bf19bcc8d8b663d73fb9b206f9d107d52f7729ead8fce52aaa9be71",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6761475
+      },
+      "originalSessionBlobId": "wu-YWe5NK6s4PyVhG41AIMG9DMWEGIah7C7P_cD_-mA",
+      "originalBlobId": "KxWtkOxZ89VW7uU24w7-MlPPE3SZsrWxP6ojsczLJYM",
+      "originalTransportBytes": 8168410,
+      "blobId": "vbuA1v9yPII5bdzkB6ZYRDm_LGW0-gtFQA9AZuOgx1Q",
+      "bytes": 8160464,
+      "sha256": "8d362e54f87faa3382aeb656cf0b02de703b723e5fac086b1434e578622feee3",
+      "chunkCount": 2,
+      "payloadBytes": 8158425,
+      "manifestBytes": 2023,
+      "activePcmBytes": 15014760,
+      "omittedPcmBytes": 25554090,
+      "originalFlacSha256": "96193db74f57c4be05b079fb50617f160c34b40866fc0eb4ed36110de63a7ba1",
+      "manifestPath": "manifests/1d0544c63bf19bcc8d8b663d73fb9b206f9d107d52f7729ead8fce52aaa9be71.json",
+      "manifestSha256": "73123c84eebce8cbaffed08f0bcc4a41250524050e4bc81ce247b4bbcdb0a2f2"
+    },
+    {
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "fx"
+      ],
+      "identity": "sha256:2bf5cb8199b9d347a6a94d10c52b770148efda9073069e4aeeafaa866030a846",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6761475
+      },
+      "originalSessionBlobId": "wu-YWe5NK6s4PyVhG41AIMG9DMWEGIah7C7P_cD_-mA",
+      "originalBlobId": "08FVB3Hkawoy2fNib68_oCI_JqxQg2V1liMHAqcpwr8",
+      "originalTransportBytes": 11677245,
+      "blobId": "KYXEJhm2SGDSrFww69loZLbiKj1UKFEkH729VxNjZNY",
+      "bytes": 11902612,
+      "sha256": "923e90cac9e3529b8391dc51e5899dd7d1f98d4464d005c8a6fed87e2c2ba745",
+      "chunkCount": 5,
+      "payloadBytes": 11898546,
+      "manifestBytes": 4050,
+      "activePcmBytes": 32998800,
+      "omittedPcmBytes": 7570050,
+      "originalFlacSha256": "a42465b6640b96f610cc7220b75f83d6aa9eb15d67cf8bacf7fc0ec86d8f8642",
+      "manifestPath": "manifests/2bf5cb8199b9d347a6a94d10c52b770148efda9073069e4aeeafaa866030a846.json",
+      "manifestSha256": "c71c9ff8ad40c373d51625f567b7858ffb699287c4e1b7619eee350096026f22"
+    },
+    {
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "intro"
+      ],
+      "identity": "sha256:43413b8b197ba8a6be8b706e5173fb5246f4c60c414557dc552d9c65239f9340",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6761475
+      },
+      "originalSessionBlobId": "wu-YWe5NK6s4PyVhG41AIMG9DMWEGIah7C7P_cD_-mA",
+      "originalBlobId": "a8WekNeoJPzvSkiu9BRbfEqGQvlF8cIRDM2ymRRSFO0",
+      "originalTransportBytes": 6468859,
+      "blobId": "AQjADH_3Ik6mi_AX1hoC__ZnZLt4etO1Fyp1dCsSrZo",
+      "bytes": 6570607,
+      "sha256": "fb0f51368322c108b509587ac654afa7af32725b5a446021a86b8bbb572e6c14",
+      "chunkCount": 2,
+      "payloadBytes": 6569425,
+      "manifestBytes": 1166,
+      "activePcmBytes": 11025186,
+      "omittedPcmBytes": 29543664,
+      "originalFlacSha256": "1100f624ff57aa713e9f175d5b9dc0ba7436e287ae8b1c584a1793755fd9ad34",
+      "manifestPath": "manifests/43413b8b197ba8a6be8b706e5173fb5246f4c60c414557dc552d9c65239f9340.json",
+      "manifestSha256": "7d35e40eca6c0faf69bbf821aca195b684faec12ce79e4275719f6c6a8278b12"
+    },
+    {
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "synth"
+      ],
+      "identity": "sha256:820926ccc8557b4cdf81d0c19933f1115dc371d5b53e46ddedb2a87bf4e4e197",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6761475
+      },
+      "originalSessionBlobId": "wu-YWe5NK6s4PyVhG41AIMG9DMWEGIah7C7P_cD_-mA",
+      "originalBlobId": "Fu-2wYZ4JX8KO1ACTvqcC7UHzzn46YrYemaosQjwO5o",
+      "originalTransportBytes": 8032165,
+      "blobId": "3fx-4GyMGVDiGZNm2rHJzFww3vzkCjotZkxpct4oEKo",
+      "bytes": 8130141,
+      "sha256": "f38702c60047f57b06796743e0965aeea081bdfafb09db0a1ad5252d031dfc70",
+      "chunkCount": 2,
+      "payloadBytes": 8128228,
+      "manifestBytes": 1897,
+      "activePcmBytes": 15147540,
+      "omittedPcmBytes": 25421310,
+      "originalFlacSha256": "a9df83ec775695699038defd0a6d9fe1d353e2e7f109ea4812312704130ef05f",
+      "manifestPath": "manifests/820926ccc8557b4cdf81d0c19933f1115dc371d5b53e46ddedb2a87bf4e4e197.json",
+      "manifestSha256": "e7a9785edc0a7718f4bd4807779a2a9f09fb66ee99b113b82d0cb001a22757df"
+    },
+    {
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "drums"
+      ],
+      "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6761475
+      },
+      "originalSessionBlobId": "wu-YWe5NK6s4PyVhG41AIMG9DMWEGIah7C7P_cD_-mA",
+      "originalBlobId": "DlNUopT9CrznMwEVtS9CrqvtblAME1MiEQYYTL6lhko",
+      "originalTransportBytes": 12439191,
+      "blobId": "WFafdb4u7_g9FTmJ-5D__IGebiS4i4wxg47iaDbqEJE",
+      "bytes": 12645993,
+      "sha256": "69befa627f81231a5e2ae65a616d2c79b35b745794408756eff9799a5da9a209",
+      "chunkCount": 4,
+      "payloadBytes": 12644314,
+      "manifestBytes": 1663,
+      "activePcmBytes": 29314446,
+      "omittedPcmBytes": 11254404,
+      "originalFlacSha256": "4e3eaaad3ded7df79789ba5afb2ed128820d27392aed17570ecddd975c5a6067",
+      "manifestPath": "manifests/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.json",
+      "manifestSha256": "b97921583022f211766d7fe7aa9d417c1674231b72b68f486f2be0acdcde20da"
+    },
+    {
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "vocal-fx"
+      ],
+      "identity": "sha256:b613c11eea1c43c0a0fed317bea191d09146b818c4fe8e7a781cec1061b781f1",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6761475
+      },
+      "originalSessionBlobId": "wu-YWe5NK6s4PyVhG41AIMG9DMWEGIah7C7P_cD_-mA",
+      "originalBlobId": "TawX4vzCp5nR4-BJh6DhBD2Q9kp7YumozFtxUpZ3nHA",
+      "originalTransportBytes": 4328379,
+      "blobId": "3dNcMmoI7-lI4PtR8ldBBVd5cwDCqAKeRYdTBiZ8tlk",
+      "bytes": 4298051,
+      "sha256": "c945901708f7f709fa9f4f848e33702b7cb79ef3c399255c9946635f59a769bf",
+      "chunkCount": 2,
+      "payloadBytes": 4295635,
+      "manifestBytes": 2400,
+      "activePcmBytes": 9175170,
+      "omittedPcmBytes": 31393680,
+      "originalFlacSha256": "f1f4dcf7228030f258bc182246d1a8b2554619d364e6bbd87adecb709fc3f70f",
+      "manifestPath": "manifests/b613c11eea1c43c0a0fed317bea191d09146b818c4fe8e7a781cec1061b781f1.json",
+      "manifestSha256": "08f8ca95db0b1ab38c2aece41c745be30453f8ac7802f491a02c02cf7042cf98"
+    },
+    {
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "bass"
+      ],
+      "identity": "sha256:d60d7992ce0ac81666b6e13b3ae7064ab5c1aad701a026619d78cfb725386d4d",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6761475
+      },
+      "originalSessionBlobId": "wu-YWe5NK6s4PyVhG41AIMG9DMWEGIah7C7P_cD_-mA",
+      "originalBlobId": "LUwT9ZZEJbnVvw5mPngbrXNMW2cf5owc5D_9Ia09AIM",
+      "originalTransportBytes": 12342643,
+      "blobId": "nZr8kLWachKyWtVr5sUyWxOFptdlzfuAxwcgtkPwp40",
+      "bytes": 12810592,
+      "sha256": "50492629c6e26d898e3953884ace31b2c803d1ce5867eab0562cdbc02b81b47d",
+      "chunkCount": 6,
+      "payloadBytes": 12808781,
+      "manifestBytes": 1795,
+      "activePcmBytes": 40469496,
+      "omittedPcmBytes": 99354,
+      "originalFlacSha256": "cf3ed4b040d5385f57e178e59161c7c14b7bccfe98de0df7e48a261e7e84b09d",
+      "manifestPath": "manifests/d60d7992ce0ac81666b6e13b3ae7064ab5c1aad701a026619d78cfb725386d4d.json",
+      "manifestSha256": "9030ac21d16af5bd6ae5554decf58fd612f026c9a5c66567b0de66e9901fd482"
+    },
+    {
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "verse-vox"
+      ],
+      "identity": "sha256:dbb6eda6ecc56c418428f6b41d0b4872948d5be58e6089ecacb538b188dd7a74",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 6761475
+      },
+      "originalSessionBlobId": "wu-YWe5NK6s4PyVhG41AIMG9DMWEGIah7C7P_cD_-mA",
+      "originalBlobId": "-F0Xi5SDwcmyt7IdL-L-aIVFpUJ8azbzTmocg-FX76s",
+      "originalTransportBytes": 7212993,
+      "blobId": "VDmUED7azAITDEc4FNNcvdnNuJO3K9OofDoX403WHp0",
+      "bytes": 7203625,
+      "sha256": "13793a3f7725fd221854d24c626baa2750a78e199f3586d1f490e6be2be04e11",
+      "chunkCount": 2,
+      "payloadBytes": 7202043,
+      "manifestBytes": 1566,
+      "activePcmBytes": 11897508,
+      "omittedPcmBytes": 28671342,
+      "originalFlacSha256": "bac29e46eacaf81bcd4cb35df6c28983273bad30055a7366ae1a2d891c71cf9d",
+      "manifestPath": "manifests/dbb6eda6ecc56c418428f6b41d0b4872948d5be58e6089ecacb538b188dd7a74.json",
+      "manifestSha256": "b24b160ab20cffbdde610ff5d2842ea13a4018ee7a7722179698a14913ac41d6"
+    },
+    {
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "fx"
+      ],
+      "identity": "sha256:2726b0d1370fdf4924bc2a3509533c4fbb914a9ff45c54e7b010be71a4adfb76",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 7717500
+      },
+      "originalSessionBlobId": "n98BKseF-REz9iiQxmj2QMp3IAEV5OqpTP0cSXF-WFc",
+      "originalBlobId": "5Ng1e30B77MrR20JQ6HZvWXt9mfmW445HfjhTBTQoiM",
+      "originalTransportBytes": 14126951,
+      "blobId": "nqHMt8dR-ToKsYRQ6VwqA9W2XWr2uRHrRfQMOh9FjPc",
+      "bytes": 14267715,
+      "sha256": "94134c6bcdf21b822eaf77230a4fe101e5ee03d9aa7e192e90208bac24662adc",
+      "chunkCount": 4,
+      "payloadBytes": 14265771,
+      "manifestBytes": 1928,
+      "activePcmBytes": 27599244,
+      "omittedPcmBytes": 18705756,
+      "originalFlacSha256": "c78eb37e8704ae64558379fdd1175915b7efbd0ac3050dbdd2bbb42dc3a137fc",
+      "manifestPath": "manifests/2726b0d1370fdf4924bc2a3509533c4fbb914a9ff45c54e7b010be71a4adfb76.json",
+      "manifestSha256": "a9ea4a79ed18412476882cecbdc032a58cb54bbe09647cb1ea4a9e4fb49dadbf"
+    },
+    {
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "bass"
+      ],
+      "identity": "sha256:2dd061241fa7fe3128289427e108ee63501f4ed77c7208f1b37ff49fa6ccff0b",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 7717500
+      },
+      "originalSessionBlobId": "n98BKseF-REz9iiQxmj2QMp3IAEV5OqpTP0cSXF-WFc",
+      "originalBlobId": "aj1Yj-2LLDRepLfxXC0iOXfgvWW6cIwK1iREGGExRTs",
+      "originalTransportBytes": 8551836,
+      "blobId": "isGcB9WcyySOQdpmxlB40rQbE3fn8MDufGIMZ-o8rQE",
+      "bytes": 8587435,
+      "sha256": "e095771043815d6a047f9473ebd744d115259d3ab40ebfb0ec34897464d63c1c",
+      "chunkCount": 3,
+      "payloadBytes": 8586249,
+      "manifestBytes": 1170,
+      "activePcmBytes": 21468960,
+      "omittedPcmBytes": 24836040,
+      "originalFlacSha256": "deea5ca6ab6b87582c6164b94d7d2ffe163bfc0d1fbaeff5baa922131698f1ba",
+      "manifestPath": "manifests/2dd061241fa7fe3128289427e108ee63501f4ed77c7208f1b37ff49fa6ccff0b.json",
+      "manifestSha256": "6a04fcb8378ffa9b2daad2eacf1cf61be2a7f6586684dc2bba9ede8bc4452ed7"
+    },
+    {
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "drums"
+      ],
+      "identity": "sha256:3d60f314574aed4bfafde8b53df7e0e555f367325ba6daad6ec8db9c4dee48c6",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 7717500
+      },
+      "originalSessionBlobId": "n98BKseF-REz9iiQxmj2QMp3IAEV5OqpTP0cSXF-WFc",
+      "originalBlobId": "g5oo0EgW2P5Qjj1kPRcHOmiE7Kn5lfLJ_Vrca96mLb4",
+      "originalTransportBytes": 12661920,
+      "blobId": "zgxA34ZGSBWcOpmJvAPN3h4RZY9zl1BfM64HMkm8cYA",
+      "bytes": 12778830,
+      "sha256": "fbc4901123f75255f26ca0eb62942f50b5621e24b5254da14fd03b13e0a4e568",
+      "chunkCount": 4,
+      "payloadBytes": 12777341,
+      "manifestBytes": 1473,
+      "activePcmBytes": 30099654,
+      "omittedPcmBytes": 16205346,
+      "originalFlacSha256": "0281938ad28d57e70f2fdef8430d00617e7524d94758bdb9b58feb9114393a6f",
+      "manifestPath": "manifests/3d60f314574aed4bfafde8b53df7e0e555f367325ba6daad6ec8db9c4dee48c6.json",
+      "manifestSha256": "6f8eb0cd4b2e2a759ae566ce780ea38d96227b408c1ef158cfdbd7b45ee9d889"
+    },
+    {
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "bv_s"
+      ],
+      "identity": "sha256:83cc4bfabbda2bb1b0b9fda8bfc7307d190844be9e01cd8ed53b2b904369b147",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 7717500
+      },
+      "originalSessionBlobId": "n98BKseF-REz9iiQxmj2QMp3IAEV5OqpTP0cSXF-WFc",
+      "originalBlobId": "K3fxC7WgDzkOM5B9pnbJ7Yves7ZrG2sjJXxmCSNBEE4",
+      "originalTransportBytes": 26862930,
+      "blobId": "8OKo5YP-Cf8cOi0fZecOBEFpWpbxr8jXrcl_YK2aC5M",
+      "bytes": 26962575,
+      "sha256": "ed883f039a33f6d08c5b2b44b29abb29eef76a63341293c3ea790ccd82cfbcff",
+      "chunkCount": 6,
+      "payloadBytes": 26960877,
+      "manifestBytes": 1682,
+      "activePcmBytes": 46305000,
+      "omittedPcmBytes": 0,
+      "originalFlacSha256": "88c18d5e44f18689af14f7642e3ada1c733ce0ac714788de5884b2dbfa93ba8d",
+      "manifestPath": "manifests/83cc4bfabbda2bb1b0b9fda8bfc7307d190844be9e01cd8ed53b2b904369b147.json",
+      "manifestSha256": "a4beb53d77c124014c6011be546f91e1e23f84e4c249dbc85030be7a737d8cc2"
+    },
+    {
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "synth-2"
+      ],
+      "identity": "sha256:d2a9ac32d38219a1dbe387f10ae417abb86101f4366683d2e68270ca1b8b5224",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 7717500
+      },
+      "originalSessionBlobId": "n98BKseF-REz9iiQxmj2QMp3IAEV5OqpTP0cSXF-WFc",
+      "originalBlobId": "ZbLCZe7h9YMfHNrMXoxbBnwboEvdm3R_CrWKYHOX-pg",
+      "originalTransportBytes": 21562475,
+      "blobId": "JYobOceD0oLheqcVmXJVt75X1lLPTtESd1fg9VMyoTw",
+      "bytes": 21677687,
+      "sha256": "6fa2cb5165671b92ad4be62c9c8c9fb0163e469e6fc42191d4c6a75469e91ea5",
+      "chunkCount": 6,
+      "payloadBytes": 21675850,
+      "manifestBytes": 1821,
+      "activePcmBytes": 44417994,
+      "omittedPcmBytes": 1887006,
+      "originalFlacSha256": "8e019bb839aa80e2ec58d1dc68c240e77b3ad86db281046ba12cf3d6159547fb",
+      "manifestPath": "manifests/d2a9ac32d38219a1dbe387f10ae417abb86101f4366683d2e68270ca1b8b5224.json",
+      "manifestSha256": "668f15172f7c493eeddc46f501cd847e395e44f2644a67749c60bacd67caf2da"
+    },
+    {
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "lead-vox"
+      ],
+      "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 7717500
+      },
+      "originalSessionBlobId": "n98BKseF-REz9iiQxmj2QMp3IAEV5OqpTP0cSXF-WFc",
+      "originalBlobId": "Jyy1Nd3le1G68MezFgzHOv9V_Z_j3v9dzErKWAGHNPA",
+      "originalTransportBytes": 24199633,
+      "blobId": "ikT_cNZXZ3MtIDWNZJ5DvzvXmTHAXASs2Tz-SXQZj_8",
+      "bytes": 24367777,
+      "sha256": "395d522a4b695eefb64fe8b6851e891ea5d7f494e4ddd80dde378b0042c9e7d3",
+      "chunkCount": 6,
+      "payloadBytes": 24365200,
+      "manifestBytes": 2561,
+      "activePcmBytes": 40238736,
+      "omittedPcmBytes": 6066264,
+      "originalFlacSha256": "88e54665e389ef0af55e9d8bf654da0c4a7352e68633a17daa7bdc78b6953fe6",
+      "manifestPath": "manifests/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.json",
+      "manifestSha256": "44470d4946347ba170345097f02895efc05845e051193b56055ef554dc405809"
+    },
+    {
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "drums"
+      ],
+      "identity": "sha256:18a73d7d7a47ec6ccd306235bb921dc8760ecce468b0cb5b4860ef94b898bba6",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 8499092
+      },
+      "originalSessionBlobId": "u9HKIiEfqyHBvFbcNQvMCgNeCgPDXGDV1Na6HTNh2fc",
+      "originalBlobId": "PDQJBpSGlv3Z9Y-bWE9ocQbwY1xuXyMJ3QAtD2Q6TGU",
+      "originalTransportBytes": 25085323,
+      "blobId": "nD2A8ryb0gwEYJrmM6BMa42h92ITPl5EBueG0ApttR8",
+      "bytes": 25121196,
+      "sha256": "48aee0b1b2deedacf3b34818ad9072449a229151e57117cbdb6f6b611aa7d339",
+      "chunkCount": 7,
+      "payloadBytes": 25119260,
+      "manifestBytes": 1920,
+      "activePcmBytes": 50994552,
+      "omittedPcmBytes": 0,
+      "originalFlacSha256": "c808d71fecb540581d610f094229c99631b4eb6a886f2fc02ea2455802f70594",
+      "manifestPath": "manifests/18a73d7d7a47ec6ccd306235bb921dc8760ecce468b0cb5b4860ef94b898bba6.json",
+      "manifestSha256": "584625a0a2f862a4db11ad6b5e581173fdf07ffe55d64a58104b36fe2c8502bd"
+    },
+    {
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "bv_s"
+      ],
+      "identity": "sha256:462c511e3c244e805eeaf8c592c2cf35b8e9e9fab0d3074aad52e7304e6572f6",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 8499092
+      },
+      "originalSessionBlobId": "u9HKIiEfqyHBvFbcNQvMCgNeCgPDXGDV1Na6HTNh2fc",
+      "originalBlobId": "gjc3Wyqaw_kaWJ2P7TfyOso2IE9aPy30PfxzfK-tgIw",
+      "originalTransportBytes": 22194776,
+      "blobId": "CIKdxrsED94d9VJsHfFev7VclQu8hMxKEHaEZadZPBg",
+      "bytes": 22276344,
+      "sha256": "2893f4fb989eba6606b510974e1f76adf14fe69285bfcadbc80c7584267e6b5a",
+      "chunkCount": 7,
+      "payloadBytes": 22274408,
+      "manifestBytes": 1920,
+      "activePcmBytes": 50994552,
+      "omittedPcmBytes": 0,
+      "originalFlacSha256": "118fd5d82d0610a1be518ba08dc68ddb95e12601635ec7313b64e023745d35fb",
+      "manifestPath": "manifests/462c511e3c244e805eeaf8c592c2cf35b8e9e9fab0d3074aad52e7304e6572f6.json",
+      "manifestSha256": "1330d15f099878e6ed0ad8f93b0ae04acba4484ea7e15be67d450b2e3b40466b"
+    },
+    {
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "synth"
+      ],
+      "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 8499092
+      },
+      "originalSessionBlobId": "u9HKIiEfqyHBvFbcNQvMCgNeCgPDXGDV1Na6HTNh2fc",
+      "originalBlobId": "bo8fyg1XRWsUQIc_sIPQFoAjztjlTK9_Z3BvqDsBSXo",
+      "originalTransportBytes": 26580304,
+      "blobId": "UaHp1bHHR77KVVISYLSI965WmPqJwhbKDYlFbIhc4rA",
+      "bytes": 26613634,
+      "sha256": "1059de947cbd04b5a67eced319d36663b092c94e99bc3cbda7fcf027da849c25",
+      "chunkCount": 7,
+      "payloadBytes": 26611698,
+      "manifestBytes": 1920,
+      "activePcmBytes": 50994552,
+      "omittedPcmBytes": 0,
+      "originalFlacSha256": "d381e6518e95c2662986101ce11dfbba1edca24bb1d35251e85b67049380c96a",
+      "manifestPath": "manifests/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.json",
+      "manifestSha256": "c452c61fcf0d1ff862911acd9570db222e351b4f60874ac083b97d5cd6c57001"
+    },
+    {
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "fx"
+      ],
+      "identity": "sha256:75e819632163ccc65f63fde122cea33b199b559c931ebf68b14b5f8c72520629",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 8499092
+      },
+      "originalSessionBlobId": "u9HKIiEfqyHBvFbcNQvMCgNeCgPDXGDV1Na6HTNh2fc",
+      "originalBlobId": "qTm-EUMuLEw5u-QCHo5px4RVRI0f2Ley4bjlS-cvy6M",
+      "originalTransportBytes": 11626669,
+      "blobId": "rwTQrr-XkGuLncB8TdJCpPVAtp5xC4QC-O8lB0p33Mk",
+      "bytes": 11662727,
+      "sha256": "40c9ab882e264ef103613e69096d8a4878f7ae7d0f7ff9e30cc8d3f038093617",
+      "chunkCount": 4,
+      "payloadBytes": 11661103,
+      "manifestBytes": 1608,
+      "activePcmBytes": 30094776,
+      "omittedPcmBytes": 20899776,
+      "originalFlacSha256": "85f1011553ec01f4c938a244f67dd63105e038c7742b149ff07057f60445cccb",
+      "manifestPath": "manifests/75e819632163ccc65f63fde122cea33b199b559c931ebf68b14b5f8c72520629.json",
+      "manifestSha256": "3546f856dbe08ab52d40c82e7e49480c1f5add06a52e1d27b85e39f05545e0e8"
+    },
+    {
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "outro-fx"
+      ],
+      "identity": "sha256:76f8d36d4b2b6ed2efc19418250feaac1fe1868fd919c4c03a6e6f66e3e3f926",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 8499092
+      },
+      "originalSessionBlobId": "u9HKIiEfqyHBvFbcNQvMCgNeCgPDXGDV1Na6HTNh2fc",
+      "originalBlobId": "mO6LTfXpNykgd9XePtvdCqinAerFl78_2FAWQm8TGn8",
+      "originalTransportBytes": 7103280,
+      "blobId": "FZvjXU2TXEVICTrxnTheB1FB6E3fEFkm5ZDTlbMW9oM",
+      "bytes": 7082466,
+      "sha256": "775175a8e6c96173a85787d5ca71c706c35f74201a4d3392a5c8afbecdbcf751",
+      "chunkCount": 2,
+      "payloadBytes": 7081718,
+      "manifestBytes": 732,
+      "activePcmBytes": 11430612,
+      "omittedPcmBytes": 39563940,
+      "originalFlacSha256": "8b392f1355a8815a376108dc14f595d0cfb073c421b381dadb448553b4a784b2",
+      "manifestPath": "manifests/76f8d36d4b2b6ed2efc19418250feaac1fe1868fd919c4c03a6e6f66e3e3f926.json",
+      "manifestSha256": "6372c099675a81afe929a3515221dddb1a44aaeac5fb50dd2978073e178d4b09"
+    },
+    {
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "vocal-fx"
+      ],
+      "identity": "sha256:8b374c1219541d61371b2eacf78d1ddd01acf4e9e7422b369044f7c1df5475e1",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 8499092
+      },
+      "originalSessionBlobId": "u9HKIiEfqyHBvFbcNQvMCgNeCgPDXGDV1Na6HTNh2fc",
+      "originalBlobId": "H3Z2FYaCEJMfdbPt9ZpLAGqrMvgmlS8J_q53rifjc1E",
+      "originalTransportBytes": 21947197,
+      "blobId": "t1fA2qUiug-_MXz4x3c2KRPwX9NBy1QKMghZFBbPVos",
+      "bytes": 22032184,
+      "sha256": "cb1b297fb7254a1db8f660c77d35266f4a35571dacd270ade7bc4613b9b81c6f",
+      "chunkCount": 7,
+      "payloadBytes": 22030248,
+      "manifestBytes": 1920,
+      "activePcmBytes": 50994552,
+      "omittedPcmBytes": 0,
+      "originalFlacSha256": "ef74035c58dd50c76857568358b97b26c74358ad5145650b85712c52e4b7a0e6",
+      "manifestPath": "manifests/8b374c1219541d61371b2eacf78d1ddd01acf4e9e7422b369044f7c1df5475e1.json",
+      "manifestSha256": "fd3f596b861031a13bf620deaa9b819d31206f48b4601d08fd31439776a9ae49"
+    },
+    {
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "bass"
+      ],
+      "identity": "sha256:f797073413ecf7782ec9e767bb4645034e8293b52c86cd888c920b33427c0d59",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 8499092
+      },
+      "originalSessionBlobId": "u9HKIiEfqyHBvFbcNQvMCgNeCgPDXGDV1Na6HTNh2fc",
+      "originalBlobId": "t6WXNg7bRoRw5_LKNd_n1y-ETPeF-X9Uwnc3ZS_WSm8",
+      "originalTransportBytes": 19381374,
+      "blobId": "Mc92_ZsA08XW855zIamdfvmdjwnp_Ff7kJHU4CfWiiw",
+      "bytes": 19492015,
+      "sha256": "1e31a0a010046f00df7c022251f80e6241a2db9b6584d38b79d7b31a6e80e437",
+      "chunkCount": 7,
+      "payloadBytes": 19490080,
+      "manifestBytes": 1919,
+      "activePcmBytes": 50994552,
+      "omittedPcmBytes": 0,
+      "originalFlacSha256": "b26c9ef76ad937aa778253cdf07e08dbfb0a5338ea8a88382c78c79fcd26b108",
+      "manifestPath": "manifests/f797073413ecf7782ec9e767bb4645034e8293b52c86cd888c920b33427c0d59.json",
+      "manifestSha256": "78ab6eb0c7e86f6bf9b442efee151b7562a13961bb17ebccf6e637f22be6e4b4"
+    },
+    {
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "lead-vox"
+      ],
+      "identity": "sha256:fc78916013c03b9827b97fe5d422b260b2926d7bd7159c9b8c967e2a49edeef3",
+      "shape": {
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "bitDepth": 24,
+        "frames": 8499092
+      },
+      "originalSessionBlobId": "u9HKIiEfqyHBvFbcNQvMCgNeCgPDXGDV1Na6HTNh2fc",
+      "originalBlobId": "9Pyqe72RrOS9wjbTyM6Bm9y8aSdSx95hxtb3TsLncbc",
+      "originalTransportBytes": 26749440,
+      "blobId": "eWf0Qdl13yk3JwImQIiFJhsgEFfVhx9olsWWwnd4Nbk",
+      "bytes": 26944442,
+      "sha256": "00f5eb39227459bdcd22bd64694bdf0228ecae73b0d072be90af98dc918cd1ee",
+      "chunkCount": 7,
+      "payloadBytes": 26942506,
+      "manifestBytes": 1920,
+      "activePcmBytes": 50994552,
+      "omittedPcmBytes": 0,
+      "originalFlacSha256": "f619570ffe223969d621e31ed7d0170a568baa1ea01fc475dd082adb5028f587",
+      "manifestPath": "manifests/fc78916013c03b9827b97fe5d422b260b2926d7bd7159c9b8c967e2a49edeef3.json",
+      "manifestSha256": "0b906e665de9434f419abfdcbc9bf80bc0f8eb7ce3a93de3db00b09716521b09"
+    }
+  ],
+  "totals": {
+    "originalTransportBytes": 431666252,
+    "bytes": 434311756,
+    "payloadBytes": 434233060,
+    "manifestBytes": 78216,
+    "activePcmBytes": 971988594,
+    "omittedPcmBytes": 336328926,
+    "chunkCount": 137
+  }
+}

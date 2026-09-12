@@ -1,0 +1,20 @@
+{
+  "purpose": "Public gateway retrieval spot-check for the smallest stem, distinct from local-input measurements; all 60 inputs verified locally in main run",
+  "transport": "curl GET; Python urllib GET to this CDN received HTTP 403, so gateways may require another caller-owned transport",
+  "rows": [
+    {
+      "kind": "published",
+      "blobId": "HhY0-HiUf0X5oditYBZr-aAdTgT2suMht6O7LG26VBs",
+      "bytes": 4192048,
+      "sha256": "0724e73b3b3f737deedd3dfe685be7323674596cef963ec5331a1eab19700bd3",
+      "url": "https://cdn.miso.fm/v1/blobs/HhY0-HiUf0X5oditYBZr-aAdTgT2suMht6O7LG26VBs"
+    },
+    {
+      "kind": "original",
+      "blobId": "jvHC9wQwEl8l_NR4u5fX7n8tV6A5GrgWn2E47Y0eYS4",
+      "bytes": 4174193,
+      "sha256": "630e05d9fba27a810d45c8a462cc57b3ddb668f57c44ef9772e528d0d9097756",
+      "url": "https://cdn.miso.fm/v1/blobs/jvHC9wQwEl8l_NR4u5fX7n8tV6A5GrgWn2E47Y0eYS4"
+    }
+  ]
+}

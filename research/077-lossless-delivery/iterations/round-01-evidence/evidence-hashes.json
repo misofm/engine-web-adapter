@@ -1,0 +1,32 @@
+{
+  "format": "issue77-round1-evidence-sha256-v3",
+  "pathBases": {
+    "files": "research/077-lossless-delivery/iterations/round-01-evidence",
+    "research": "research/077-lossless-delivery/iterations",
+    "inputs": "research/077-lossless-delivery"
+  },
+  "files": {
+    "freeze.json": "5a2707928fb594eb72d49967ac2729c9a51890f085d02374a5447e96ab63832b",
+    "model-summary.json": "668c820ad14318b9332734315ef5ef3455ae1babfb16f95371840d86fc11f49e",
+    "native-metrics.json": "ee3d4a46308dd360e353d4acfceb24315589bd06b20f142c38b317e79b3ce46d",
+    "per-session.csv": "597d839d91587010645ca486dbe399c039ea423bcf564a55764c716b7f59a584",
+    "per-stem.csv": "c2319a31d24744438f254d38421d32afbcb910152a6cbcee8e15b133591fd9d7",
+    "root-extractor-corruption.json": "49045859d6543580db929578cee7d7350c7029659c1a83b917c3f47d8df7e770",
+    "root-verification.json": "6544b915ac870795c31bc8b62dc9858997f6c58112d6a95eb691fff2f541d691",
+    "totals.csv": "ddaeac98909fe596957d903bf5cea09d8308bf4ab82b2b444a073e109fb8f288",
+    "validation.json": "46c90922079aa31b64f940f4e36dafb78e2d480dd61419035cdcf0ee7465cf88",
+    "verification.json": "77c073b6236d768d1e2071df18ccd6972591b1839c23d7dc651648e5cc7fc33b"
+  },
+  "research": {
+    "round-01-report.md": "e1eac6edfa628b3e7fac87d473ad34acc0d918bec6a55b49daca3a0c4b2a0638",
+    "round-01-scope.md": "2f01b3d0899ebf19d163856d6ce2fb80c16e424736f1fd6ef9ede1d9515c90ab",
+    "round-01/native/round1.c": "9d90b5ed1eda3d58d3b5209fc9caeb48e04959760ddd8cc86e53c333a2de8f0a",
+    "round-01/round1.py": "bca3bc3f6f754f6b5183c8ff242284e365753ab61ac3daabb7fad8931fdecf94",
+    "round-01/test_native.py": "feb065db12a3ae36e2e7d8f0e1ed0ad0df57f5a9391a4ccc0e0a6ffc974f2c60",
+    "round-01/REPRODUCTION.md": "b833e5dc79bc7b8c689f894ca43253f82081ee98d8afb3555ac17e3a4913c363"
+  },
+  "inputs": {
+    "sources.json": "2ab3f51138c6d537f3ba312cbac5001556e0d930c649a7ddee95fb223d472085",
+    "evidence/results.json": "840f81d2b79dc1f2b5c19dc21318319e9275c2f22c9fc5a010f38a7de6a0b8bf"
+  }
+}
