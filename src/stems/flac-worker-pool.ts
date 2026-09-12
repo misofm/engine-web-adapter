@@ -31,6 +31,10 @@ export interface FlacWorkerRunOptions<T> {
   readonly requestId?: number;
   readonly onProgress?: (progress: StemProgress) => void;
   readonly work: (worker: FlacWorkerLike, context?: FlacWorkerRunContext) => Promise<T>;
+  /** Bound only the shared native decoder module wait for this job. */
+  readonly moduleLoadTimeoutMs?: number;
+  /** Creates the typed failure reported when the module wait reaches its bound. */
+  readonly onModuleLoadTimeout?: () => unknown;
   /** Called when this job relinquishes its runnable/job reservation. */
   readonly onReleased?: () => void;
   /** Called only after the physical Worker is terminated. */
@@ -229,7 +233,9 @@ export class FlacWorkerPool {
     try {
       options.signal?.throwIfAborted();
       worker = this.#createWorker();
-      return await options.work(worker);
+      const value = await options.work(worker);
+      if (options.waitForRelease !== undefined) await options.waitForRelease();
+      return value;
     } catch (error) {
       failed = true;
       throw error;
@@ -312,7 +318,7 @@ export class FlacWorkerPool {
     if (pending.options.signal?.aborted) forwardAbort();
     else pending.options.signal?.addEventListener("abort", forwardAbort, { once: true });
     try {
-      moduleLease = await this.#moduleLoader?.acquire(moduleController.signal);
+      moduleLease = await this.#acquireModule(moduleController, pending.options);
       pending.options.signal?.throwIfAborted();
       // The construction controller is aborted both by the caller and by the
       // final epoch release. Passing it to admission prevents close from
@@ -347,6 +353,51 @@ export class FlacWorkerPool {
       this.#drain();
       this.#maybeFinishClose();
     }
+  }
+
+  #acquireModule(controller: AbortController, options: FlacWorkerRunOptions<unknown>): Promise<ModuleLease | undefined> {
+    const acquisition = this.#moduleLoader?.acquire(controller.signal);
+    if (acquisition === undefined || options.moduleLoadTimeoutMs === undefined) return acquisition ?? Promise.resolve(undefined);
+    const timeoutMs = options.moduleLoadTimeoutMs;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+      return Promise.reject(new RangeError("moduleLoadTimeoutMs must be positive"));
+    }
+    return new Promise<ModuleLease>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        let timeout: unknown;
+        try {
+          timeout = options.onModuleLoadTimeout?.() ?? new EngineWebAdapterError(
+            "stem.decode.stall", `FLAC decoder made no progress for ${timeoutMs}ms`,
+            { phase: "decoder-load", milliseconds: timeoutMs, retryable: false },
+          );
+        } catch (error) {
+          timeout = error;
+        }
+        // Releasing this waiter's lease aborts the shared load only when no
+        // other construction still owns it. The promise rejection below is
+        // intentionally the typed timeout, even if the loader observes the
+        // abort first and reports cancellation.
+        controller.abort(timeout);
+        reject(timeout);
+      }, timeoutMs);
+      void acquisition.then((lease) => {
+        if (settled) {
+          lease.release();
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        resolve(lease);
+      }, (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
   }
 
   async #execute(slot: WorkerSlot, pending: PendingJob<unknown>): Promise<void> {

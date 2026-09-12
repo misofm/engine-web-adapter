@@ -92,6 +92,47 @@ test("a custom worker without reset proof and a shared-admission pool keep one-j
   assert.equal(shared.every((worker) => worker.terminated), true);
 });
 
+test("a shared-admission one-shot job retains its reservation until residual output is released", async () => {
+  const admission = new BoundedStemAdmission(1);
+  const workers: ResetWorker[] = [];
+  const pool = new FlacWorkerPool({
+    admission,
+    createWorker: () => { const worker = new ResetWorker(); workers.push(worker); return worker; },
+  });
+  let releaseResidual!: () => void;
+  const residualReleased = new Promise<void>(resolve => { releaseResidual = resolve; });
+  let firstStarted!: () => void;
+  const firstWorkStarted = new Promise<void>(resolve => { firstStarted = resolve; });
+  let secondStarted = false;
+  let releaseCallbacks = 0;
+  const first = pool.run({
+    requestId: 41,
+    work: async () => { firstStarted(); return 41; },
+    waitForRelease: () => residualReleased,
+    onReleased: () => { releaseCallbacks += 1; },
+  });
+  await firstWorkStarted;
+  assert.equal(admission.stats.active, 1);
+  assert.equal(workers[0]?.terminated, false);
+
+  const second = pool.run({
+    requestId: 42,
+    work: async () => { secondStarted = true; return 42; },
+  });
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
+  assert.equal(secondStarted, false);
+  assert.equal(admission.stats.active, 1, "the slow consumer still owns the shared reservation");
+  assert.equal(releaseCallbacks, 0);
+
+  releaseResidual();
+  assert.equal(await first, 41);
+  assert.equal(await second, 42);
+  assert.equal(secondStarted, true);
+  assert.equal(workers.length, 2);
+  assert.equal(releaseCallbacks, 1);
+  assert.equal(admission.stats.active, 0);
+});
+
 test("native retained pools single-flight and cache one validated decoder module", async () => {
   const wasm = new Uint8Array(await readFile("src/internal/engine-web-flac-decoder.wasm"));
   const originalFetch = globalThis.fetch;

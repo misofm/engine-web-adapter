@@ -273,6 +273,55 @@ test("factory validates locator and decoder deadlines before the first request",
   assert.throws(() => createSparseStemResolver({ ...options, decodeNoProgressMs: 0 }), RangeError);
 });
 
+test("native decoder asset loading is bounded by the decoder progress deadline", async () => {
+  const pcm = new Uint8Array([1, 2]);
+  const expected: SparsePcmExpectation = {
+    identity: `sha256:${createHash("sha256").update(pcm).digest("hex")}`,
+    sampleRateHz: 48_000,
+    channels: 1,
+    bitDepth: 16,
+    frames: 1,
+    canonicalBytes: pcm.byteLength,
+  };
+  const packed = packageBody(new Uint8Array([0]), { expected, pcm, packedFrames: 1 });
+  const originalFetch = globalThis.fetch;
+  let moduleFetches = 0;
+  globalThis.fetch = (async () => {
+    moduleFetches += 1;
+    return new Promise<Response>(() => undefined);
+  }) as typeof fetch;
+  try {
+    const resolver = createSparseStemResolver({
+      locate: () => "https://fixture.invalid/module-timeout",
+      fetch: async () => new Response(responseBytes(packed.body), {
+        status: 200,
+        headers: { "Content-Length": String(packed.body.byteLength) },
+      }),
+      decodeNoProgressMs: 10,
+    });
+    const resolved = await resolver(expected, new AbortController().signal);
+    const iterator = resolved.spans[Symbol.asyncIterator]();
+    let settled = false;
+    const next = iterator.next().finally(() => { settled = true; });
+    const outcome = await Promise.race([
+      next.then(() => "settled" as const, () => "settled" as const),
+      new Promise<"timeout">(resolve => setTimeout(() => resolve("timeout"), 100)),
+    ]);
+    assert.equal(outcome, "settled", "module acquisition must not outrun the decoder watchdog");
+    assert.equal(settled, true);
+    await assert.rejects(next, (error: unknown) => {
+      if (!(error instanceof EngineWebAdapterError)) return false;
+      assert.equal(error.code, "stem.decode.stall");
+      assert.equal(error.details.phase, "decoder-load");
+      assert.equal(error.details.milliseconds, 10);
+      return true;
+    });
+    assert.equal(moduleFetches, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("operation abort reaches an executing full fetch and waits for its physical settlement", async () => {
   const packed = emptySilentPackage();
   let started!: () => void;

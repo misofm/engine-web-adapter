@@ -309,6 +309,11 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
         signal: controller.signal,
         onReleased: releaseRunnable,
         onTerminated: releaseRunnable,
+        moduleLoadTimeoutMs: decodeNoProgressMs,
+        onModuleLoadTimeout: () => new EngineWebAdapterError(
+          "stem.decode.stall", `FLAC decoder made no progress for ${decodeNoProgressMs}ms`,
+          { identity, phase: "decoder-load", milliseconds: decodeNoProgressMs, retryable: false },
+        ),
         ...(invocation.mode === "borrowed" ? { waitForRelease: () => outputDrain } : {}),
         ...(resolveOptions.onProgress === undefined ? {} : { onProgress: resolveOptions.onProgress }),
         work: (physical, context) => new Promise<void>((resolve, reject) => {
