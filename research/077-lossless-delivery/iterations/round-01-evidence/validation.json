@@ -1,0 +1,39 @@
+{
+  "format": "issue77-round1-validation-v1",
+  "createdUtc": "2026-09-12T15:50:52Z",
+  "nativeTests": {
+    "optimizedPassed": 8,
+    "sanitizerPassed": 8,
+    "testSourceSha256": "feb065db12a3ae36e2e7d8f0e1ed0ad0df57f5a9391a4ccc0e0a6ffc974f2c60",
+    "optimizedHelperSha256": "77b7ed521662833ae32d4a68a08c4047c4f405065657dfe409d0db2196359331",
+    "sanitizerHelperSha256": "874cb5df4bc2853828f18f220a5b8182c6059e724d4a1c05ae9dfdd55e64c7e1",
+    "rootSanitizerOptions": {
+      "ASAN_OPTIONS": "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+      "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+    }
+  },
+  "sanitizerPilot": {
+    "stemsPassed": 4,
+    "resultsSha256": "a8c67c3628e1e528580cb61f5496ffd85ae0354bb3a40a119c74dd8a52eb5d04",
+    "freezeSha256": "8f5386958f66148cc18db521e53059da3a2023764eb321304c21679a5a6a2f55",
+    "stderrLogsChecked": 25,
+    "allStderrEmpty": true
+  },
+  "existingVerificationTests": {
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "research/077-lossless-delivery",
+      "-p",
+      "test_*.py",
+      "-v"
+    ],
+    "exitCode": 0,
+    "output": "test_exact_signed_extrema_and_single_lsb_survive_gaps (test_verification.VerificationTests.test_exact_signed_extrema_and_single_lsb_survive_gaps) ... ok\ntest_nonzero_omitted_leading_middle_and_trailing_bytes_rejected (test_verification.VerificationTests.test_nonzero_omitted_leading_middle_and_trailing_bytes_rejected) ... ok\ntest_overlap_bad_packed_offset_and_chunk_mismatch_rejected (test_verification.VerificationTests.test_overlap_bad_packed_offset_and_chunk_mismatch_rejected) ... ok\ntest_portable_publication_baseline (test_verification.VerificationTests.test_portable_publication_baseline) ... ok\ntest_swapped_channels_rejected (test_verification.VerificationTests.test_swapped_channels_rejected) ... ok\ntest_transfer_bounds_and_short_input (test_verification.VerificationTests.test_transfer_bounds_and_short_input) ... ok\ntest_truncated_and_trailing_original_pcm_rejected (test_verification.VerificationTests.test_truncated_and_trailing_original_pcm_rejected) ... ok\ntest_truncated_and_trailing_packed_pcm_rejected (test_verification.VerificationTests.test_truncated_and_trailing_packed_pcm_rejected) ... ok\n\n----------------------------------------------------------------------\nRan 8 tests in 0.009s\n\nOK\n"
+  },
+  "extractorCorruptionCasesPassed": 4,
+  "fullCorpusRootAuditStemsPassed": 30
+}

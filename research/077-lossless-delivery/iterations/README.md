@@ -37,8 +37,8 @@ and native memory evidence do not stand in for mobile/browser measurements.
 
 | Round | Astra scope | Luna implementation and measurement | Verification |
 | --- | --- | --- | --- |
-| 1 | In progress | Pending scope | Pending |
-| 2 | Pending round 1 findings | Pending | Pending |
+| 1 | [Exact residual accounting](round-01-scope.md) | [Complete report](round-01-report.md): context model estimates 0.617% lower delivery bytes | All 30 reconstructions and exact accounting pass; optimized/sanitizer suites and four-stem sanitizer pilot pass |
+| 2 | [Actual Rice vs context-rANS artifacts](round-02-scope.md) | Implementation in progress | Pending |
 | 3 | Pending round 2 findings | Pending | Pending |
 | 4 | Pending round 3 findings | Pending | Pending |
 | 5 | Pending round 4 findings | Pending | Pending |

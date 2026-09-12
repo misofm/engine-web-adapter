@@ -1,0 +1,2 @@
+stemCount,controlBytes,manifestBytes,frameBytes,candidateManifestBytes,envelopeHeaderBytes,envelopeBytes,metadataBytes,residualSamples,quotientBits,remainderBits,idealModelBits,tableModelBits,contextModelBits,qTableBytes,contextTableBytes,coderStateBits,nominalPaddingBits
+30,425415665,78216,425325188,78215,480,78695,11782,319124089,622572113,2744193154,3386006923.1853056,3386483027.5492163,3382340265.8831015,73704,377668,2498784,624696
