@@ -9,14 +9,16 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.3.6 @misofm/engine@0.2.3
+npm install @misofm/engine-web-adapter@0.3.7 @misofm/engine@0.2.3
 ```
 
 The package is ESM-only and remains pinned to exactly Engine `0.2.3`.
 The integration uses the published Engine 0.2.3 archive
 from commit `0d9af85d9cfeb8ccb2567aea26bdcf284a73fa0c`, SHA256
 `2fd0f6f6bc4c7e311fdd10610c6c26de810e564a89ad912fc1961bebd8d5c590`.
-This release publishes the accepted sparse stem APIs alongside the existing native-FLAC path; full-GET sparse acquisition remains outside its scope.
+This release adds indexed full-response stem acquisition: active FLAC chunks are
+decoded once into verified sparse PCM, and timeline gaps are generated as zeroes
+when the Engine reads them. The existing native-FLAC path remains available.
 
 ## Open a native-FLAC session
 
