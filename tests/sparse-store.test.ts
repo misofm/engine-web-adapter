@@ -1065,4 +1065,64 @@ describe("VerifiedSparsePcmStore", () => {
     assert.equal(elementReads, 0);
     await store.close();
   });
+
+  it("reports cumulative cold ingest and warm verification work, including zero gaps", async () => {
+    const canonical = new Uint8Array(200_000);
+    for (let index = 20_000; index < 40_000; index += 1) canonical[index] = index % 251 + 1;
+    for (let index = 160_000; index < 180_000; index += 1) canonical[index] = index % 241 + 1;
+    const expected = expectation(canonical, canonical.byteLength / 2);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "progress" });
+    const cold: import("../src/stems/types.js").StemProgress[] = [];
+    await store.installSource(expected, {
+      resolve: async () => ({ spans: spans(
+        { startFrame: 10_000, bytes: canonical.slice(20_000, 40_000) },
+        { startFrame: 80_000, bytes: canonical.slice(160_000, 180_000) },
+      ) }),
+      onProgress: (event) => cold.push(event),
+    });
+    const coldBytes = cold.filter((event): event is Extract<typeof event, { bytes: number; totalBytes: number }> => "bytes" in event && "totalBytes" in event && event.stage === "ingesting");
+    assert.ok(coldBytes.length >= 3, "large logical gaps need more than one ingest advance");
+    assert.equal(coldBytes.at(-1)?.bytes, expected.canonicalBytes);
+    assert.ok(coldBytes.every((event) => event.identity === expected.identity && event.byteKind === "pcm" && event.totalBytes === expected.canonicalBytes && event.bytes >= 0 && event.bytes <= event.totalBytes));
+    assert.equal(cold.filter((event) => event.stage === "source-ready").length, 1);
+
+    const warm: import("../src/stems/types.js").StemProgress[] = [];
+    await store.installSource(expected, {
+      resolve: async () => { throw new Error("warm sparse install must not resolve"); },
+      onProgress: (event) => warm.push(event),
+    });
+    const warmBytes = warm.filter((event): event is Extract<typeof event, { bytes: number; totalBytes: number }> => "bytes" in event && "totalBytes" in event && event.stage === "verifying");
+    assert.ok(warmBytes.length >= 3, "large logical gaps need more than one verification advance");
+    assert.equal(warmBytes.at(-1)?.bytes, expected.canonicalBytes);
+    assert.equal(warm.some((event) => event.stage === "ingesting"), false);
+    assert.equal(warm.filter((event) => event.stage === "source-ready").length, 1);
+    const observedDespiteThrow = await store.openSource(expected, { onProgress: () => { throw new Error("observer failure"); } });
+    assert.equal(observedDespiteThrow?.data.size, 40_000);
+    await store.close();
+  });
+
+  it("forwards resolver progress context and emits one ready proof per alias", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const expected = expectation(bytes, 2);
+    const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "progress-alias" });
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    let contextSeen = false;
+    const lease = await store.openSession({
+      leaseId: "progress-alias",
+      sources: [{ ...expected, sourceId: "left" }, { ...expected, sourceId: "right" }],
+      resolve: async (_source, _signal, context) => {
+        contextSeen = typeof context?.onProgress === "function";
+        context?.onProgress?.({ stage: "probing", identity: expected.identity, bytes: 0, totalBytes: expected.canonicalBytes, byteKind: "flac" });
+        return { spans: spans({ startFrame: 0, bytes }) };
+      },
+      onProgress: (event) => events.push(event),
+    });
+    assert.equal(contextSeen, true);
+    const readySources = events.filter((event): event is Extract<typeof event, { stage: "source-ready" }> => event.stage === "source-ready");
+    assert.deepEqual(readySources.map((event) => event.sourceId), ["left", "right"]);
+    assert.deepEqual(events.filter((event) => event.stage === "ready").map((event) => [event.sourcesReady, event.sourcesTotal]), [[2, 2]]);
+    assert.ok(events.find((event) => event.stage === "probing" && event.identity === expected.identity));
+    await lease.close();
+    await store.close();
+  });
 });

@@ -7,6 +7,7 @@ import { EngineWebAdapterError } from "../src/errors.js";
 import { serializeSparseStemIndex, MemoryStemStorageBackend, VerifiedSparsePcmStore, createSparseStemResolver } from "../src/stems/index.js";
 import type { FlacWorkerLike, FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
 import type { SparsePcmExpectation } from "../src/stems/sparse-store.js";
+import type { StemProgress } from "../src/stems/types.js";
 
 const ZERO_IDENTITY = `sha256:${createHash("sha256").update(new Uint8Array(4096)).digest("hex")}` as const;
 
@@ -590,12 +591,28 @@ test("sparse full GET installs an actual FLAC payload cold and resolves warm wit
     createWorker: () => { workers += 1; return new DecodeWorker(); },
     hardwareConcurrency: 2,
   });
-  const cold = await store.installSource(packed.expected, { resolve: signal => resolver(packed.expected, signal) });
+  const progress: import("../src/stems/types.js").StemProgress[] = [];
+  const cold = await store.installSource(packed.expected, {
+    resolve: (signal, context) => resolver(packed.expected, signal, context),
+    onProgress: (event) => progress.push(event),
+  });
   assert.equal(cold.data.size, packed.expected.canonicalBytes);
   assert.equal(cold.index.activeBytes, packed.expected.canonicalBytes);
   assert.equal(fetches, 1);
   assert.equal(locates, 1);
   assert.equal(workers, 1);
+  const probing = progress.filter((event): event is StemProgress & { readonly stage: "probing" } => event.stage === "probing");
+  const fetching = progress.filter((event): event is StemProgress & { readonly stage: "fetching" } => event.stage === "fetching");
+  assert.ok(probing.length > 0);
+  assert.ok(fetching.length > 0);
+  const finalFetching = fetching.at(-1);
+  assert.equal(finalFetching?.byteKind, "flac");
+  assert.equal(finalFetching?.bytes, packed.body.byteLength);
+  assert.equal(finalFetching?.totalBytes, packed.body.byteLength);
+  const decoding = progress.filter((event): event is StemProgress & { readonly stage: "decoding" } => event.stage === "decoding");
+  assert.ok(decoding.length > 0);
+  assert.equal(decoding.at(-1)?.bytes, packed.expected.canonicalBytes);
+  assert.equal(decoding.at(-1)?.totalBytes, packed.expected.canonicalBytes);
 
   let warmResolverCalls = 0;
   const warm = await store.installSource(packed.expected, {

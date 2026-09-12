@@ -31,6 +31,7 @@ import {
 import { createFlacStemResolver } from "./stems/flac-resolver.js";
 import { canonicalPcmBytes } from "./stems/identity.js";
 import { OpfsStorageBackend, VerifiedSparsePcmStore } from "./stems/index.js";
+import { sparseProgressReporter } from "./stems/progress.js";
 import { OpfsStemStore } from "./stems/store.js";
 import { PcmPumpWorkerClient } from "./stems/worker-client.js";
 import type { PcmPumpSource, SparsePcmPumpSource } from "./stems/pump.js";
@@ -80,7 +81,9 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
 }
 
 export async function openSparseEngineWebSession(options: SparseEngineWebSessionOptions): Promise<EngineWebSession> {
-  const { store, resolver, maximumMetadataBytes, createPump, assets } = options;
+  const { store, resolver, maximumMetadataBytes, createPump, assets, onProgress, ...commonOptions } = options;
+  if (onProgress !== undefined && typeof onProgress !== "function") throw new TypeError("Sparse session onProgress must be a function");
+  const progress = sparseProgressReporter(onProgress);
   // This entry point has one source contract. Refuse dense/FLAC-shaped input
   // before capability checks, scratch compilation, or any store work can run.
   const candidate = options as unknown as { readonly flac?: unknown };
@@ -91,9 +94,13 @@ export async function openSparseEngineWebSession(options: SparseEngineWebSession
       { hasFlac: candidate.flac !== undefined, hasDenseResolver: resolver !== undefined && typeof resolver !== "function" },
     );
   }
-  return openSessionCommon(options, (input) => prepareSparseSources({
-    ...input, store, resolver, maximumMetadataBytes, createPump, assets,
-  }));
+  try {
+    return await openSessionCommon({ ...commonOptions, onProgress: progress.emit }, (input) => prepareSparseSources({
+      ...input, store, resolver, maximumMetadataBytes, createPump, assets, onProgress: progress.emit,
+    }));
+  } finally {
+    progress.close();
+  }
 }
 
 interface PreparedSources {
@@ -127,6 +134,7 @@ interface SparseSourcePreparationInput extends SourcePreparationInput {
   readonly maximumMetadataBytes: number | undefined;
   readonly createPump: SparseEngineWebSessionOptions["createPump"];
   readonly assets: SparseEngineWebSessionOptions["assets"];
+  readonly onProgress: SparseEngineWebSessionOptions["onProgress"];
 }
 
 async function openSessionCommon(options: SessionOpenOptions, prepareSources: PrepareSources): Promise<EngineWebSession> {
@@ -480,6 +488,7 @@ const acquireSparseSources = Effect.fn("Session.acquireSparseSources")(function*
       signal: input.signal,
       ...(input.resolver === undefined ? {} : { resolve: input.resolver }),
       ...(input.maximumMetadataBytes === undefined ? {} : { maximumMetadataBytes: input.maximumMetadataBytes }),
+      ...(input.onProgress === undefined ? {} : { onProgress: input.onProgress }),
     };
     // The store owns cancellation and waits for its opening Promise to settle;
     // keeping this acquisition uninterruptible prevents a late lease from

@@ -200,19 +200,28 @@ PCM ring arithmetic is owned by the SDK.
 
 ## Verified source progress
 
-The package store emits `onProgress({ stage: "source-ready", identity, bytes })`
-once per unique identity during each open, for cold ingest and warm verification.
-`bytes` is the verified canonical PCM length. This event follows exact length and
-SHA-256 verification and successful persistence of the opening's ownership pin.
-It lets a caller mark that source complete while other sources are still loading;
-duplicate source declarations sharing an identity do not duplicate the event.
+Sparse opens forward `onProgress(progress)` through the response, resolver, and
+verified store. `probing` and `fetching` use `byteKind: "flac"`; their cumulative
+`bytes` count is the actual container bytes consumed from one full sparse GET,
+including its header and manifest. `decoding` uses `byteKind: "pcm"` and counts
+packed active PCM cumulatively across every chunk against the complete canonical
+PCM length. Cold `ingesting` and warm `verifying` also use canonical PCM bytes;
+both include implicit zero gaps and advance only after the corresponding hash
+work (and, for ingest, staging writes) succeeds. Counters are finite,
+nonnegative, safe integers, monotonic per identity/stage/kind, and never exceed
+their totals. Fast byte notifications are coalesced per operation while stage
+starts and terminal boundaries remain observable.
 
-`source-ready` does not make the session playable. The unchanged aggregate
-`ready` event waits for every declaration, and the session still completes its
-normal prefill before returning. Failed verification or pin persistence emits no
-source proof. Cancellation from a progress callback rejects the open and releases
-its ownership without aggregate readiness. If a later source fails, earlier
-verified files can remain cached, but the failed opening releases its pins.
+`source-ready` means that complete canonical shape, byte count, digest, and
+marker ownership have passed. It is emitted once for each declared source ID,
+so aliases receive separate readiness events even though they share one verified
+descriptor. The aggregate `ready` event follows the all-declaration barrier and
+cancellation check; normal engine `prefilling` follows source preparation and
+still completes before the session is returned. A progress callback is
+observation only: synchronous throws and rejected thenables are contained, and
+cannot turn valid content into `stem.corrupt` or mask an operation cleanup
+failure. Failed verification or cancellation emits no readiness proof for that
+source or aggregate open.
 
 ## Per-open ingest diagnostics
 

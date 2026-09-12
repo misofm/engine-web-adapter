@@ -18,7 +18,8 @@ import {
 import type { AdapterAssetOverrides } from "../assets.js";
 import type { SparsePcmExpectation, SparsePcmResolved, SparsePcmSpan } from "./sparse-store.js";
 import { openSparseResponse, type SparseResponseCursor } from "./sparse-response.js";
-import type { StemIdentity } from "./types.js";
+import { sparseProgressReporter, type SparseProgressReporter } from "./progress.js";
+import type { SparseStemResolverContext, StemIdentity, StemProgress } from "./types.js";
 
 export type SparseStemLocator = (
   identity: StemIdentity,
@@ -44,6 +45,27 @@ function validateOptions(options: SparseStemDeliveryOptions): void {
   if (typeof parsed.locate !== "function") throw new TypeError("createSparseStemResolver requires locate");
   for (const [name, value] of [["readDeadlineMs", parsed.readDeadlineMs], ["decodeNoProgressMs", parsed.decodeNoProgressMs]] as const) {
     if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) throw new RangeError(`${name} must be positive`);
+  }
+}
+
+function snapshotResolverContext(input: SparseStemResolverContext | undefined): SparseStemResolverContext {
+  if (input === undefined) return Object.freeze({});
+  try {
+    if (typeof input !== "object" || input === null || Array.isArray(input) || Object.getOwnPropertySymbols(input).length !== 0) {
+      throw new TypeError("sparse resolver context must be a plain object");
+    }
+    const keys = Object.keys(input);
+    if (keys.length > 1 || (keys.length === 1 && keys[0] !== "onProgress")) {
+      throw new TypeError("sparse resolver context has an unknown key");
+    }
+    const onProgress = input.onProgress;
+    if (onProgress !== undefined && typeof onProgress !== "function") {
+      throw new TypeError("sparse resolver context onProgress must be a function");
+    }
+    return Object.freeze(onProgress === undefined ? {} : { onProgress });
+  } catch (cause) {
+    if (cause instanceof TypeError && cause.message.startsWith("sparse resolver context")) throw cause;
+    throw new TypeError("sparse resolver context could not be snapshotted", { cause });
   }
 }
 
@@ -120,11 +142,14 @@ interface SparsePullState {
   readonly signal: AbortSignal;
   readonly abort: () => void;
   readonly payloadStart: number;
+  readonly progress: SparseProgressReporter;
   chunkIndex: number;
   currentChunk: SparseStemChunk | undefined;
   currentReader: ReadableStreamDefaultReader<BorrowedFlacPcm> | undefined;
   currentBlock: CurrentBlock | undefined;
   chunkFrames: number;
+  chunkDecodedBytes: number;
+  decodedBytes: number;
   packedFrame: number;
   intervalIndex: number;
   done: boolean;
@@ -219,6 +244,7 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
         state.currentChunk = undefined;
         state.chunkIndex += 1;
         state.chunkFrames = 0;
+        state.chunkDecodedBytes = 0;
         continue;
       }
 
@@ -231,13 +257,35 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
       }
       const expectedPosition = state.payloadStart + chunk.offset;
       if (state.cursor.position !== expectedPosition) return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "Sparse finite source cursor is not at its admitted chunk", { identity: state.expected.identity, expectedPosition, actualPosition: state.cursor.position }));
-      const resolver = createFlacStemChunkResolver({
+      const onChunkProgress = (progress: StemProgress): void => {
+        if (progress.stage === "decoding" && progress.byteKind === "pcm") {
+          if (!Number.isSafeInteger(progress.bytes) || progress.bytes < state.chunkDecodedBytes ||
+            !Number.isSafeInteger(progress.totalBytes) || progress.totalBytes < 1) return;
+          const delta = progress.bytes - state.chunkDecodedBytes;
+          const next = state.decodedBytes + delta;
+          if (!Number.isSafeInteger(next) || next > state.expected.canonicalBytes) return;
+          state.chunkDecodedBytes = progress.bytes;
+          state.decodedBytes = next;
+          state.progress.emit({
+            ...progress,
+            identity: state.expected.identity,
+            bytes: next,
+            totalBytes: state.expected.canonicalBytes,
+            byteKind: "pcm",
+          });
+          return;
+        }
+        state.progress.emit(progress);
+      };
+      const chunkOptions: FlacChunkDecodeOptions & { readonly onProgress: (progress: StemProgress) => void } = {
         ...state.options,
         workerPool: state.pool,
         wholeSourceIdentity: state.expected.identity,
         chunk: { expected: chunkExpected(state.manifest, chunk), pcmSha256: chunk.pcmSha256 },
         sourceFactory: sourceFactory(state.cursor, chunk),
-      });
+        onProgress: onChunkProgress,
+      };
+      const resolver = createFlacStemChunkResolver(chunkOptions);
       const resolving = resolver.resolve(state.signal);
       const tracked = resolving.then((result) => {
         state.activeOutput = result.output;
@@ -299,7 +347,11 @@ function operationFailure(identity: StemIdentity, cause: Cause.Cause<unknown>, c
 /** Keep one explicit Effect Scope for the lazy stream and physical resources. */
 type SparsePullChunk = readonly [SparsePcmSpan, ...SparsePcmSpan[]];
 
-function scopedAsyncIterable(stream: Stream.Stream<SparsePcmSpan, EngineWebAdapterError>, identity: StemIdentity): AsyncIterable<SparsePcmSpan> {
+function scopedAsyncIterable(
+  stream: Stream.Stream<SparsePcmSpan, EngineWebAdapterError>,
+  identity: StemIdentity,
+  onClose?: () => void,
+): AsyncIterable<SparsePcmSpan> {
   return {
     [Symbol.asyncIterator]() {
       const context = Context.empty();
@@ -315,6 +367,7 @@ function scopedAsyncIterable(stream: Stream.Stream<SparsePcmSpan, EngineWebAdapt
         if (closePromise !== undefined) return closePromise;
         const fiber = currentFiber;
         closePromise = (async () => {
+          onClose?.();
           const failures: unknown[] = [];
           if (fiber !== undefined) {
             try {
@@ -424,7 +477,7 @@ function snapshotOptions(options: SparseStemDeliveryOptions): Omit<SparseStemDel
 
 export function createSparseStemResolver(
   options: SparseStemDeliveryOptions,
-): (expected: SparsePcmExpectation, signal: AbortSignal) => Promise<SparsePcmResolved> {
+): (expected: SparsePcmExpectation, signal: AbortSignal, context?: SparseStemResolverContext) => Promise<SparsePcmResolved> {
   const snapshot = snapshotOptions(options);
   validateOptions(snapshot);
   const widths = flacPipelineWidths(snapshot);
@@ -439,10 +492,14 @@ export function createSparseStemResolver(
   });
   const downloadAdmission = new BoundedStemAdmission(widths.downloads);
 
-  return async (expected, signal) => {
-    const frameBytes = safeFrameBytes(expected);
-    if (signal.aborted) throw new EngineWebAdapterError("stem.cancelled", "Sparse installation was cancelled before acquisition", { identity: expected.identity }, signal.reason);
-    const acquisition = Effect.gen(function*() {
+  return async (expected, signal, context) => {
+    const checkedContext = snapshotResolverContext(context);
+    const progress = sparseProgressReporter(checkedContext.onProgress, expected.identity);
+    let handedOff = false;
+    try {
+      const frameBytes = safeFrameBytes(expected);
+      if (signal.aborted) throw new EngineWebAdapterError("stem.cancelled", "Sparse installation was cancelled before acquisition", { identity: expected.identity }, signal.reason);
+      const acquisition = Effect.gen(function*() {
       const operation = new AbortController();
       const onAbort = () => operation.abort(signal.reason);
       if (signal.aborted) operation.abort(signal.reason);
@@ -451,6 +508,18 @@ export function createSparseStemResolver(
         signal.removeEventListener("abort", onAbort);
         operation.abort(new DOMException("Sparse stream scope closed", "AbortError"));
       }));
+      let responseStage: "probing" | "fetching" = "probing";
+      let responseTotal: number | undefined;
+      const reportResponse = (bytes: number): void => {
+        if (responseTotal === undefined) return;
+        progress.emit({
+          stage: responseStage,
+          identity: expected.identity,
+          bytes,
+          totalBytes: responseTotal,
+          byteKind: "flac",
+        });
+      };
       const cursor = yield* openSparseResponse({
         identity: expected.identity,
         locate: snapshot.locate,
@@ -459,6 +528,7 @@ export function createSparseStemResolver(
         admission: downloadAdmission,
         signal: operation.signal,
         abortOperation: operation.abort.bind(operation),
+        onProgress: reportResponse,
       });
       const header = yield* cursor.readExact(SPARSE_STEM_HEADER_BYTES);
       const headerAdmission = yield* Effect.try({ try: () => admitSparseStemHeader(header), catch: cause => cause instanceof EngineWebAdapterError ? cause : new EngineWebAdapterError("stem.corrupt", "Sparse header admission failed", { identity: expected.identity }, cause) });
@@ -466,7 +536,11 @@ export function createSparseStemResolver(
       const manifest = yield* Effect.try({ try: () => admitSparseStemManifest(encodedManifest), catch: cause => cause instanceof EngineWebAdapterError ? cause : new EngineWebAdapterError("stem.corrupt", "Sparse manifest admission failed", { identity: expected.identity }, cause) });
       yield* Effect.try({ try: () => assertSparseStemSessionBinding(manifest, expected), catch: cause => cause instanceof EngineWebAdapterError ? cause : new EngineWebAdapterError("stem.invalid_declaration", "Sparse manifest does not match its session source", { identity: expected.identity }, cause) });
       const payload = payloadBytes(manifest);
-      yield* cursor.assertContentLength(headerAdmission.payloadStart + payload);
+      responseTotal = headerAdmission.payloadStart + payload;
+      yield* cursor.assertContentLength(responseTotal);
+      progress.emit({ stage: "probing", identity: expected.identity, bytes: cursor.position, totalBytes: responseTotal, byteKind: "flac" });
+      responseStage = "fetching";
+      progress.emit({ stage: "fetching", identity: expected.identity, bytes: cursor.position, totalBytes: responseTotal, byteKind: "flac" });
       const state: SparsePullState = {
         cursor,
         manifest,
@@ -477,11 +551,14 @@ export function createSparseStemResolver(
         signal: operation.signal,
         abort: () => operation.abort(new DOMException("Sparse stream scope closed", "AbortError")),
         payloadStart: headerAdmission.payloadStart,
+        progress,
         chunkIndex: 0,
         currentChunk: undefined,
         currentReader: undefined,
         currentBlock: undefined,
         chunkFrames: 0,
+        chunkDecodedBytes: 0,
+        decodedBytes: 0,
         packedFrame: 0,
         intervalIndex: 0,
         done: false,
@@ -512,8 +589,12 @@ export function createSparseStemResolver(
         if (failures.length > 0) throw closeFailure(state.expected.identity, "decoder", failures);
       }));
       return Stream.fromPull(Effect.succeed(nextSparseSpan(state)));
-    });
-    const stream = Stream.unwrap(acquisition).pipe(Stream.provide(FetchHttpClient.layer));
-    return { spans: scopedAsyncIterable(stream as Stream.Stream<SparsePcmSpan, EngineWebAdapterError>, expected.identity) };
+      });
+      const stream = Stream.unwrap(acquisition).pipe(Stream.provide(FetchHttpClient.layer));
+      handedOff = true;
+      return { spans: scopedAsyncIterable(stream as Stream.Stream<SparsePcmSpan, EngineWebAdapterError>, expected.identity, progress.close) };
+    } finally {
+      if (!handedOff) progress.close();
+    }
   };
 }
