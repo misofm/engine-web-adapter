@@ -255,8 +255,18 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
         yield* state.cursor.assertEof;
         if (state.signal.aborted) return yield* Effect.fail(sparseStreamCancelled(state.expected.identity, state.signal.reason));
         // Active PCM decoding can finish below the full canonical total when
-        // the manifest contains implicit zero gaps. Deliver that final
-        // truthful boundary before the stream scope closes the reporter.
+        // the manifest contains implicit zero gaps. Force a fresh cumulative
+        // boundary even when the decoder's final event already passed this
+        // reporter but was coalesced by a nested forwarding reporter.
+        if (state.decodedBytes > 0) {
+          state.progress.emitForced({
+            stage: "decoding",
+            identity: state.expected.identity,
+            bytes: state.decodedBytes,
+            totalBytes: state.expected.canonicalBytes,
+            byteKind: "pcm",
+          });
+        }
         state.progress.flush();
         if (state.signal.aborted) return yield* Effect.fail(sparseStreamCancelled(state.expected.identity, state.signal.reason));
         state.done = true;

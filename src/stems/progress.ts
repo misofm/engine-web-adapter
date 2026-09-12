@@ -9,6 +9,12 @@ export type ProgressObserver = (progress: StemProgress) => void;
 
 const COALESCE_MS = 50;
 const forcedBoundaries = new WeakSet<object>();
+const forcedObservers = new WeakMap<ProgressObserver, ProgressObserver>();
+
+/** Register the private force path for a forwarding observer. */
+export function registerForcedProgressObserver(observer: ProgressObserver, forced: ProgressObserver): void {
+  forcedObservers.set(observer, forced);
+}
 
 export function observeProgress(observer: ProgressObserver | undefined, progress: StemProgress): void {
   if (observer === undefined) return;
@@ -22,6 +28,8 @@ export function observeProgress(observer: ProgressObserver | undefined, progress
 
 export interface SparseProgressReporter {
   readonly emit: (progress: StemProgress) => void;
+  /** Deliver a successful terminal byte boundary through nested reporters. */
+  readonly emitForced: (progress: StemProgress) => void;
   /** Flush the latest coalesced byte boundary after a successful operation. */
   readonly flush: () => void;
   readonly close: () => void;
@@ -41,6 +49,13 @@ export function sparseProgressReporter(
   const delivered = new Map<string, number>();
   const deliveredAt = new Map<string, number>();
   const pending = new Map<string, StemProgress>();
+
+  const deliver = (progress: StemProgress, key: string, bytes: number, at = monotonicNow()): void => {
+    pending.delete(key);
+    delivered.set(key, bytes);
+    deliveredAt.set(key, at);
+    observeProgress(observer, progress);
+  };
 
   const emit = (input: StemProgress): void => {
     if (!attached) return;
@@ -71,13 +86,46 @@ export function sparseProgressReporter(
         pending.set(key, progress);
         return;
       }
-      pending.delete(key);
-      delivered.set(key, bounded);
-      deliveredAt.set(key, now);
-      observeProgress(observer, progress);
+      deliver(progress, key, bounded, now);
       return;
     }
     observeProgress(observer, progress);
+  };
+
+  const emitForced = (input: StemProgress): void => {
+    if (!attached) return;
+    const progress = addContext(input, identity, sourceId);
+    if (!("bytes" in progress) || !("totalBytes" in progress)) {
+      forcedBoundaries.add(progress);
+      observeProgress(observer, progress);
+      return;
+    }
+    if (!Number.isSafeInteger(progress.bytes) || progress.bytes < 0 ||
+      !Number.isSafeInteger(progress.totalBytes) || progress.totalBytes < 0 ||
+      progress.bytes > progress.totalBytes) return;
+    const identityKey = progress.identity === undefined ? "" : `:${progress.identity}`;
+    const sourceKey = progress.sourceId === undefined ? "" : `:${progress.sourceId}`;
+    const key = progress.stage + ":" + ("byteKind" in progress ? progress.byteKind : "count") + identityKey + sourceKey;
+    const prior = delivered.get(key) ?? 0;
+    const queued = pending.get(key);
+    if (queued !== undefined && "bytes" in queued && queued.bytes === progress.bytes) {
+      forcedBoundaries.add(queued);
+      deliver(queued, key, queued.bytes);
+      return;
+    }
+    pending.delete(key);
+    if (progress.bytes < prior) return;
+    if (progress.bytes === prior) {
+      // The current reporter already delivered this boundary. If its
+      // observer is another reporter, ask that reporter to force its own
+      // pending copy instead of delivering a duplicate to the caller.
+      forcedBoundaries.add(progress);
+      const forced = forcedObservers.get(observer as ProgressObserver);
+      if (forced !== undefined) observeProgress(forced, progress);
+      return;
+    }
+    forcedBoundaries.add(progress);
+    deliver(progress, key, progress.bytes);
   };
 
   const flush = (): void => {
@@ -103,8 +151,10 @@ export function sparseProgressReporter(
     }
   };
 
+  forcedObservers.set(emit, emitForced);
   return {
     emit,
+    emitForced,
     flush,
     close: () => { attached = false; pending.clear(); },
   };

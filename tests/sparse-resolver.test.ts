@@ -311,6 +311,37 @@ test("successful sparse progress flushes its latest coalesced boundary before cl
   assert.deepEqual(observed.map((progress) => progress.bytes), [10_000, 20_000, 21_000]);
 });
 
+test("successful sparse progress forces a boundary through an outer coalescer", () => {
+  const identity = `sha256:${"d".repeat(64)}` as const;
+  const observed: number[] = [];
+  const outer = sparseProgressReporter((event) => {
+    if (event.stage === "decoding" && "bytes" in event) observed.push(event.bytes);
+  });
+  const inner = sparseProgressReporter(outer.emit, identity);
+  const event = (bytes: number): StemProgress => ({
+    stage: "decoding", identity, bytes, totalBytes: 100_000, byteKind: "pcm",
+  });
+  const clock = [0, 10, 20, 30, 70, 70.1];
+  let clockIndex = 0;
+  Object.defineProperty(performance, "now", {
+    configurable: true,
+    value: () => clock[Math.min(clockIndex++, clock.length - 1)],
+  });
+  try {
+    inner.emit(event(10_000));
+    inner.emit(event(20_000));
+    // The inner reporter delivers this after its 50 ms boundary, while the
+    // outer reporter coalesces it at its own clock position.
+    inner.emit(event(21_000));
+    inner.emitForced(event(21_000));
+    assert.deepEqual(observed, [10_000, 20_000, 21_000]);
+    inner.close();
+    outer.close();
+  } finally {
+    Reflect.deleteProperty(performance, "now");
+  }
+});
+
 test("native decoder asset loading is bounded by the decoder progress deadline", async () => {
   const pcm = new Uint8Array([1, 2]);
   const expected: SparsePcmExpectation = {

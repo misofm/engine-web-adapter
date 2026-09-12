@@ -1,7 +1,7 @@
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
 
 import { EngineWebAdapterError } from "../errors.js";
-import { sparseProgressReporter, type ProgressObserver } from "./progress.js";
+import { registerForcedProgressObserver, sparseProgressReporter, type ProgressObserver } from "./progress.js";
 import { sparseResolverScheduling } from "./sparse-scheduling.js";
 import { assertStemIdentity } from "./identity.js";
 import { canonicalJsonBytes } from "./canonical-json.js";
@@ -382,6 +382,10 @@ class SparseProgram extends Context.Service<SparseProgram, {
         if (event.stage === "source-ready" || event.stage === "ready") return;
         progress.emit(event);
       };
+      registerForcedProgressObserver(reportResolverProgress, (event) => {
+        if (event.stage === "source-ready" || event.stage === "ready") return;
+        progress.emitForced(event);
+      });
       const resolved = yield* resolveSource(checkedOptions.resolve, operation.signal, backend.readDeadlineMs, { onProgress: reportResolverProgress });
       // Resolve owns the child abort controller as soon as it succeeds. Keep
       // the iterator in a scope before any index/generation admission can
@@ -448,6 +452,10 @@ class SparseProgram extends Context.Service<SparseProgram, {
           if (event.stage === "source-ready" || event.stage === "ready") return;
           sourceProgress.emit(event);
         };
+        registerForcedProgressObserver(reportSourceProgress, (event) => {
+          if (event.stage === "source-ready" || event.stage === "ready") return;
+          sourceProgress.emitForced(event);
+        });
         const descriptor = checked.resolve === undefined
           ? yield* Effect.scoped(openSource(unique, { signal: operation.signal, onProgress: reportSourceProgress }))
           : yield* Effect.scoped(installSource(unique, {
