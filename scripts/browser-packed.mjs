@@ -873,8 +873,7 @@ function assertProgress(events: readonly Record<string, unknown>[], sources: rea
         const highest = Math.max(...values);
         const frameBytes = source.expected.channels * (source.expected.bitDepth / 8);
         const firstChunkBytes = source.chunks[0].frames * frameBytes;
-        const coalescingBound = Math.max(1, Math.ceil(source.expected.canonicalBytes / 20));
-        if (highest <= firstChunkBytes || highest > expectedBytes || highest < expectedBytes - coalescingBound) throw new Error("indexed decoding did not cumulatively approach its declared EOF for " + source.name + ": " + JSON.stringify({ expectedBytes, highest, firstChunkBytes, final }));
+        if (highest <= firstChunkBytes || highest !== expectedBytes || final.bytes !== expectedBytes) throw new Error("indexed decoding did not reach its declared active EOF for " + source.name + ": " + JSON.stringify({ expectedBytes, highest, firstChunkBytes, final }));
       } else if (final.bytes !== expectedBytes) {
         throw new Error("indexed " + stage + " did not reach its declared EOF for " + source.name + ": " + JSON.stringify({ expectedBytes, final }));
       }
