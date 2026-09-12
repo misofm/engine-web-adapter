@@ -86,7 +86,7 @@ await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" 
 await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><script type="module" src="/src/main.ts"></script>\n');
 await mkdir(join(consumer, "src"));
 await writeFile(join(consumer, "src", "main.ts"), indexedSparse
-  ? indexedBrowserSource(indexedFixture.profile)
+  ? indexedBrowserSource(indexedFixture)
   : browserSource(profile));
 await writeFile(join(consumer, "consumer-check.ts"), `
 import { EngineWebAdapterError, openEngineWebSession, openSparseEngineWebSession } from "@misofm/engine-web-adapter";
@@ -136,22 +136,25 @@ run(process.execPath, ["import-check.mjs"], consumer);
 run(join(supportModules, ".bin", "vite"), ["build"], consumer);
 
 const requests = new Map();
+const requestCounts = new Map();
 let flacRangeRequests = 0;
 const dist = join(consumer, "dist");
 const server = createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url ?? "/", "http://local").pathname;
+    requestCounts.set(pathname, (requestCounts.get(pathname) ?? 0) + 1);
     if (pathname === "/favicon.ico") { response.statusCode = 204; response.end(); return; }
-    if (indexedSparse && pathname === indexedFixture.profile.url) {
+    const indexedDelivery = indexedSparse ? indexedFixture.sourcesByUrl.get(pathname) : undefined;
+    if (indexedDelivery !== undefined) {
       if (request.method !== "GET" || request.headers.range !== undefined) { response.statusCode = 400; response.end("indexed delivery requires one full GET"); return; }
       requests.set(pathname, "application/octet-stream");
       response.statusCode = 200;
       response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
       response.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
       response.setHeader("Content-Type", "application/octet-stream");
-      response.setHeader("Content-Length", String(indexedFixture.body.byteLength));
-      response.setHeader("ETag", indexedFixture.profile.etag);
-      response.end(indexedFixture.body);
+      response.setHeader("Content-Length", String(indexedDelivery.body.byteLength));
+      response.setHeader("ETag", indexedDelivery.profile.etag);
+      response.end(indexedDelivery.body);
       return;
     }
     if (pathname === "/native-silence.flac") {
@@ -207,7 +210,7 @@ try {
   const result = await page.evaluate(() => ({ result: globalThis.__result, error: globalThis.__error }));
   if (indexedSparse) {
     assert.equal(result.error, undefined, JSON.stringify({ error: result.error, consoleErrors, requestFailures, requests: [...requests.entries()] }));
-    assertIndexedResult(result.result, indexedFixture.profile, requests, consoleErrors, address.port);
+    assertIndexedResult(result.result, indexedFixture, requests, requestCounts, requestFailures, consoleErrors, address.port);
   } else {
   assert.equal(result.error, undefined, JSON.stringify({ error: result.error, consoleErrors, requests: [...requests.entries()] }));
   assert.ok(result.result?.coldLocatorCalls > 0, "cold FLAC open must locate exact ranges");
@@ -279,6 +282,7 @@ try {
     if (proof.mode === "stall") assert.equal(proof.causeCode, "stem.read_deadline");
   }
   assert.deepEqual(consoleErrors, []);
+  assert.deepEqual(requestFailures, []);
   const requested = [...requests.entries()];
   assert.ok(requested.some(([path, mime]) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm") && mime === "application/wasm"), "decoder Wasm asset/MIME not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("miso-engine") && path.endsWith(".wasm") && mime === "application/wasm"), "Engine Wasm asset/MIME not observed");
@@ -289,7 +293,7 @@ try {
   assert.ok(requested.some(([path, mime]) => path.includes("audio-worklet-host") && mime.includes("javascript")), "Engine host asset not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("audio-worklet-") && !path.includes("host") && mime.includes("javascript")), "Engine worklet asset not observed");
   console.log(JSON.stringify({ profile: profile.name, origin: `http://127.0.0.1:${address.port}`, ...result.result,
-    assets: requested.filter(([path]) => /\.(?:js|wasm)$/u.test(path)).length, root }));
+    assets: requested.filter(([path]) => /\.(?:js|wasm)$/u.test(path)).length, root, requestFailures, consoleErrors }));
   }
 } finally {
   await browser.close();
@@ -298,67 +302,173 @@ try {
 
 async function prepareIndexedFixture() {
   const fixtureDirectory = process.env.ADAPTER_71_MULTIBLOCK_DIR ?? join(process.cwd(), "tests", "fixtures");
-  const fixtureFlac = "native-multiblock-stereo24.flac";
-  const fixturePcm = process.env.ADAPTER_71_MULTIBLOCK_DIR === undefined ? "native-multiblock-stereo24.pcm" : "source.pcm";
-  const outputDirectory = join(process.env.ADAPTER_71_EVIDENCE_DIR ?? join(process.cwd(), ".adapter-71-evidence"), "multiblock");
+  const firstFlacName = "native-multiblock-stereo24.flac";
+  const firstPcmName = process.env.ADAPTER_71_MULTIBLOCK_DIR === undefined ? "native-multiblock-stereo24.pcm" : "source.pcm";
+  const secondFlacName = "native-variable-stereo24.flac";
+  const outputDirectory = join(process.env.ADAPTER_71_EVIDENCE_DIR ?? join(process.cwd(), ".adapter-71-evidence"), "indexed-multisource");
   await mkdir(outputDirectory, { recursive: true });
-  const fixtureFlacBytes = new Uint8Array(await readFile(join(fixtureDirectory, fixtureFlac)));
-  const fixturePcmBytes = new Uint8Array(await readFile(join(fixtureDirectory, fixturePcm)));
+  const firstFlac = new Uint8Array(await readFile(join(fixtureDirectory, firstFlacName)));
+  const firstPcm = new Uint8Array(await readFile(join(fixtureDirectory, firstPcmName)));
+  const secondFlac = new Uint8Array(await readFile(join(fixtureDirectory, secondFlacName)));
+  const secondPcm = makeVariableStereo24Pcm(41_024);
   const frameBytes = 2 * (24 / 8);
-  const chunkFrames = fixturePcmBytes.byteLength / frameBytes;
-  if (chunkFrames !== 72_000) throw new Error("indexed fixture is not the frozen 72000-frame stereo24 payload");
-  if (sha256Hex(fixturePcmBytes) !== "4b5bc724ea7d855b3b5518b7a5e4da7222a41b9d0c98ca42880ca37e7458654d") {
-    throw new Error("indexed fixture PCM SHA-256 changed");
+  const firstFrames = firstPcm.byteLength / frameBytes;
+  const secondFrames = secondPcm.byteLength / frameBytes;
+  if (firstFrames !== 72_000 || secondFrames !== 41_024) throw new Error("indexed fixtures changed their frozen frame counts");
+  if (sha256Hex(firstPcm) !== "4b5bc724ea7d855b3b5518b7a5e4da7222a41b9d0c98ca42880ca37e7458654d") {
+    throw new Error("indexed first fixture PCM SHA-256 changed");
   }
-  if (sha256Hex(fixtureFlacBytes) !== "cfb6381ba955b097a8088a81d1956cb13a7d0b1c2c59a25843b832aa80a3d3cb") {
-    throw new Error("indexed fixture FLAC SHA-256 changed");
+  if (sha256Hex(firstFlac) !== "cfb6381ba955b097a8088a81d1956cb13a7d0b1c2c59a25843b832aa80a3d3cb") {
+    throw new Error("indexed first fixture FLAC SHA-256 changed");
   }
-  const firstFlac = fixtureFlacBytes;
-  const secondFlac = fixtureFlacBytes;
-  const firstPcm = fixturePcmBytes;
-  const secondPcm = fixturePcmBytes;
-  const intervals = [
-    { startFrame: 0, frames: 100_000, packedFrameOffset: 0 },
-    { startFrame: 120_000, frames: 44_000, packedFrameOffset: 100_000 },
+  if (sha256Hex(secondFlac) !== "552f89c4d91fa7d83867a6f572457c07493cef232e33698ffa319bc48fbf0eee") {
+    throw new Error("indexed second fixture FLAC SHA-256 changed");
+  }
+  if (sha256Hex(secondPcm) !== "1c56647d30a67bd892fd802860925f85eed692a706151dd1738235e0dc62889f") {
+    throw new Error("indexed second fixture PCM SHA-256 changed");
+  }
+  const chunks = [
+    { flac: firstFlac, pcm: firstPcm, frames: firstFrames, packedStartFrame: 0 },
+    { flac: secondFlac, pcm: secondPcm, frames: secondFrames, packedStartFrame: firstFrames },
+    { flac: firstFlac, pcm: firstPcm, frames: firstFrames, packedStartFrame: firstFrames + secondFrames },
   ];
-  const frames = 164_000;
-  const canonical = new Uint8Array(frames * frameBytes);
-  canonical.set(firstPcm, 0);
-  canonical.set(secondPcm.subarray(0, 28_000 * frameBytes), 72_000 * frameBytes);
-  canonical.set(secondPcm.subarray(28_000 * frameBytes), 120_000 * frameBytes);
-  const identity = `sha256:${sha256Hex(canonical)}`;
-  const manifest = {
+  const sourceShapes = [
+    {
+      name: "indexed-source-a",
+      url: "/native-indexed-source-a.sparse",
+      etag: '"adapter-76-source-a-v1"',
+      frames: 280_000,
+      intervals: [
+        { startFrame: 0, frames: firstFrames, packedFrameOffset: 0 },
+        { startFrame: 100_000, frames: secondFrames, packedFrameOffset: firstFrames },
+        { startFrame: 200_000, frames: firstFrames, packedFrameOffset: firstFrames + secondFrames },
+      ],
+    },
+    {
+      name: "indexed-source-b",
+      url: "/native-indexed-source-b.sparse",
+      etag: '"adapter-76-source-b-v1"',
+      frames: 320_000,
+      intervals: [
+        { startFrame: 20_000, frames: firstFrames, packedFrameOffset: 0 },
+        { startFrame: 150_000, frames: secondFrames, packedFrameOffset: firstFrames },
+        { startFrame: 240_000, frames: firstFrames, packedFrameOffset: firstFrames + secondFrames },
+      ],
+    },
+  ];
+  const makeDelivery = async (shape) => {
+    const canonical = new Uint8Array(shape.frames * frameBytes);
+    for (const [index, interval] of shape.intervals.entries()) {
+      const chunk = chunks[index];
+      if (chunk === undefined) throw new Error("indexed source has an unsupported chunk count");
+      canonical.set(chunk.pcm, interval.startFrame * frameBytes);
+    }
+    const identity = `sha256:${sha256Hex(canonical)}`;
+    const manifest = {
+      format: "miso_sparse_stem_v1",
+      identity,
+      sampleRateHz: 48_000,
+      channels: 2,
+      bitDepth: 24,
+      frames: shape.frames,
+      intervals: shape.intervals,
+      chunks: chunks.map((chunk, index) => ({
+        offset: chunks.slice(0, index).reduce((sum, prior) => sum + prior.flac.byteLength, 0),
+        bytes: chunk.flac.byteLength,
+        frames: chunk.frames,
+        packedStartFrame: chunk.packedStartFrame,
+        flacSha256: sha256Hex(chunk.flac),
+        pcmSha256: sha256Hex(chunk.pcm),
+      })),
+    };
+    const encodedManifest = Buffer.from(canonicalJson(manifest));
+    const header = Buffer.alloc(16);
+    Buffer.from("MISOSTM1").copy(header, 0);
+    header.writeUInt32LE(encodedManifest.byteLength, 8);
+    const body = Buffer.concat([header, encodedManifest, ...chunks.map((chunk) => Buffer.from(chunk.flac))]);
+    await writeFile(join(outputDirectory, `${shape.name}.sparse`), body);
+    const intervals = shape.intervals.map((interval) => ({
+      startFrame: interval.startFrame,
+      frames: interval.frames,
+      byteOffset: interval.packedFrameOffset * frameBytes,
+    }));
+    const activeBytes = chunks.reduce((sum, chunk) => sum + chunk.pcm.byteLength, 0);
+    const windowStarts = shape.name.endsWith("-a")
+      ? [[0, 1024], [72_000, 1024], [100_000, 1024], [141_024, 1024], [200_000, 1024], [279_000, 1000]]
+      : [[0, 1024], [20_000, 1024], [92_000, 1024], [150_000, 1024], [191_024, 1024], [240_000, 1024], [319_000, 1000]];
+    return {
+      body,
+      profile: {
+        name: shape.name,
+        url: shape.url,
+        etag: shape.etag,
+        expected: { identity, sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: shape.frames, canonicalBytes: canonical.byteLength },
+        containerBytes: body.byteLength,
+        activeBytes,
+        canonicalPcmSha256: identity.slice(7),
+        intervals,
+        chunks: manifest.chunks.map((chunk) => ({ frames: chunk.frames, bytes: chunk.bytes, packedStartFrame: chunk.packedStartFrame })),
+        windowProofs: windowStarts.map(([startFrame, frames]) => ({ startFrame, frames, sha256: sha256Hex(canonical.subarray(startFrame * frameBytes, (startFrame + frames) * frameBytes)) })),
+      },
+    };
+  };
+  const sources = [];
+  for (const shape of sourceShapes) sources.push(await makeDelivery(shape));
+  const silentFrames = 131_072;
+  const silentCanonical = new Uint8Array(silentFrames * frameBytes);
+  const silentIdentity = `sha256:${sha256Hex(silentCanonical)}`;
+  const silentManifest = {
     format: "miso_sparse_stem_v1",
-    identity,
+    identity: silentIdentity,
     sampleRateHz: 48_000,
     channels: 2,
     bitDepth: 24,
-    frames,
-    intervals,
-    chunks: [
-      { offset: 0, bytes: firstFlac.byteLength, frames: chunkFrames, packedStartFrame: 0, flacSha256: sha256Hex(firstFlac), pcmSha256: sha256Hex(firstPcm) },
-      { offset: firstFlac.byteLength, bytes: secondFlac.byteLength, frames: chunkFrames, packedStartFrame: chunkFrames, flacSha256: sha256Hex(secondFlac), pcmSha256: sha256Hex(secondPcm) },
-    ],
+    frames: silentFrames,
+    intervals: [],
+    chunks: [],
   };
-  const encodedManifest = Buffer.from(canonicalJson(manifest));
-  const header = Buffer.alloc(16);
-  Buffer.from("MISOSTM1").copy(header, 0);
-  header.writeUInt32LE(encodedManifest.byteLength, 8);
-  const body = Buffer.concat([header, encodedManifest, Buffer.from(firstFlac), Buffer.from(secondFlac)]);
-  await writeFile(join(outputDirectory, "sparse-package.bin"), body);
-  return {
-    body,
+  const silentEncodedManifest = Buffer.from(canonicalJson(silentManifest));
+  const silentHeader = Buffer.alloc(16);
+  Buffer.from("MISOSTM1").copy(silentHeader, 0);
+  silentHeader.writeUInt32LE(silentEncodedManifest.byteLength, 8);
+  const silentBody = Buffer.concat([silentHeader, silentEncodedManifest]);
+  await writeFile(join(outputDirectory, "indexed-all-silent.sparse"), silentBody);
+  const silent = {
+    body: silentBody,
     profile: {
-      name: "indexed-multiblock",
-      url: "/native-multiblock.sparse",
-      etag: '"adapter-71-multiblock-v1"',
-      expected: { identity, sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames, canonicalBytes: canonical.byteLength },
-      activeBytes: 144_000 * frameBytes,
-      canonicalPcmSha256: identity.slice(7),
-      intervals: intervals.map((interval) => ({ startFrame: interval.startFrame, frames: interval.frames, byteOffset: interval.packedFrameOffset * frameBytes })),
-      chunks: manifest.chunks.map((chunk) => ({ frames: chunk.frames, bytes: chunk.bytes, packedStartFrame: chunk.packedStartFrame })),
+      name: "indexed-all-silent",
+      url: "/native-indexed-all-silent.sparse",
+      etag: '"adapter-76-all-silent-v1"',
+      expected: { identity: silentIdentity, sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: silentFrames, canonicalBytes: silentCanonical.byteLength },
+      containerBytes: silentBody.byteLength,
+      activeBytes: 0,
+      canonicalPcmSha256: silentIdentity.slice(7),
+      intervals: [],
+      chunks: [],
+      windowProofs: [[0, 1024], [65_000, 1024], [130_000, 1024]].map(([startFrame, frames]) => ({ startFrame, frames, sha256: sha256Hex(silentCanonical.subarray(startFrame * frameBytes, (startFrame + frames) * frameBytes)) })),
     },
   };
+  return {
+    sources,
+    silent,
+    sourcesByUrl: new Map([...sources, silent].map((delivery) => [delivery.profile.url, delivery])),
+  };
+}
+
+function makeVariableStereo24Pcm(frames) {
+  const pcm = new Uint8Array(frames * 6);
+  for (let sample = 0; sample < frames; sample += 1) {
+    const left = (sample * 7919) % 16_000_001 - 8_000_000;
+    const right = -Math.trunc(left / 2);
+    let offset = sample * 6;
+    for (const value of [left, right]) {
+      pcm[offset] = value & 0xff;
+      pcm[offset + 1] = (value >> 8) & 0xff;
+      pcm[offset + 2] = (value >> 16) & 0xff;
+      offset += 3;
+    }
+  }
+  return pcm;
 }
 
 function sha256Hex(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
@@ -371,25 +481,59 @@ function canonicalJson(value) {
   throw new Error("unsupported canonical JSON value");
 }
 
-function assertIndexedResult(raw, profile, requests, consoleErrors, port) {
-  assert.equal(raw?.locateCalls, 1, "indexed cold install must locate once");
-  assert.equal(raw?.networkRequests, 1, "indexed cold install must make one full GET");
-  assert.equal(raw?.flacWorkers, profile.chunks.length, "indexed install must decode both FLAC chunks");
-  assert.ok((raw?.spanCount ?? 0) > 4, "indexed mapper did not emit multiple bounded spans");
-  assert.equal(raw?.coldDataBytes, profile.activeBytes, "indexed cold payload size changed");
-  assert.deepEqual(raw?.coldIntervals, profile.intervals, "indexed cold interval mapping changed");
-  assert.equal(raw?.coldIdentity, profile.expected.identity, "indexed cold canonical identity changed");
-  assert.equal(raw?.coldCanonicalBytes, profile.expected.canonicalBytes, "indexed cold canonical extent changed");
-  assert.equal(raw?.warmDataBytes, profile.activeBytes, "indexed warm payload size changed");
-  assert.equal(raw?.warmLocateCalls, 1, "indexed warm install reacquired the locator");
-  assert.equal(raw?.warmNetworkRequests, 1, "indexed warm install made a network request");
-  assert.equal(raw?.warmFlacWorkers, profile.chunks.length, "indexed warm install created a decoder worker");
+function assertIndexedResult(raw, fixture, requests, requestCounts, requestFailures, consoleErrors, port) {
+  assert.equal(raw?.failed, undefined, raw?.failure === undefined ? undefined : JSON.stringify(raw.failure));
+  assert.equal(raw?.cold?.locateCalls, 1, "indexed cold source must locate once");
+  assert.equal(raw?.cold?.networkRequests, 1, "indexed cold source must make one full GET");
+  assert.equal(raw?.cold?.physicalWorkers, 1, "one indexed source must retain one physical FLAC Worker");
+  assert.equal(raw?.cold?.jobs, fixture.sources[0].profile.chunks.length, "one indexed source must decode both FLAC chunks");
+  assert.deepEqual(raw?.cold?.workerJobCounts, [fixture.sources[0].profile.chunks.length], "one indexed source did not reuse its Worker across chunks");
+  assert.equal(raw?.cold?.decoderAssetFetches, 1, "one indexed resolver must fetch one decoder asset");
+  assert.equal(raw?.cold?.decoderCompileCalls, 1, "one indexed resolver must compile one decoder module");
+  assert.equal(raw?.cold?.runnablePeak, 1, "single indexed Worker did not report its runnable decode section");
+  assert.deepEqual(raw?.cold?.workerResetCounts, [fixture.sources[0].profile.chunks.length], "indexed chunks did not complete reset handshakes");
+  assert.equal(new Set(raw?.cold?.workerInputSlotIds).size, raw?.cold?.jobs, "indexed jobs reused a mutable input slot");
+  assert.equal(raw?.cold?.workerModuleFlags?.every((provided) => provided), true, "indexed job did not receive the compiled decoder module");
+  assert.ok((raw?.cold?.spanCount ?? 0) > 4, "indexed mapper did not emit multiple bounded spans");
+  assert.equal(raw?.warm?.locateCalls, 0, "indexed warm open reacquired a locator");
+  assert.equal(raw?.warm?.networkRequests, 0, "indexed warm open made a network request");
+  assert.equal(raw?.warm?.physicalWorkers, 0, "indexed warm open created a decoder Worker");
+  assert.equal(raw?.warm?.decoderAssetFetches, 0, "indexed warm open fetched a decoder asset");
+  assert.equal(raw?.warm?.decoderCompileCalls, 0, "indexed warm open compiled a decoder module");
+  assert.equal(raw?.warm?.jobs, 0, "indexed warm open launched a decoder job");
+  assert.equal(raw?.warm?.spanCount, 0, "indexed warm open remapped stored PCM");
+  assert.deepEqual(raw?.warm?.progress?.stages, ["verifying", "source-ready", "ready"], "indexed warm progress reacquired cold stages");
+  assert.equal(raw?.concurrent?.physicalWorkers, 2, "eligible indexed sources must use two physical Workers");
+  assert.equal(raw?.concurrent?.jobs, fixture.sources.length * fixture.sources[0].profile.chunks.length, "eligible indexed sources must decode every chunk");
+  assert.equal(raw?.concurrent?.processingOverlap, true, "eligible indexed sources never overlapped real Worker PCM processing: " + JSON.stringify(raw?.concurrent));
+  assert.ok((raw?.concurrent?.processingOutputWorkers?.length ?? 0) > 1, "eligible indexed sources produced PCM from only one Worker");
+  assert.ok(raw?.concurrent?.workerJobCounts?.every((count) => count > 1), "eligible indexed Worker pool did not reuse each Worker");
+  assert.equal(raw?.concurrent?.decoderAssetFetches, 1, "concurrent indexed sources must share one decoder asset fetch");
+  assert.equal(raw?.concurrent?.decoderCompileCalls, 1, "concurrent indexed sources must share one decoder module compile");
+  assert.ok((raw?.concurrent?.runnablePeak ?? 0) > 1, "eligible indexed sources did not overlap worker-side runnable decode sections");
+  assert.deepEqual(raw?.concurrent?.workerResetCounts, fixture.sources.map((source) => source.profile.chunks.length), "concurrent chunks did not complete reset handshakes");
+  assert.equal(new Set(raw?.concurrent?.workerInputSlotIds).size, raw?.concurrent?.jobs, "concurrent jobs reused a mutable input slot");
+  assert.equal(raw?.concurrent?.workerModuleFlags?.every((provided) => provided), true, "concurrent job did not receive the compiled decoder module");
+  assert.equal(raw?.silent?.locateCalls, 1, "all-silent source must locate once");
+  assert.equal(raw?.silent?.networkRequests, 1, "all-silent source must make one full GET");
+  assert.equal(raw?.silent?.jobs, 0, "all-silent source must not launch a decoder job");
+  assert.equal(raw?.silent?.decoderAssetFetches, 0, "all-silent source must not fetch a decoder asset");
+  assert.equal(raw?.silent?.decoderCompileCalls, 0, "all-silent source must not compile a decoder module");
+  assert.deepEqual(raw?.silent?.progress?.stages, ["probing", "fetching", "ingesting", "source-ready", "ready"], "all-silent source did not expose zero-byte progress");
+  assert.equal(raw?.workers?.allTerminated, true, "indexed physical Workers did not terminate after store close");
+  assert.deepEqual(raw?.workers?.errors, []);
+  assert.deepEqual(requestFailures, []);
   assert.deepEqual(consoleErrors, []);
-  assert.deepEqual([...requests.entries()].filter(([path]) => path === profile.url), [[profile.url, "application/octet-stream"]]);
-  console.log(JSON.stringify({ profile: profile.name, origin: `http://127.0.0.1:${port}`,
-    mapping: { chunks: profile.chunks, intervals: profile.intervals, spans: raw?.spanCount },
-    canonical: { identity: profile.expected.identity, frames: profile.expected.frames, bytes: profile.expected.canonicalBytes },
-    ...raw, requests: [...requests.entries()] }));
+  for (const [delivery, expectedCount] of [[fixture.sources[0], 2], [fixture.sources[1], 1], [fixture.silent, 1]]) {
+    assert.equal(requestCounts.get(delivery.profile.url), expectedCount, `${delivery.profile.name} was fetched an unexpected number of times`);
+    assert.equal(requests.get(delivery.profile.url), "application/octet-stream", `${delivery.profile.name} MIME changed`);
+  }
+  const decoderPaths = [...requests.keys()].filter((path) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm"));
+  assert.equal(decoderPaths.length, 1, "decoder Wasm URL changed or was fetched through multiple assets");
+  assert.equal(requests.get(decoderPaths[0]), "application/wasm", "decoder Wasm MIME changed");
+  console.log(JSON.stringify({ profile: "indexed-sparse-reuse", origin: `http://127.0.0.1:${port}`,
+    sources: fixture.sources.map((delivery) => ({ name: delivery.profile.name, ...delivery.profile })),
+    silent: fixture.silent.profile, ...raw, requests: [...requests.entries()], requestCounts: [...requestCounts.entries()], requestFailures, consoleErrors }));
 }
 
 function run(command, args, cwd = process.cwd()) {
@@ -414,111 +558,403 @@ function resolveChromeExecutable() {
   return executable;
 }
 
-function indexedBrowserSource(profile) { return String.raw`
-import { createSparseStemResolver, OpfsStorageBackend, VerifiedSparsePcmStore } from "@misofm/engine-web-adapter/stems";
+function indexedBrowserSource(fixture) {
+  const browserFixture = {
+    sources: fixture.sources.map((delivery) => delivery.profile),
+    silent: fixture.silent.profile,
+  };
+  return String.raw`
+import { createSparseStemResolver, OpfsStorageBackend, VerifiedSparsePcmStore, readSparsePcmWindow } from "@misofm/engine-web-adapter/stems";
 
 declare global { var __result: unknown; var __error: unknown }
-const profile = ${JSON.stringify(profile)} as const;
-const assetUrl = new URL(profile.url, location.href).href;
+const fixture = ${JSON.stringify(browserFixture)} as const;
+const sourceByIdentity = new Map([...fixture.sources, fixture.silent].map((source) => [source.expected.identity, source]));
 const NativeFetch = globalThis.fetch;
 const NativeWorker = Worker;
+const nativeCompileStreaming = WebAssembly.compileStreaming.bind(WebAssembly);
 let locateCalls = 0;
 let networkRequests = 0;
+let decoderAssetFetches = 0;
+let decoderCompileCalls = 0;
 let flacWorkers = 0;
-let opfsWorkers = 0;
 let spanCount = 0;
-const workerErrors: Array<{ readonly worker: string; readonly message: string | undefined; readonly filename?: string; readonly line?: number; readonly column?: number; readonly error?: string }> = [];
+let activeJobs = 0;
+let activePeak = 0;
+let nextWorkerId = 1;
+let nextInputSlotId = 1;
+const inputSlotIds = new WeakMap<object, number>();
+const workerByObject = new WeakMap<object, WorkerRecord>();
+const workerRecords: WorkerRecord[] = [];
+const workerErrors: Array<Record<string, unknown>> = [];
+interface WorkerJob {
+  readonly requestId: number;
+  readonly inputSlotId: number | undefined;
+  readonly moduleProvided: boolean;
+  readonly startedAt: number;
+  completed: boolean;
+  completedAt: number | undefined;
+  pcmBlocks: number;
+  decodeMs: number;
+  firstPcmAt: number | undefined;
+  lastPcmAt: number | undefined;
+}
+interface RunnablePhase {
+  readonly buffer: SharedArrayBuffer;
+  readonly buffers: Set<SharedArrayBuffer>;
+  nextBit: number;
+}
+interface WorkerRecord {
+  readonly id: number;
+  readonly label: string;
+  readonly jobs: WorkerJob[];
+  readonly completions: Array<{ readonly requestId: number; readonly reset: boolean }>;
+  terminated: boolean;
+  resetCount: number;
+  runnablePhase: RunnablePhase | undefined;
+  runnableMask: number | undefined;
+}
+let runnablePhase: RunnablePhase | undefined;
+const observedFetch: typeof fetch = async (input, init) => {
+  const url = input instanceof Request ? input.url : new URL(input, location.href).href;
+  if (identityForUrl(url) !== undefined) networkRequests += 1;
+  if (url.includes("engine-web-flac-decoder") && url.endsWith(".wasm")) decoderAssetFetches += 1;
+  return NativeFetch(input, init);
+};
+globalThis.fetch = observedFetch;
+try {
+  WebAssembly.compileStreaming = ((source: Response | PromiseLike<Response>) => {
+    decoderCompileCalls += 1;
+    return nativeCompileStreaming(source);
+  }) as typeof WebAssembly.compileStreaming;
+} catch (error) {
+  workerErrors.push({ worker: "main", error: "compile instrumentation failed", message: String(error) });
+}
 globalThis.Worker = class ObservedWorker extends NativeWorker {
+  readonly observedRecord: WorkerRecord;
   constructor(url: string | URL, options?: WorkerOptions) {
     super(url, options);
     const label = String(url);
+    const record: WorkerRecord = { id: nextWorkerId++, label, jobs: [], completions: [], terminated: false,
+      resetCount: 0, runnablePhase: undefined, runnableMask: undefined };
+    this.observedRecord = record;
+    workerByObject.set(this, record);
+    workerRecords.push(record);
     if (label.includes("flac-worker")) flacWorkers += 1;
-    if (label.includes("opfs-worker")) opfsWorkers += 1;
-    this.addEventListener("error", (event) => workerErrors.push({ worker: label, message: event.message,
-      filename: event.filename, line: event.lineno, column: event.colno, error: event.error?.message }));
+    this.addEventListener("message", (event) => {
+      const message = event.data as { readonly type?: string; readonly requestId?: number; readonly reset?: boolean; readonly metrics?: { readonly decodeMs?: number } };
+      if (!label.includes("flac-worker") || typeof message.requestId !== "number") return;
+      const job = [...record.jobs].reverse().find((candidate) => candidate.requestId === message.requestId && !candidate.completed);
+      if (job === undefined) return;
+      if (message.type === "pcm") {
+        const now = performance.now();
+        job.pcmBlocks += 1;
+        job.decodeMs += typeof message.metrics?.decodeMs === "number" ? message.metrics.decodeMs : 0;
+        job.firstPcmAt ??= now;
+        job.lastPcmAt = now;
+        return;
+      }
+      if (message.type !== "complete") return;
+      job.completed = true;
+      job.completedAt = performance.now();
+      const reset = message.reset === true;
+      record.completions.push({ requestId: message.requestId, reset });
+      if (reset) record.resetCount += 1;
+      activeJobs = Math.max(0, activeJobs - 1);
+    });
+    this.addEventListener("error", (event) => {
+      if (label.includes("flac-worker")) workerErrors.push({ worker: label, message: event.message,
+        filename: event.filename, line: event.lineno, column: event.colno, error: event.error?.message });
+    });
+    this.addEventListener("messageerror", () => {
+      if (label.includes("flac-worker")) workerErrors.push({ worker: label, error: "messageerror" });
+    });
+  }
+  override postMessage(message: any, transfer?: Transferable[]): void {
+    const record = workerByObject.get(this);
+    if (record !== undefined && record.label.includes("flac-worker") && message?.type === "start" && typeof message.requestId === "number") {
+      const phase = runnablePhase;
+      if (phase === undefined) throw new Error("indexed FLAC Worker started outside an instrumented phase");
+      let mask = record.runnablePhase === phase ? record.runnableMask : undefined;
+      if (message.runnable === undefined) {
+        if (mask === undefined) {
+          if (phase.nextBit >= 31) throw new Error("indexed runnable worker mask exhausted");
+          mask = 1 << phase.nextBit++;
+          record.runnablePhase = phase;
+          record.runnableMask = mask;
+        }
+        phase.buffers.add(phase.buffer);
+      } else {
+        phase.buffers.add(message.runnable as SharedArrayBuffer);
+      }
+      const slot = message.inputSlot?.bytes as object | undefined;
+      let inputSlotId: number | undefined;
+      if (slot !== undefined) {
+        inputSlotId = inputSlotIds.get(slot);
+        if (inputSlotId === undefined) { inputSlotId = nextInputSlotId++; inputSlotIds.set(slot, inputSlotId); }
+      }
+      record.jobs.push({ requestId: message.requestId, inputSlotId, moduleProvided: message.decoderModule !== undefined,
+        startedAt: performance.now(), completed: false, completedAt: undefined, pcmBlocks: 0, decodeMs: 0,
+        firstPcmAt: undefined, lastPcmAt: undefined });
+      activeJobs += 1;
+      activePeak = Math.max(activePeak, activeJobs);
+    }
+    const instrumented = record !== undefined && record.label.includes("flac-worker") && message?.type === "start" &&
+      message.runnable === undefined && runnablePhase !== undefined
+      ? { ...message, runnable: runnablePhase.buffer, runnableMask: record.runnableMask }
+      : message;
+    if (transfer === undefined) super.postMessage(instrumented);
+    else super.postMessage(instrumented, transfer);
+  }
+  override terminate(): void {
+    const record = workerByObject.get(this);
+    if (record !== undefined) record.terminated = true;
+    super.terminate();
   }
 } as typeof Worker;
-const fetchPackage: typeof fetch = async (input, init) => {
-  const url = input instanceof Request ? input.url : new URL(input, location.href).href;
-  if (url === assetUrl) networkRequests += 1;
-  return NativeFetch(input, init);
-};
-const resolver = createSparseStemResolver({
-  locate(identity) {
-    if (identity !== profile.expected.identity) throw new Error("indexed locator received an unexpected identity");
-    locateCalls += 1;
-    return assetUrl;
-  },
-  fetch: fetchPackage,
-  readDeadlineMs: 30_000,
-  maximumWorkers: 1,
-});
-const backend = new OpfsStorageBackend({
-  folderName: "adapter71-indexed-multiblock-" + Date.now(),
-});
-const store = new VerifiedSparsePcmStore({ backend, instanceId: "indexed-multiblock" });
-const expected = profile.expected;
-let result: unknown;
-let failure: unknown;
-let failed = false;
-try {
-  const cold = await store.installSource(expected, {
-    resolve: async (signal) => {
-      const resolved = await resolver(expected, signal);
+function sourceUrl(source: SourceProfile): string { return new URL(source.url, location.href).href; }
+function identityForUrl(url: string): string | undefined {
+  for (const source of [...fixture.sources, fixture.silent]) if (sourceUrl(source) === url) return source.expected.identity;
+  return undefined;
+}
+function resolverFor(maximumWorkers: number) {
+  return createSparseStemResolver({
+    locate(identity) {
+      const source = sourceByIdentity.get(identity);
+      if (source === undefined) throw new Error("indexed locator received an unexpected identity");
+      locateCalls += 1;
+      return sourceUrl(source);
+    },
+    fetch: observedFetch,
+    readDeadlineMs: 30_000,
+    maximumWorkers,
+    hardwareConcurrency: maximumWorkers === 1 ? 2 : 4,
+    deviceMemory: maximumWorkers === 1 ? 1 : 2,
+  });
+}
+function newStore(label: string) {
+  const folderName = "adapter76-indexed-" + label + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  const backend = new OpfsStorageBackend({ folderName });
+  const store = new VerifiedSparsePcmStore({ backend, instanceId: "indexed-" + label });
+  return { backend, store };
+}
+function startPhase(): Counters {
+  if (activeJobs !== 0) throw new Error("indexed Worker jobs remained active between phases");
+  activePeak = 0;
+  const buffer = new SharedArrayBuffer(8);
+  runnablePhase = { buffer, buffers: new Set([buffer]), nextBit: 0 };
+  return counters();
+}
+function counters() {
+  return { locateCalls, networkRequests, decoderAssetFetches, decoderCompileCalls, flacWorkers, spanCount,
+    starts: workerRecords.reduce((sum, worker) => sum + worker.jobs.length, 0), workerCount: workerRecords.length, runnablePhase };
+}
+function runnablePeaks(phase: RunnablePhase | undefined): number[] {
+  return phase === undefined ? [] : [...phase.buffers].map((buffer) => Atomics.load(new Int32Array(buffer), 1));
+}
+function delta(before: Counters) {
+  const workers = workerRecords.slice(before.workerCount).filter((worker) => worker.label.includes("flac-worker"));
+  const outputJobs = workers.flatMap((worker) => worker.jobs.filter((job) => job.pcmBlocks > 0).map((job) => ({ workerId: worker.id, job })));
+  const phasePeaks = runnablePeaks(before.runnablePhase);
+  const phasePeak = Math.max(0, ...phasePeaks);
+  return {
+    locateCalls: locateCalls - before.locateCalls,
+    networkRequests: networkRequests - before.networkRequests,
+    decoderAssetFetches: decoderAssetFetches - before.decoderAssetFetches,
+    decoderCompileCalls: decoderCompileCalls - before.decoderCompileCalls,
+    physicalWorkers: flacWorkers - before.flacWorkers,
+    jobs: workerRecords.reduce((sum, worker) => sum + worker.jobs.length, 0) - before.starts,
+    spanCount: spanCount - before.spanCount,
+    activePeak,
+    runnablePeaks: phasePeaks,
+    runnablePeak: phasePeak,
+    processingOverlap: phasePeak > 1,
+    processingEvents: outputJobs.reduce((sum, item) => sum + item.job.pcmBlocks, 0),
+    processingOutputWorkers: [...new Set(outputJobs.map((item) => item.workerId))],
+    workerJobCounts: workers.map((worker) => worker.jobs.length),
+    workerJobs: workers.map((worker) => worker.jobs.map((job) => ({ requestId: job.requestId, startedAt: job.startedAt, completedAt: job.completedAt, firstPcmAt: job.firstPcmAt, lastPcmAt: job.lastPcmAt, pcmBlocks: job.pcmBlocks, decodeMs: job.decodeMs }))),
+    workerResetCounts: workers.map((worker) => worker.resetCount),
+    workerInputSlotIds: workers.flatMap((worker) => worker.jobs.map((job) => job.inputSlotId)),
+    workerModuleFlags: workers.flatMap((worker) => worker.jobs.map((job) => job.moduleProvided)),
+    stages: [],
+  };
+}
+function stageSummary(events: readonly Record<string, unknown>[]): string[] {
+  const stages: string[] = [];
+  for (const event of events) {
+    const stage = event.stage;
+    if (typeof stage === "string" && stages[stages.length - 1] !== stage) stages.push(stage);
+  }
+  return stages;
+}
+function sourceDeclaration(source: SourceProfile, sourceId: string) {
+  return { sourceId, ...source.expected };
+}
+async function openCold(store: VerifiedSparsePcmStore, resolver: ReturnType<typeof resolverFor>, source: SourceProfile, sourceId: string, events: Record<string, unknown>[]) {
+  const lease = await store.openSession({
+    leaseId: sourceId,
+    sources: [sourceDeclaration(source, sourceId)],
+    resolve: async (expected, signal, context) => {
+      const resolved = await resolver(expected, signal, context);
       return { ...resolved, spans: (async function*() {
         for await (const span of resolved.spans) { spanCount += 1; yield span; }
       })() };
     },
+    onProgress: (event) => events.push({ ...event }),
   });
-  const coldLocateCalls = locateCalls;
-  const coldNetworkRequests = networkRequests;
-  const coldFlacWorkers = flacWorkers;
-  const warm = await store.installSource(expected, {
-    resolve: async () => { throw new Error("indexed warm install must not resolve"); },
+  return lease;
+}
+async function openConcurrent(store: VerifiedSparsePcmStore, resolver: ReturnType<typeof resolverFor>, sources: readonly SourceProfile[], events: Record<string, unknown>[]) {
+  return store.openSession({
+    leaseId: "concurrent-sources",
+    sources: sources.map((source, index) => sourceDeclaration(source, "concurrent-" + index)),
+    // Pass the exact native resolver so the store can use its private bounded
+    // scheduling registration. Wrapping it would intentionally lose that
+    // optimization and turn this into the custom-resolver sequential path.
+    resolve: resolver,
+    onProgress: (event) => events.push({ ...event }),
   });
-  result = {
-    coldDataBytes: cold.data.size,
-    coldIntervals: cold.index.intervals,
-    coldIdentity: cold.index.identity,
-    coldCanonicalBytes: cold.index.canonicalBytes,
-    warmDataBytes: warm.data.size,
-    warmLocateCalls: locateCalls,
-    warmNetworkRequests: networkRequests,
-    warmFlacWorkers: flacWorkers,
-    locateCalls: coldLocateCalls,
-    networkRequests: coldNetworkRequests,
-    flacWorkers: coldFlacWorkers,
-    opfsWorkers,
-    spanCount,
-    workerErrors,
-  };
+}
+async function proveDescriptor(descriptor: any, source: SourceProfile) {
+  if (descriptor.kind !== "sparse-pcm" || descriptor.data.size !== source.activeBytes) throw new Error("indexed descriptor payload size changed for " + source.name);
+  if (descriptor.index.identity !== source.expected.identity || descriptor.index.canonicalBytes !== source.expected.canonicalBytes || descriptor.index.activeBytes !== source.activeBytes) throw new Error("indexed descriptor shape changed for " + source.name);
+  if (JSON.stringify(descriptor.index.intervals) !== JSON.stringify(source.intervals)) throw new Error("indexed descriptor intervals changed for " + source.name);
+  for (const proof of source.windowProofs) {
+    const bytes = await readSparsePcmWindow(descriptor.index, descriptor.data, proof.startFrame, proof.frames);
+    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    if (digest !== proof.sha256) throw new Error("indexed PCM window changed for " + source.name + " at frame " + proof.startFrame);
+  }
+  return { payloadBytes: descriptor.data.size, index: descriptor.index, windows: source.windowProofs.length };
+}
+function assertProgress(events: readonly Record<string, unknown>[], sources: readonly SourceProfile[], expectedStages: readonly string[], silent = false) {
+  if (events.length === 0) throw new Error("indexed progress callback received no events");
+  const sourceMap = new Map(sources.map((source) => [source.expected.identity, source]));
+  const previousBytes = new Map<string, number>();
+  const requiredWorkStages = expectedStages.includes("decoding")
+    ? ["decoding", "ingesting"]
+    : expectedStages.includes("verifying") ? ["verifying"] : ["ingesting"];
+  for (const event of events) {
+    const identity = event.identity;
+    if (typeof identity === "string") {
+      const source = sourceMap.get(identity);
+      if (source === undefined) throw new Error("indexed progress identity is not declared");
+      if (typeof event.bytes === "number" && typeof event.totalBytes === "number") {
+        if (!Number.isSafeInteger(event.bytes) || event.bytes < 0 || !Number.isSafeInteger(event.totalBytes) || event.totalBytes < 0 || event.bytes > event.totalBytes) throw new Error("indexed progress counter is outside its finite total");
+        const key = identity + ":" + event.stage + ":" + event.byteKind;
+        const prior = previousBytes.get(key);
+        if (prior !== undefined && event.bytes < prior) throw new Error("indexed progress counter regressed for " + key);
+        previousBytes.set(key, event.bytes);
+        if (["probing", "fetching"].includes(String(event.stage)) && event.totalBytes !== source.containerBytes) throw new Error("indexed container progress total changed");
+        if (["decoding", "ingesting", "verifying"].includes(String(event.stage)) && event.totalBytes !== source.expected.canonicalBytes) throw new Error("indexed canonical progress total changed");
+      }
+    }
+    if (event.stage === "source-ready") {
+      if (typeof event.bytes !== "number" || !Number.isSafeInteger(event.bytes) || event.bytes < 0) throw new Error("indexed source-ready bytes are invalid");
+      const source = sourceMap.get(String(event.identity));
+      if (source === undefined || event.bytes !== source.expected.canonicalBytes) throw new Error("indexed source-ready bytes changed");
+    }
+  }
+  const stages = stageSummary(events);
+  for (const stage of expectedStages) if (!stages.includes(stage)) throw new Error("indexed progress omitted " + stage + ": " + stages.join(","));
+  const readyIndex = stages.indexOf("ready");
+  const sourceReadyIndex = stages.indexOf("source-ready");
+  if (readyIndex < 0 || sourceReadyIndex < 0 || readyIndex <= sourceReadyIndex) throw new Error("indexed aggregate ready preceded source readiness");
+  const declarations = Number((events.find((event) => event.stage === "ready") as any)?.sourcesTotal);
+  if (declarations !== sources.length) throw new Error("indexed ready declaration total changed");
+  const readyEvents = events.filter((event) => event.stage === "source-ready");
+  if (readyEvents.length !== sources.length) throw new Error("indexed source-ready declaration count changed");
+  for (const source of sources) {
+    const matching = events.filter((event) => event.identity === source.expected.identity && ["decoding", "ingesting", "verifying"].includes(String(event.stage)));
+    for (const stage of requiredWorkStages) {
+      const final = [...matching].reverse().find((event) => event.stage === stage);
+      const expectedBytes = stage === "decoding" ? source.activeBytes : source.expected.canonicalBytes;
+      if (final === undefined || final.totalBytes !== source.expected.canonicalBytes) throw new Error("indexed " + stage + " did not reach its declared total for " + source.name + ": " + JSON.stringify({ expectedBytes, final, stages: stageSummary(events), matching: matching.slice(-5) }));
+      if (stage === "decoding") {
+        const values = matching.filter((event) => event.stage === stage).map((event) => Number(event.bytes));
+        const highest = Math.max(...values);
+        const frameBytes = source.expected.channels * (source.expected.bitDepth / 8);
+        const firstChunkBytes = source.chunks[0].frames * frameBytes;
+        const coalescingBound = Math.max(1, Math.ceil(source.expected.canonicalBytes / 20));
+        if (highest <= firstChunkBytes || highest > expectedBytes || highest < expectedBytes - coalescingBound) throw new Error("indexed decoding did not cumulatively approach its declared EOF for " + source.name + ": " + JSON.stringify({ expectedBytes, highest, firstChunkBytes, final }));
+      } else if (final.bytes !== expectedBytes) {
+        throw new Error("indexed " + stage + " did not reach its declared EOF for " + source.name + ": " + JSON.stringify({ expectedBytes, final }));
+      }
+    }
+    if (silent && matching.some((event) => event.stage === "decoding")) throw new Error("indexed all-silent source decoded bytes");
+  }
+  return { stages, sourceReady: readyEvents.length, eventCount: events.length };
+}
+let result: any;
+let failure: unknown;
+try {
+  const first = fixture.sources[0];
+  const second = fixture.sources[1];
+  const coldEvents: Record<string, unknown>[] = [];
+  const coldResources = newStore("cold");
+  const coldResolver = resolverFor(1);
+  const coldBefore = startPhase();
+  const coldLease = await openCold(coldResources.store, coldResolver, first, "cold-source", coldEvents);
+  const coldDescriptor = await coldLease.read(first.expected.identity);
+  const coldProof = await proveDescriptor(coldDescriptor, first);
+  const coldProgress = assertProgress(coldEvents, [first], ["probing", "fetching", "decoding", "ingesting", "source-ready", "ready"]);
+  await coldLease.close();
+  const warmEvents: Record<string, unknown>[] = [];
+  const warmBefore = startPhase();
+  const warmLease = await coldResources.store.openSession({
+    leaseId: "warm-source",
+    sources: [sourceDeclaration(first, "warm-source")],
+    onProgress: (event) => warmEvents.push({ ...event }),
+  });
+  const warmDescriptor = await warmLease.read(first.expected.identity);
+  const warmProof = await proveDescriptor(warmDescriptor, first);
+  const warmProgress = assertProgress(warmEvents, [first], ["verifying", "source-ready", "ready"]);
+  await warmLease.close();
+  await coldResources.store.close();
+  coldResources.backend.close();
+  const cold = { ...delta(coldBefore), progress: coldProgress, proof: coldProof };
+  const warm = { ...delta(warmBefore), progress: warmProgress, proof: warmProof };
+
+  const concurrentEvents: Record<string, unknown>[] = [];
+  const concurrentResources = newStore("concurrent");
+  const concurrentResolver = resolverFor(2);
+  const concurrentBefore = startPhase();
+  const concurrentLease = await openConcurrent(concurrentResources.store, concurrentResolver, [first, second], concurrentEvents);
+  const concurrentProofs = [];
+  for (const source of [first, second]) concurrentProofs.push(await proveDescriptor(await concurrentLease.read(source.expected.identity), source));
+  const concurrentProgress = assertProgress(concurrentEvents, [first, second], ["probing", "fetching", "decoding", "ingesting", "source-ready", "ready"]);
+  await concurrentLease.close();
+  await concurrentResources.store.close();
+  concurrentResources.backend.close();
+  const concurrent = { ...delta(concurrentBefore), progress: concurrentProgress, proofs: concurrentProofs };
+
+  const silentEvents: Record<string, unknown>[] = [];
+  const silentResources = newStore("silent");
+  const silentResolver = resolverFor(1);
+  const silentBefore = startPhase();
+  const silentLease = await openCold(silentResources.store, silentResolver, fixture.silent, "silent-source", silentEvents);
+  const silentDescriptor = await silentLease.read(fixture.silent.expected.identity);
+  const silentProof = await proveDescriptor(silentDescriptor, fixture.silent);
+  const silentProgress = assertProgress(silentEvents, [fixture.silent], ["probing", "fetching", "ingesting", "source-ready", "ready"], true);
+  await silentLease.close();
+  await silentResources.store.close();
+  silentResources.backend.close();
+  const silent = { ...delta(silentBefore), progress: silentProgress, proof: silentProof };
+
+  // Let reset/completion and terminate tasks publish their final browser events before reporting evidence.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  result = { cold, warm, concurrent, silent, workers: { allTerminated: workerRecords.filter((worker) => worker.label.includes("flac-worker")).every((worker) => worker.terminated), records: workerRecords.filter((worker) => worker.label.includes("flac-worker")).map((worker) => ({ id: worker.id, jobs: worker.jobs.length, completions: worker.completions, resetCount: worker.resetCount, terminated: worker.terminated })), errors: workerErrors } };
 } catch (error) {
-  failed = true;
   failure = error;
 }
-try {
-  await store.close();
-} catch (error) {
-  failed = true;
-  failure ??= error;
-}
-try {
-  backend.close();
-} catch (error) {
-  failed = true;
-  failure ??= error;
-}
-if (failed) {
-  globalThis.__error = { error: describe(failure), workerErrors };
-} else {
-  globalThis.__result = result;
-}
+if (failure === undefined) globalThis.__result = result;
+else globalThis.__error = { error: describe(failure), workers: workerRecords.filter((worker) => worker.label.includes("flac-worker")).map((worker) => ({ id: worker.id, jobs: worker.jobs, completions: worker.completions, resetCount: worker.resetCount, terminated: worker.terminated })), workerErrors };
 function describe(error: unknown): unknown {
   if (!(error instanceof Error)) return String(error);
   const value = error as Error & { code?: unknown; details?: unknown; cause?: unknown };
   return { name: value.name, message: value.message, code: value.code, details: value.details, stack: value.stack,
     cause: value.cause === undefined ? undefined : describe(value.cause) };
 }
+type SourceProfile = typeof fixture.sources[number];
+type Counters = ReturnType<typeof counters>;
 `; }
 
 function browserSource(profile) { return String.raw`
