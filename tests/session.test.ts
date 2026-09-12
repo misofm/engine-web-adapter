@@ -404,6 +404,64 @@ test("sparse session prepares complete authoritative sources through the shared 
   assert.ok(events.indexOf("pump.close") < events.indexOf("sparse.map.close"));
 });
 
+test("sparse sessions retain common and scratch asset overrides", async () => {
+  const events: string[] = [];
+  const context = fakeContext(events);
+  const sources: DeclaredStemSource[] = [
+    { id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
+    { id: "source-z", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY_Z } },
+  ];
+  const hostModuleUrl = `data:text/javascript,${encodeURIComponent(`
+    export async function createMisoAudioWorkletHost(request) {
+      if (request.simd128ModuleUrl !== "sparse-wasm" || request.workletModuleUrl !== "sparse-worklet"
+        || request.context.modules.at(-1) !== "sparse-feed") throw new Error("sparse asset override was dropped");
+      return { node: { connect() {}, disconnect() {} }, async dispose() {} };
+    }
+  `)}`;
+  const lease: SparsePcmSessionLease = {
+    leaseId: "sparse-assets",
+    sources: [],
+    async read() { throw new Error("custom pump does not read descriptors"); },
+    async close() { events.push("sparse.map.close"); },
+  };
+  const store = {
+    async openSession(options: SparsePcmSessionOptions) {
+      assert.equal(options.sources.length, sources.length);
+      return lease;
+    },
+  };
+  const scratchWorkerUrl = new URL("https://caller.invalid/sparse-scratch.js");
+  const session = await openSparseEngineWebSession({
+    document: documentFor(sources), sources, leaseId: "sparse-assets", console: false,
+    capabilityScope: capabilities(), store,
+    assets: {
+      scratchWorkerUrl,
+      engineWasmUrl: "sparse-wasm",
+      engineWorkletModuleUrl: "sparse-worklet",
+      engineHostModuleUrl: hostModuleUrl,
+      feedWorkletModuleUrl: "sparse-feed",
+      createWorker: (url, options) => {
+        assert.equal(String(url), String(scratchWorkerUrl));
+        assert.deepEqual(options, { type: "module" });
+        return new ScratchWorker(events) as unknown as Worker;
+      },
+    },
+    createContext: () => context,
+    createAttachNode: () => ({ port: { postMessage(message: unknown) {
+      const request = message as { readonly op: string; readonly rings?: readonly SharedArrayBuffer[] };
+      if (request.op === "attach") for (const ring of request.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+    } }, disconnect() {} }),
+    createPump: async ({ sources: pumpSources }) => {
+      for (const source of pumpSources) fillRing(source.ring, source.frames);
+      return { async seekFrames() { return 0n; }, close() { events.push("pump.close"); } };
+    },
+    createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+  });
+  assert.ok(events.includes("scratch"), "sparse scratch preparation uses the caller Worker factory");
+  await session.close();
+  assert.ok(events.includes("sparse.map.close"));
+});
+
 test("sparse entry refuses dense and FLAC-shaped paths before any boot or store work", async () => {
   let scratches = 0;
   let stores = 0;

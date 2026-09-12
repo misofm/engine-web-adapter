@@ -95,7 +95,7 @@ export async function openSparseEngineWebSession(options: SparseEngineWebSession
     );
   }
   try {
-    return await openSessionCommon({ ...commonOptions, onProgress: progress.emit }, (input) => prepareSparseSources({
+    return await openSessionCommon({ ...commonOptions, ...(assets === undefined ? {} : { assets }), onProgress: progress.emit }, (input) => prepareSparseSources({
       ...input, store, resolver, maximumMetadataBytes, createPump, assets, onProgress: progress.emit,
     }));
   } finally {
