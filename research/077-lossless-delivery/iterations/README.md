@@ -40,5 +40,5 @@ and native memory evidence do not stand in for mobile/browser measurements.
 | 1 | [Exact residual accounting](round-01-scope.md) | [Complete report](round-01-report.md): context model estimates 0.617% lower delivery bytes | All 30 reconstructions and exact accounting pass; optimized/sanitizer suites and four-stem sanitizer pilot pass |
 | 2 | [Actual Rice vs context-rANS artifacts](round-02-scope.md) | [Complete report](round-02-report.md): 423,304,009 bytes, 0.496% below tuned FLAC | All 60 files, PCM/transcripts/accounting and 10,204 tables independently verified; optimized/sanitizer tests and pilot pass |
 | 3 | [Adaptive residual FIR prediction](round-03-scope.md) | [Complete report](round-03-report.md): 421,773,671 bytes, 0.856% below tuned FLAC; 3.5x disabled decode time | All 40 pilot, 8 sanitizer and 120 full artifacts independently verified; integer and malformed-stream gates pass |
-| 4 | [Offline stereo residual prediction](round-04-scope.md) | Implementation in progress | Pending |
-| 5 | Pending round 4 findings | Pending | Pending |
+| 4 | [Offline stereo residual prediction](round-04-scope.md) | [Complete report](round-04-report.md): 423,034,938 bytes, 0.560% below tuned FLAC; 2.309 s pilot decode versus 2.287 s disabled | All 24 pilot, 8 sanitizer and 120 full artifacts independently verified; spatial reference and malformed-stream gates pass |
+| 5 | [Selective temporal and spatial prediction](round-05-scope.md) | Implementation in progress | Pending |

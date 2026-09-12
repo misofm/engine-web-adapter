@@ -1,0 +1,210 @@
+{
+  "format": "issue77-round4-freeze-v1",
+  "createdUtc": "2026-09-12T17:37:32Z",
+  "scopeSha256": "af7374ebd0ecc0fb7d9598be2faacd1610c4e8d3b7721894467945eb19a05138",
+  "runnerSha256": "f386c3262647a2416fa58371e525a02341d26a9989a83159e0c55e4004dbb40c",
+  "nativeSha256": "ff24a34a4baa96efb3a24d995cbb4fc52253f183381cec3106e1fa2b61288033",
+  "round3NativeSha256": "f1cb8f3b9f22266631c6dd3886cda935c7ae0a59c7852fc58c4b958f25feec03",
+  "round3EvidenceSha256": "095d88dbcf2901e25af8ad05b5b90854cb2d831db64541a2135144c49edc641e",
+  "round3FreezeSha256": "4aab18dbc93f457f280596bee3ba11398da68c4408ba3d6b697ade6b6a650265",
+  "round2NativeSha256": "9dc86f2423fd7aba13e8a9e3058448dd36c0f6c53b144ec17f283cd4c88cf960",
+  "round2RunnerSha256": "18348582d1301b95207aef977e2a108f7be35c0c3babc574a0272f8ae9189480",
+  "round1NativeSha256": "9d90b5ed1eda3d58d3b5209fc9caeb48e04959760ddd8cc86e53c333a2de8f0a",
+  "sourcesSha256": "2ab3f51138c6d537f3ba312cbac5001556e0d930c649a7ddee95fb223d472085",
+  "baselineEvidenceSha256": "840f81d2b79dc1f2b5c19dc21318319e9275c2f22c9fc5a010f38a7de6a0b8bf",
+  "r1VerificationSha256": "77c073b6236d768d1e2071df18ccd6972591b1839c23d7dc651648e5cc7fc33b",
+  "r1RootVerificationSha256": "6544b915ac870795c31bc8b62dc9858997f6c58112d6a95eb691fff2f541d691",
+  "libFLACSha256": "a485b5d7e8f5cec078c954e8d8cc7ab02af4e5e172024a149ce6b6f941921026",
+  "independentOriginalAuditSha256": "be636862f2fd7bfdab0791ad2bc84e6dce1b6c9af2bb650641fac442535db9d9",
+  "records": {
+    "sha256:03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2": {
+      "recordBytes": 41245061,
+      "recordSha256": "9429a9a771ff2cbb4dd0403dff0dd80a478754b2ad2c1b29eb6f0f19528d02c8",
+      "recordCount": 1253
+    },
+    "sha256:18a73d7d7a47ec6ccd306235bb921dc8760ecce468b0cb5b4860ef94b898bba6": {
+      "recordBytes": 68522532,
+      "recordSha256": "994df485c6a66ecc91660b338034f4175a4e1970b66eeab3b2b001d6e57b886d",
+      "recordCount": 2075
+    },
+    "sha256:1d0544c63bf19bcc8d8b663d73fb9b206f9d107d52f7729ead8fce52aaa9be71": {
+      "recordBytes": 19578023,
+      "recordSha256": "db89de35759ffcb92ab4d99c36fdc78e344410fe24ddab4418ce17acc9ed46b6",
+      "recordCount": 611
+    },
+    "sha256:2726b0d1370fdf4924bc2a3509533c4fbb914a9ff45c54e7b010be71a4adfb76": {
+      "recordBytes": 37029464,
+      "recordSha256": "82afeee2dd5d8ab365dbf652764266173087a51f10c3b8e3f9d209c50f1b5443",
+      "recordCount": 1124
+    },
+    "sha256:27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac": {
+      "recordBytes": 50086250,
+      "recordSha256": "1640f05c01aca50776a92e83a3d2b4d9d3cd55a645d2de38af0105ae250d142b",
+      "recordCount": 1516
+    },
+    "sha256:2bf5cb8199b9d347a6a94d10c52b770148efda9073069e4aeeafaa866030a846": {
+      "recordBytes": 44156270,
+      "recordSha256": "67b323478a2f3ad659a8563d46a09f7b4e560c0d58d25fd25336f2d1c1f314b3",
+      "recordCount": 1343
+    },
+    "sha256:2dd061241fa7fe3128289427e108ee63501f4ed77c7208f1b37ff49fa6ccff0b": {
+      "recordBytes": 28996554,
+      "recordSha256": "3b67fe4c61b5eea61e5a85c331360dc521d534c05eb91da7af5963e4bc8ed891",
+      "recordCount": 874
+    },
+    "sha256:361eb2581ace51a5a34c59d83c06ebe6dad73300115db995e6c0692fb4061ae3": {
+      "recordBytes": 38812382,
+      "recordSha256": "ad4b39650874de5b174ee2709ac2c0ce15538f76504492e48e3ab2f30c1af369",
+      "recordCount": 1228
+    },
+    "sha256:3d60f314574aed4bfafde8b53df7e0e555f367325ba6daad6ec8db9c4dee48c6": {
+      "recordBytes": 40583653,
+      "recordSha256": "2f43fb166ad75769414b95b51302773edf58fd6fdff7137dd92f88927f76a70d",
+      "recordCount": 1225
+    },
+    "sha256:43413b8b197ba8a6be8b706e5173fb5246f4c60c414557dc552d9c65239f9340": {
+      "recordBytes": 14743546,
+      "recordSha256": "d1b76328d82db6c6d5990453e466b0288a1e8d98d2f563a4e55942a211910a90",
+      "recordCount": 449
+    },
+    "sha256:462c511e3c244e805eeaf8c592c2cf35b8e9e9fab0d3074aad52e7304e6572f6": {
+      "recordBytes": 68370068,
+      "recordSha256": "00642163cf6e47e7190916756ad9eff45cd37eaa08bb045befa0c23fedb91067",
+      "recordCount": 2075
+    },
+    "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f": {
+      "recordBytes": 68427712,
+      "recordSha256": "8c0fca8b5b5facc18631333fe6e2726e6b3418a35173570a6f68115afe4fdc4b",
+      "recordCount": 2075
+    },
+    "sha256:75e819632163ccc65f63fde122cea33b199b559c931ebf68b14b5f8c72520629": {
+      "recordBytes": 40357480,
+      "recordSha256": "dfbe56425860b634509efdd8edd7749782eefed5992077eceee421fd9a289f28",
+      "recordCount": 1225
+    },
+    "sha256:76f8d36d4b2b6ed2efc19418250feaac1fe1868fd919c4c03a6e6f66e3e3f926": {
+      "recordBytes": 15319280,
+      "recordSha256": "18fb590d9f00833002b11f3a8412ab7c49033b2dd8159a4009c1afbd060c335b",
+      "recordCount": 466
+    },
+    "sha256:820926ccc8557b4cdf81d0c19933f1115dc371d5b53e46ddedb2a87bf4e4e197": {
+      "recordBytes": 20385645,
+      "recordSha256": "633ad00bb280ec7c2edb490dbb9b1ca6b6d6d307e063844611f3ca796e3e6fc1",
+      "recordCount": 617
+    },
+    "sha256:83cc4bfabbda2bb1b0b9fda8bfc7307d190844be9e01cd8ed53b2b904369b147": {
+      "recordBytes": 62147546,
+      "recordSha256": "fec817278267ac469b6b8759dae95c2ca663f944b227d61b558ce803e05888f1",
+      "recordCount": 1885
+    },
+    "sha256:8b374c1219541d61371b2eacf78d1ddd01acf4e9e7422b369044f7c1df5475e1": {
+      "recordBytes": 68509104,
+      "recordSha256": "e8bad8f11a24174d03a2445773c8cafb20411018be001d9a12598d57290a8027",
+      "recordCount": 2075
+    },
+    "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0": {
+      "recordBytes": 39251387,
+      "recordSha256": "672471d636c36cd7ea355861028188ec095d097fa888a210ab7a8bfd752ec3a6",
+      "recordCount": 1193
+    },
+    "sha256:9184f49ee35fa748ecf4d898eb06058d2f499b8348b80736c5c252a99fe36b98": {
+      "recordBytes": 35676288,
+      "recordSha256": "acd47d90e567fa4823bd2024ca50272cd635a96d9f189c4091c3a42ed03482a4",
+      "recordCount": 1098
+    },
+    "sha256:9a57207ac802bad426435d920b77048ba9dd391797c6a462444c6e375716d36f": {
+      "recordBytes": 32612051,
+      "recordSha256": "535067fe776fc6ce232ea62f912efcd4bc55642b515dc88c3b66466944d82c87",
+      "recordCount": 993
+    },
+    "sha256:b613c11eea1c43c0a0fed317bea191d09146b818c4fe8e7a781cec1061b781f1": {
+      "recordBytes": 12096616,
+      "recordSha256": "b007318da4985b2f0cb23a0841ff21770836a9393ea818204e2d6849597927e6",
+      "recordCount": 374
+    },
+    "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1": {
+      "recordBytes": 21466741,
+      "recordSha256": "023325e095994f344cbd4e3d6cd89e40365ae0ec763ca4cfff377034f4547877",
+      "recordCount": 1028
+    },
+    "sha256:c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f": {
+      "recordBytes": 50041233,
+      "recordSha256": "02cfa111accfe8f6a575abd28cf41142ab4e73b8474810028d5d1cde4102e8ec",
+      "recordCount": 1516
+    },
+    "sha256:d2a9ac32d38219a1dbe387f10ae417abb86101f4366683d2e68270ca1b8b5224": {
+      "recordBytes": 59841417,
+      "recordSha256": "f7329709cc970167d53f7de66374f480f958f1367e92c1ff0cf365536936bf24",
+      "recordCount": 1808
+    },
+    "sha256:d60d7992ce0ac81666b6e13b3ae7064ab5c1aad701a026619d78cfb725386d4d": {
+      "recordBytes": 54291503,
+      "recordSha256": "b297519973d8599144ab6fba7f1d5d0a550dd5b33f7be24311be152277b25e81",
+      "recordCount": 1647
+    },
+    "sha256:dbb6eda6ecc56c418428f6b41d0b4872948d5be58e6089ecacb538b188dd7a74": {
+      "recordBytes": 15974698,
+      "recordSha256": "32bde6157e197ff5a6760857ab0f54b1beacd5968b94319a26f623b79a323202",
+      "recordCount": 485
+    },
+    "sha256:e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62": {
+      "recordBytes": 49907600,
+      "recordSha256": "e3a4bbb254d00c081dfa4caa1e156d5e16878d2ffeb9725d6a35f405a68313ae",
+      "recordCount": 1516
+    },
+    "sha256:f797073413ecf7782ec9e767bb4645034e8293b52c86cd888c920b33427c0d59": {
+      "recordBytes": 68572203,
+      "recordSha256": "87b7a3794324683df3144e46fc43d52b9647d50d0f94345f10fb9579a202ec33",
+      "recordCount": 2075
+    },
+    "sha256:fc78916013c03b9827b97fe5d422b260b2926d7bd7159c9b8c967e2a49edeef3": {
+      "recordBytes": 68572192,
+      "recordSha256": "6e4d88c03df8816ea185fe290e03a5be2331e0f735a2fdd03f535456308b9e0d",
+      "recordCount": 2075
+    },
+    "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda": {
+      "recordBytes": 53944189,
+      "recordSha256": "2ba2f76d1579f5066ac62f9e53bcd4fae569f353650ae276f85cd6643917a72d",
+      "recordCount": 1638
+    }
+  },
+  "helper": {
+    "path": "/data/issue-77-lossless/iterations/round-04/round4-helper",
+    "sha256": "08e60c95b8b2f61133abe59cf00c47db5432dae2d8a17bcf09e4f2ae46a57997"
+  },
+  "recordsRoot": "/data/issue-77-lossless/iterations/round-01/full-run3/full",
+  "corpus": "/data/issue-77-lossless/run-02",
+  "workerConcurrency": 4,
+  "profiles": [
+    0,
+    1,
+    2
+  ],
+  "pilot": true,
+  "selectedProfile": null,
+  "pilotResultsSha256": null,
+  "pilotSelectionSha256": null,
+  "maxFrameBodyBytes": 4194304,
+  "maxManifestBytes": 1048576,
+  "maxTables": 620,
+  "modes": {
+    "rice": 0,
+    "rans": 1
+  },
+  "compiler": "gcc -std=c11 -O2 -Wall -Wextra -Wconversion -Wshadow -fno-fast-math -ffp-contract=off",
+  "compilerVersion": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "sanitized": false,
+  "platform": "Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
+  "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           48 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  32\nOn-line CPU(s) list:                     0-31\nVendor ID:                               AuthenticAMD\nModel name:                              AMD EPYC 7313P 16-Core Processor\nCPU family:                              25\nModel:                                   1\nThread(s) per core:                      2\nCore(s) per socket:                      16\nSocket(s):                               1\nStepping:                                1\nFrequency boost:                         enabled\nCPU(s) scaling MHz:                      59%\nCPU max MHz:                             3730.7351\nCPU min MHz:                             1500.0000\nBogoMIPS:                                5988.83\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba ibrs ibpb stibp vmmcall fsgsbase bmi1 avx2 smep bmi2 invpcid cqm rdt_a rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk clzero irperf xsaveerptr rdpru wbnoinvd amd_ppin brs arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold v_vmsave_vmload vgif v_spec_ctrl umip pku ospke vaes vpclmulqdq rdpid overflow_recov succor smca debug_swap ibpb_exit_to_user\nVirtualization:                          AMD-V\nL1d cache:                               512 KiB (16 instances)\nL1i cache:                               512 KiB (16 instances)\nL2 cache:                                8 MiB (16 instances)\nL3 cache:                                128 MiB (4 instances)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-31\nVulnerability Gather data sampling:      Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Mitigation; Safe RET\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Retpolines; IBPB conditional; IBRS_FW; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Mitigation; Clear CPU buffers\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB before exit to userspace\n",
+  "commands": {
+    "encode": "helper encode INPUT_RSD OUTPUT ORIGINAL_AUDIT CODED_AUDIT SUMMARY MODE PROFILE",
+    "decode": "helper decode INPUT OUTPUT_RAW ORIGINAL_AUDIT CODED_AUDIT SUMMARY"
+  },
+  "runKind": "pilot",
+  "pilotIdentities": [
+    "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+    "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+    "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+    "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+  ]
+}

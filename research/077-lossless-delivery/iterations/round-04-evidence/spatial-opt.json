@@ -1,0 +1,26 @@
+{
+  "compileCommand": "gcc -std=c11 -O2 -fno-fast-math -ffp-contract=off -Wall -Wextra -Wconversion -Wshadow -I/data/issue-77-lossless/tooling/flac-1.5.0/include research/077-lossless-delivery/iterations/round-04/native/round4_spatial_driver.c /data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a -lm -o /data/issue-77-lossless/iterations/round-04/spatial-opt/round4-spatial",
+  "counts": {
+    "features": 6,
+    "fits": 10,
+    "profiles": 4,
+    "scoresAndSelection": 58,
+    "transforms": 84
+  },
+  "driver": "research/077-lossless-delivery/iterations/round-04/native/round4_spatial_driver.c",
+  "driverSha256": "fbef4f93dc4450df6f633abb80a4e2e0dcccd29cd8c5449c314fb0bbfb509d54",
+  "format": "issue77-round4-spatial-tests-v1",
+  "helper": "/data/issue-77-lossless/iterations/round-04/spatial-opt/round4-spatial",
+  "helperSha256": "84759dda12104bd266cfe79e2bea67425802b6fdd97c563f86c61f4c1531674a",
+  "libFLAC": "/data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a",
+  "libFLACSha256": "a485b5d7e8f5cec078c954e8d8cc7ab02af4e5e172024a149ce6b6f941921026",
+  "result": "pass",
+  "sanitized": false,
+  "sanitizerDiagnostics": false,
+  "seed": "0x77040001",
+  "source": "research/077-lossless-delivery/iterations/round-04/native/round4.c",
+  "sourceSha256": "ff24a34a4baa96efb3a24d995cbb4fc52253f183381cec3106e1fa2b61288033",
+  "testSource": "research/077-lossless-delivery/iterations/round-04/test_spatial.py",
+  "testSourceSha256": "65c6d19c56dc0c3b640c583b47e7c414b68d82229b7211fd4014f23f4d78ab40",
+  "totalChecks": 162
+}

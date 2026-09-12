@@ -1,0 +1,2104 @@
+{
+  "format": "issue77-round4-timing-v1",
+  "timingFreezeSha256": "6a289c9a9e467092176ab2cb68ec19eb830abca010f1810abb35925bdfbf64b5",
+  "trials": [
+    {
+      "trial": 1,
+      "stemOrder": [
+        "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+        "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+        "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+        "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+      ],
+      "modeOrder": [
+        "p0-rans",
+        "r3-p3-rans",
+        "p2-rice",
+        "p0-rice",
+        "p2-rans"
+      ],
+      "modes": {
+        "p0-rans": {
+          "order": [
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7347450100351125,
+                "userSeconds": 0.69,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24066417,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.4352717499714345,
+                "userSeconds": 0.39,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11126630,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.27242521406151354,
+                "userSeconds": 0.24,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3780923,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8444821140728891,
+                "userSeconds": 0.79,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26369752,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.2869240881409496,
+          "userSeconds": 2.11,
+          "systemSeconds": 0.12,
+          "peakRssKiB": 4608
+        },
+        "r3-p3-rans": {
+          "order": [
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 2.401562226936221,
+                "userSeconds": 2.35,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/r3-p3-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/r3-p3-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 23965791,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 1.5378807469969615,
+                "userSeconds": 1.5,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/r3-p3-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/r3-p3-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11013504,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.8814062280580401,
+                "userSeconds": 0.85,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/r3-p3-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/r3-p3-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3771630,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 3.0088817180367187,
+                "userSeconds": 2.95,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/r3-p3-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/r3-p3-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26286769,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 7.8297309200279415,
+          "userSeconds": 7.65,
+          "systemSeconds": 0.14,
+          "peakRssKiB": 4864
+        },
+        "p2-rice": {
+          "order": [
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7063218259718269,
+                "userSeconds": 0.66,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24146386,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.42248858290258795,
+                "userSeconds": 0.39,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11213626,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.2646756899775937,
+                "userSeconds": 0.23,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3859608,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8631439750315621,
+                "userSeconds": 0.81,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26453117,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.2566300738835707,
+          "userSeconds": 2.0900000000000003,
+          "systemSeconds": 0.12,
+          "peakRssKiB": 4864
+        },
+        "p0-rice": {
+          "order": [
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7149872080190107,
+                "userSeconds": 0.66,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24146617,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.40991631301585585,
+                "userSeconds": 0.38,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11267303,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.26536913809832186,
+                "userSeconds": 0.23,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3859608,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.846700371010229,
+                "userSeconds": 0.79,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p0-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26459978,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.2369730301434174,
+          "userSeconds": 2.06,
+          "systemSeconds": 0.13,
+          "peakRssKiB": 4864
+        },
+        "p2-rans": {
+          "order": [
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7225661789998412,
+                "userSeconds": 0.67,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24066240,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.4460889049805701,
+                "userSeconds": 0.41,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11072975,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.2706272699870169,
+                "userSeconds": 0.23,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3780923,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8702038670890033,
+                "userSeconds": 0.81,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-1/p2-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26363033,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.3094862210564315,
+          "userSeconds": 2.12,
+          "systemSeconds": 0.13,
+          "peakRssKiB": 4864
+        }
+      },
+      "hashVerificationInsideTimedInterval": false
+    },
+    {
+      "trial": 2,
+      "stemOrder": [
+        "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+        "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+        "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+        "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+      ],
+      "modeOrder": [
+        "p0-rice",
+        "p2-rice",
+        "p2-rans",
+        "p0-rans",
+        "r3-p3-rans"
+      ],
+      "modes": {
+        "p0-rice": {
+          "order": [
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.2646686399821192,
+                "userSeconds": 0.24,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3859608,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8457356289727613,
+                "userSeconds": 0.79,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26459978,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7049909350462258,
+                "userSeconds": 0.65,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24146617,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.40978872892446816,
+                "userSeconds": 0.36,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11267303,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.2251839329255745,
+          "userSeconds": 2.04,
+          "systemSeconds": 0.16,
+          "peakRssKiB": 4864
+        },
+        "p2-rice": {
+          "order": [
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.26509535091463476,
+                "userSeconds": 0.23,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3859608,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8643742819549516,
+                "userSeconds": 0.82,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26453117,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7051406230311841,
+                "userSeconds": 0.66,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24146386,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.42241684801410884,
+                "userSeconds": 0.38,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11213626,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.2570271039148793,
+          "userSeconds": 2.09,
+          "systemSeconds": 0.13,
+          "peakRssKiB": 4864
+        },
+        "p2-rans": {
+          "order": [
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.2712862390326336,
+                "userSeconds": 0.23,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3780923,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8620280099567026,
+                "userSeconds": 0.81,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26363033,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7276945010526106,
+                "userSeconds": 0.68,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24066240,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.4481381659861654,
+                "userSeconds": 0.41,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p2-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11072975,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.309146916028112,
+          "userSeconds": 2.13,
+          "systemSeconds": 0.13,
+          "peakRssKiB": 4864
+        },
+        "p0-rans": {
+          "order": [
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.27541238197591156,
+                "userSeconds": 0.24,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3780923,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.844074298045598,
+                "userSeconds": 0.78,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26369752,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7182325070025399,
+                "userSeconds": 0.66,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24066417,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.43330527609214187,
+                "userSeconds": 0.39,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/p0-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11126630,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.2710244631161913,
+          "userSeconds": 2.0700000000000003,
+          "systemSeconds": 0.14,
+          "peakRssKiB": 4864
+        },
+        "r3-p3-rans": {
+          "order": [
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.877823875984177,
+                "userSeconds": 0.85,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/r3-p3-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/r3-p3-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3771630,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 3.0004908229457214,
+                "userSeconds": 2.94,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/r3-p3-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/r3-p3-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26286769,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 2.4012501910328865,
+                "userSeconds": 2.36,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/r3-p3-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/r3-p3-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 23965791,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 1.542852611048147,
+                "userSeconds": 1.5,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/r3-p3-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-2/r3-p3-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11013504,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 7.822417501010932,
+          "userSeconds": 7.6499999999999995,
+          "systemSeconds": 0.13,
+          "peakRssKiB": 4864
+        }
+      },
+      "hashVerificationInsideTimedInterval": false
+    },
+    {
+      "trial": 3,
+      "stemOrder": [
+        "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+        "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+        "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+        "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+      ],
+      "modeOrder": [
+        "r3-p3-rans",
+        "p0-rice",
+        "p0-rans",
+        "p2-rice",
+        "p2-rans"
+      ],
+      "modes": {
+        "r3-p3-rans": {
+          "order": [
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 3.008194310008548,
+                "userSeconds": 2.94,
+                "systemSeconds": 0.06,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/r3-p3-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/r3-p3-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26286769,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 1.5514778359793127,
+                "userSeconds": 1.5,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/r3-p3-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/r3-p3-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11013504,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 2.403777783969417,
+                "userSeconds": 2.35,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/r3-p3-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/r3-p3-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 23965791,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.8871887499699369,
+                "userSeconds": 0.85,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-03/round3-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-03/pilot-run4/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p3-rans.fir",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/r3-p3-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/r3-p3-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3771630,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 7.850638679927215,
+          "userSeconds": 7.64,
+          "systemSeconds": 0.17,
+          "peakRssKiB": 4864
+        },
+        "p0-rice": {
+          "order": [
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8509063849924132,
+                "userSeconds": 0.8,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26459978,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.4129733720328659,
+                "userSeconds": 0.36,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11267303,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7090709930052981,
+                "userSeconds": 0.65,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24146617,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.2654122990788892,
+                "userSeconds": 0.23,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p0-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3859608,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.2383630491094664,
+          "userSeconds": 2.04,
+          "systemSeconds": 0.14,
+          "peakRssKiB": 4608
+        },
+        "p0-rans": {
+          "order": [
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8575881629949436,
+                "userSeconds": 0.8,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26369752,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.4351888649398461,
+                "userSeconds": 0.4,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11126630,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7339380789780989,
+                "userSeconds": 0.69,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24066417,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.2736078090965748,
+                "userSeconds": 0.24,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p0-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p0-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3780923,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.3003229160094634,
+          "userSeconds": 2.13,
+          "systemSeconds": 0.12,
+          "peakRssKiB": 4864
+        },
+        "p2-rice": {
+          "order": [
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8631963459774852,
+                "userSeconds": 0.8,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26453117,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.42236078903079033,
+                "userSeconds": 0.37,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11213626,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7049503759481013,
+                "userSeconds": 0.66,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24146386,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.26501737209036946,
+                "userSeconds": 0.24,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p2-rice.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3859608,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.2555248830467463,
+          "userSeconds": 2.0700000000000003,
+          "systemSeconds": 0.14,
+          "peakRssKiB": 4864
+        },
+        "p2-rans": {
+          "order": [
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8685044459998608,
+                "userSeconds": 0.8,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 2075,
+                "frameCount": 2075,
+                "fileBytes": 26363033,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.4463355550542474,
+                "userSeconds": 0.41,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1193,
+                "frameCount": 1193,
+                "fileBytes": 11072975,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7228610300226137,
+                "userSeconds": 0.65,
+                "systemSeconds": 0.06,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1638,
+                "frameCount": 1638,
+                "fileBytes": 24066240,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.27240800706204027,
+                "userSeconds": 0.24,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-04/round4-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-04/pilot-final2/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/p2-rans.xch",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-04/timing-final4/trial-3/p2-rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.summary.json"
+                ],
+                "hashVerificationInsideTimedInterval": false,
+                "pcmWriteInsideTimedInterval": true,
+                "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+              },
+              "summary": {
+                "recordCount": 1028,
+                "frameCount": 1028,
+                "fileBytes": 3780923,
+                "auditBytes": 0,
+                "originalAuditBytes": 0
+              }
+            }
+          ],
+          "wallSeconds": 2.310109038138762,
+          "userSeconds": 2.1,
+          "systemSeconds": 0.16,
+          "peakRssKiB": 4864
+        }
+      },
+      "hashVerificationInsideTimedInterval": false
+    }
+  ],
+  "selectedProfile": 2,
+  "modes": [
+    "p0-rice",
+    "p0-rans",
+    "p2-rice",
+    "p2-rans",
+    "r3-p3-rans"
+  ],
+  "pilotWork": "/data/issue-77-lossless/iterations/round-04/pilot-final2",
+  "fullWork": "/data/issue-77-lossless/iterations/round-04/full-final3",
+  "sanitizedWork": "/data/issue-77-lossless/iterations/round-04/sanitized-final2",
+  "round3Work": "/data/issue-77-lossless/iterations/round-03/pilot-run4",
+  "helper": "/data/issue-77-lossless/iterations/round-04/round4-helper",
+  "round3Helper": "/data/issue-77-lossless/iterations/round-03/round3-helper",
+  "warmCompressedInputOutsideTimedInterval": true,
+  "auditDisabledForRound4": true,
+  "auditDisabledForRound3": true,
+  "auditArguments": {
+    "round4": [
+      "-",
+      "-"
+    ],
+    "round3": [
+      "-",
+      "-"
+    ]
+  },
+  "hashVerificationInsideTimedInterval": false,
+  "pcmWriteInsideTimedInterval": true,
+  "auditSerializationInsideTimedInterval": false,
+  "rssScope": "child process maximum RSS from /usr/bin/time, KiB"
+}

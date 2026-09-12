@@ -1,0 +1,13 @@
+{
+  "format": "issue77-round4-native-tests-v1",
+  "source": "iterations/round-04/native/round4.c",
+  "sourceSha256": "ff24a34a4baa96efb3a24d995cbb4fc52253f183381cec3106e1fa2b61288033",
+  "test": "iterations/round-04/test_native.py",
+  "testSha256": "afecc96428c343bcda7b96ae29f63b7d2e514bf263cb90e3155b8a6ebd6d5c7e",
+  "helper": "/data/issue-77-lossless/iterations/round-04/round4-helper-san",
+  "helperSha256": "9003ef9bbeb28b6008ad416f5719f2dcab673937c9c9468fdcc1c29aa8c2000e",
+  "sanitized": true,
+  "tests": 2,
+  "result": "pass",
+  "command": "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 PYTHONDONTWRITEBYTECODE=1 python3 research/077-lossless-delivery/iterations/round-04/test_native.py --helper /data/issue-77-lossless/iterations/round-04/round4-helper-san"
+}
