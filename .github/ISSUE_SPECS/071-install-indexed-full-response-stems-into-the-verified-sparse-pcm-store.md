@@ -204,3 +204,8 @@ The first browser rerun did not find an executable through automatic discovery; 
 ## Attempt 2 ordinary packed-browser result
 
 Root reran the existing packed-consumer indexed profile at `dba1436` with the installed Chrome-for-Testing executable. It passes through the package's ordinary Worker and OPFS paths: one full GET, two 72,000-frame FLAC chunks, two FLAC workers, one OPFS worker, 864,000 active PCM bytes mapped into 33 spans, and exact verification of the 984,000-byte / 164,000-frame canonical timeline. Warm reopen adds no locator, network, or decoder work and reports no worker errors. Result: `/data/sparse-pcm-launch/tooling/adapter-71/attempt2/final/browser/result.json`. This completes the requested single browser happy-path rerun without adding a browser matrix or new harness. The candidate now proceeds to its one fresh independent attempt-2 verdict.
+
+
+## Attempt 2 independent PASS
+
+Fresh Astra medium records PASS for frozen candidate `2800ac9`. The independent run passes 20 sparse-acquisition tests, 41 existing controller tests, retained attempt-1 ownership discriminators, and four focused active-worker/store probes. Quota failure and cancellation during an active decode wait for physical store/reader settlement, terminate the worker, preserve an earlier committed source, and permit safe resolver reuse. Report and runnable evidence: `/data/sparse-pcm-launch/tooling/adapter-71/review-attempt2.md` and its sibling evidence directory. This verdict covers the indexed audio-ingestion capability only; it adds no app, offline-shell, UI, native-dispatch, benchmark, or framework claim.
