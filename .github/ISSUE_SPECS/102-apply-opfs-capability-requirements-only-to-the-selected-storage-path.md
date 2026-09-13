@@ -1,6 +1,6 @@
 # Apply OPFS capability requirements only to the selected storage path
 
-Independent of adapter misofm/engine-web-adapter#95/#101 and engine/app analysis work.
+Independent of adapter misofm/engine-web-adapter#95/misofm/engine-web-adapter#101 and engine/app analysis work.
 This issue does not implement IndexedDB, WAVPACK or another backend.
 
 ## Outcome and source evidence
