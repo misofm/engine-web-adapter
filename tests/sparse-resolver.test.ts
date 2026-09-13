@@ -7,6 +7,8 @@ import { createBLAKE3 } from "hash-wasm";
 import { EngineWebAdapterError } from "../src/errors.js";
 import { serializeSparseStemIndex, MemoryStemStorageBackend, VerifiedSparsePcmStore, createSparseStemResolver } from "../src/stems/index.js";
 import { sparseProgressReporter } from "../src/stems/progress.js";
+import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
+import { sparseResolverScheduling } from "../src/stems/sparse-scheduling.js";
 import type { FlacWorkerLike, FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
 import type { SparsePcmExpectation } from "../src/stems/sparse-store.js";
 import type { StemProgress } from "../src/stems/types.js";
@@ -14,6 +16,22 @@ import type { StemProgress } from "../src/stems/types.js";
 const identityHasher = await createBLAKE3(256);
 const identity = (bytes: Uint8Array) => `blake3:${identityHasher.init().update(bytes).digest("hex")}` as const;
 const ZERO_IDENTITY = identity(new Uint8Array(4096));
+
+function expectation(bytes: Uint8Array, frames: number): SparsePcmExpectation {
+  return { identity: identity(bytes), sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames, canonicalBytes: bytes.byteLength };
+}
+
+function spans(...items: readonly { readonly startFrame: number; readonly bytes: Uint8Array }[]): AsyncIterable<{ readonly startFrame: number; readonly bytes: Uint8Array }> {
+  return (async function*() { for (const item of items) yield item; })();
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("native mixed fixture timed out");
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+  }
+}
 
 function responseBytes(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -50,7 +68,9 @@ class DecodeWorker implements FlacWorkerLike {
   #completePcmBytes = 0;
   #completeFrames = 0;
 
-  constructor(readonly pcm?: Uint8Array) {}
+  constructor(private pcm?: Uint8Array) {}
+
+  reset(pcm?: Uint8Array): void { this.pcm = pcm; }
 
   postMessage(message: FlacWorkerRequest): void {
     if (this.terminated) return;
@@ -122,8 +142,157 @@ class DecodeWorker implements FlacWorkerLike {
     if (this.#pendingOutputs.length === 0) {
       const requestId = this.#completeRequestId;
       this.#completeRequestId = undefined;
-      this.emit({ type: "complete", requestId, pcmBytes: this.#completePcmBytes, frames: this.#completeFrames });
+      this.emit({ type: "complete", requestId, pcmBytes: this.#completePcmBytes, frames: this.#completeFrames, reset: true });
     }
+  }
+}
+
+/** A private Worker boundary fixture that keeps the real native resolver path. */
+class MixedNativeWorker {
+  static pcmByIdentity = new Map<string, Uint8Array>();
+  static warmStarts = 0;
+  static warmCompletions = 0;
+  static decodeStarts = 0;
+  static decodeCompletions = 0;
+  static warmConstructed = 0;
+  static warmTerminated = 0;
+  static warmLive = 0;
+  static warmPeak = 0;
+  static coldConstructed = 0;
+  static coldTerminated = 0;
+  static coldLive = 0;
+  static coldPeak = 0;
+  static firstDecodeHeld = false;
+  static secondWarmHeld = false;
+  static firstDecode: MixedNativeWorker | undefined;
+  static secondWarm: MixedNativeWorker | undefined;
+
+  readonly #sparse: boolean;
+  readonly #listeners = new Set<(event: any) => void>();
+  #decode: DecodeWorker | undefined;
+  #heldEvents: any[] = [];
+  #warmCompletion: any | undefined;
+  #released = false;
+  #terminated = false;
+  #resetAcknowledged = false;
+  #busy = false;
+  #activeIdentity: string | undefined;
+  #idleIdentity: string | undefined;
+
+  constructor(url: string | URL) {
+    this.#sparse = String(url).includes("sparse-verify");
+    if (this.#sparse) {
+      MixedNativeWorker.warmConstructed += 1;
+      MixedNativeWorker.warmLive += 1;
+      MixedNativeWorker.warmPeak = Math.max(MixedNativeWorker.warmPeak, MixedNativeWorker.warmLive);
+    } else {
+      MixedNativeWorker.coldConstructed += 1;
+      MixedNativeWorker.coldLive += 1;
+      MixedNativeWorker.coldPeak = Math.max(MixedNativeWorker.coldPeak, MixedNativeWorker.coldLive);
+      MixedNativeWorker.decodeStarts += 1;
+      if (MixedNativeWorker.decodeStarts === 1) {
+        MixedNativeWorker.firstDecodeHeld = true;
+        MixedNativeWorker.firstDecode = this;
+      }
+    }
+  }
+
+  postMessage(message: any): void {
+    if (this.#sparse) {
+      if (message.type === "ack") return;
+      if (message.type !== "start") return;
+      this.#warmCompletion = message;
+      MixedNativeWorker.warmStarts += 1;
+      if (MixedNativeWorker.warmStarts === 2) {
+        MixedNativeWorker.secondWarm = this;
+        MixedNativeWorker.secondWarmHeld = true;
+      }
+      const intervals = new Float64Array(message.intervals);
+      const readCalls = Array.from({ length: message.intervalCount }, (_, index) => Math.ceil((intervals[index * 3 + 1]! * message.frameBytes) / (512 * 1024))).reduce((sum, count) => sum + count, 0);
+      const zeroUpdates = Array.from({ length: message.intervalCount }, (_, index) => {
+        const start = intervals[index * 3]!;
+        const previous = index === 0 ? 0 : intervals[(index - 1) * 3]! + intervals[(index - 1) * 3 + 1]!;
+        return Math.ceil(((start - previous) * message.frameBytes) / (64 * 1024));
+      }).reduce((sum, count) => sum + count, Math.ceil(((message.frames - (message.intervalCount === 0 ? 0 : intervals[(message.intervalCount - 1) * 3]! + intervals[(message.intervalCount - 1) * 3 + 1]!)) * message.frameBytes) / (64 * 1024)));
+      queueMicrotask(() => {
+        this.emit({ type: "progress", version: 1, jobId: message.jobId, generation: message.generation, bytes: message.canonicalBytes });
+        if (this === MixedNativeWorker.secondWarm && MixedNativeWorker.secondWarmHeld) return;
+        MixedNativeWorker.warmCompletions += 1;
+        this.emit({
+          type: "complete", version: 1, jobId: message.jobId, generation: message.generation,
+          identity: message.identity, digest: message.identity.slice(7), progressBytes: message.canonicalBytes,
+          canonicalBytes: message.canonicalBytes, readCalls, readBytes: message.activeBytes,
+          hashedBytes: message.canonicalBytes, hashUpdates: readCalls + zeroUpdates, zeroUpdates,
+          elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+        });
+      });
+      return;
+    }
+    if (message.type === "start") {
+      this.#activeIdentity = message.identity;
+      this.#idleIdentity = undefined;
+      this.#resetAcknowledged = false;
+      this.#busy = true;
+      const pcm = MixedNativeWorker.pcmByIdentity.get(message.identity);
+      if (this.#decode === undefined) {
+        this.#decode = new DecodeWorker(pcm);
+        this.#decode.addEventListener("message", (event) => {
+          if (event.data.type === "complete") MixedNativeWorker.decodeCompletions += 1;
+          if (event.data.type === "complete" && event.data.reset === true) {
+            this.#resetAcknowledged = true;
+            this.#busy = false;
+            this.#idleIdentity = this.#activeIdentity;
+          }
+          if (MixedNativeWorker.firstDecode === this && MixedNativeWorker.firstDecodeHeld && !this.#released) this.#heldEvents.push(event);
+          else this.emit(event.data);
+        });
+      } else {
+        this.#decode.reset(pcm);
+      }
+    }
+    this.#decode?.postMessage(message);
+  }
+
+  terminate(): void {
+    if (this.#terminated) return;
+    this.#terminated = true;
+    this.#decode?.terminate();
+    if (this.#sparse) {
+      MixedNativeWorker.warmTerminated += 1;
+      MixedNativeWorker.warmLive -= 1;
+    } else {
+      MixedNativeWorker.coldTerminated += 1;
+      MixedNativeWorker.coldLive -= 1;
+    }
+  }
+  isAliveAndIdle(identity: string): boolean {
+    return !this.#terminated && !this.#busy && this.#resetAcknowledged && this.#idleIdentity === identity;
+  }
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.#listeners.add(listener); }
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.#listeners.delete(listener); }
+
+  release(): void {
+    this.#released = true;
+    const held = this.#heldEvents.splice(0);
+    for (const event of held) this.emit(event.data);
+  }
+
+  emit(message: any): void { for (const listener of this.#listeners) listener({ data: message }); }
+  static releaseFirstDecode(): void { MixedNativeWorker.firstDecode?.release(); MixedNativeWorker.firstDecodeHeld = false; }
+  static releaseSecondWarm(): void {
+    if (!MixedNativeWorker.secondWarmHeld) return;
+    MixedNativeWorker.secondWarmHeld = false;
+    MixedNativeWorker.warmCompletions += 1;
+    const worker = MixedNativeWorker.secondWarm;
+    if (worker === undefined) return;
+    const start = worker.#warmCompletion;
+    worker.emit({
+      type: "complete", version: 1, jobId: start?.jobId, generation: start?.generation,
+      identity: start?.identity, digest: start?.identity?.slice(7), progressBytes: start?.canonicalBytes,
+      canonicalBytes: start?.canonicalBytes, readCalls: 1, readBytes: start?.activeBytes,
+      hashedBytes: start?.canonicalBytes, hashUpdates: 1, zeroUpdates: 0,
+      elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+    });
   }
 }
 
@@ -291,6 +460,244 @@ test("factory validates locator and decoder deadlines before the first request",
   assert.throws(() => createSparseStemResolver({ ...options, locate: null as never }), TypeError);
   assert.throws(() => createSparseStemResolver({ ...options, readDeadlineMs: 0 }), RangeError);
   assert.throws(() => createSparseStemResolver({ ...options, decodeNoProgressMs: 0 }), RangeError);
+});
+
+test("native sparse scheduling funds only unused headroom and keeps wrapped/custom paths baseline", async () => {
+  const options = {
+    locate: () => "https://fixture.invalid/indexed",
+    hardwareConcurrency: 4,
+    maximumWorkers: 2,
+    memoryBudgetBytes: 20 * 1024 * 1024,
+  } as const;
+  const resolver = createSparseStemResolver(options);
+  const scheduling = sparseResolverScheduling(resolver);
+  assert.ok(scheduling);
+  assert.equal(scheduling.concurrency, 2);
+  const claim = scheduling.tryClaimWarmPreparation?.();
+  assert.ok(claim);
+  assert.equal(claim.width, 2);
+  assert.equal(scheduling.tryClaimWarmPreparation?.(), undefined, "one resolver preparation owns the warm reservation");
+  await claim.release();
+  const retry = scheduling.tryClaimWarmPreparation?.();
+  assert.equal(retry?.width, 2);
+  await retry?.release();
+
+  const zeroHeadroom = createSparseStemResolver({ ...options, memoryBudgetBytes: 16 * 1024 * 1024 });
+  assert.equal(sparseResolverScheduling(zeroHeadroom)?.tryClaimWarmPreparation?.(), undefined);
+  const custom = createSparseStemResolver({ ...options, createWorker: () => { throw new Error("custom decoder"); } });
+  assert.equal(sparseResolverScheduling(custom)?.tryClaimWarmPreparation?.(), undefined);
+  const wrapped = ((value: typeof resolver) => (expected: SparsePcmExpectation, signal: AbortSignal) => value(expected, signal))(resolver);
+  assert.equal(sparseResolverScheduling(wrapped), undefined);
+});
+
+test("keeps warm eligibility and source width stable across bounded policy inputs", async () => {
+  const base = { locate: () => "https://fixture.invalid/policy", hardwareConcurrency: 4, maximumWorkers: 2 } as const;
+  const fundedOne = sparseResolverScheduling(createSparseStemResolver({ ...base, memoryBudgetBytes: 18 * 1024 * 1024 }));
+  const claim = fundedOne?.tryClaimWarmPreparation?.();
+  assert.equal(claim?.width, 1, "one funded warm slot is selected from residual headroom");
+  await claim?.release();
+  const callerOwned = sparseResolverScheduling(createSparseStemResolver({ ...base, admission: new BoundedStemAdmission(2), memoryBudgetBytes: 20 * 1024 * 1024 }));
+  assert.equal(callerOwned?.tryClaimWarmPreparation?.(), undefined, "caller-owned admission stays conservative");
+  const explicitAssets = sparseResolverScheduling(createSparseStemResolver({ ...base, assets: { flacWorkerUrl: "https://fixture.invalid/flac-worker.js" }, memoryBudgetBytes: 20 * 1024 * 1024 }));
+  assert.equal(explicitAssets?.tryClaimWarmPreparation?.(), undefined, "explicit assets stay conservative");
+
+  const preferences = [1, 2, 4, 8, 16];
+  for (const preference of preferences) {
+    const hardwareConcurrency = Math.max(2, preference + 1);
+    const shipped = sparseResolverScheduling(createSparseStemResolver({ locate: base.locate, hardwareConcurrency, maximumWorkers: preference, memoryBudgetBytes: preference * 8 * 1024 * 1024 }));
+    const appBudget = sparseResolverScheduling(createSparseStemResolver({ locate: base.locate, hardwareConcurrency, maximumWorkers: preference, memoryBudgetBytes: preference * 8 * 1024 * 1024 + 4 * 1024 * 1024 }));
+    assert.equal(shipped?.concurrency, appBudget?.concurrency, `+4 MiB app budget preserves source width at preference ${preference}`);
+  }
+
+  const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  let fallbackStore: VerifiedSparsePcmStore | undefined;
+  let fallbackLease: import("../src/stems/sparse-store.js").SparsePcmSessionLease | undefined;
+  try {
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: { deviceMemory: 2, hardwareConcurrency: 4 } });
+    assert.equal(
+      sparseResolverScheduling(createSparseStemResolver({ locate: base.locate, maximumWorkers: 2 }))?.concurrency,
+      sparseResolverScheduling(createSparseStemResolver({ ...base, memoryBudgetBytes: 16 * 1024 * 1024 }))?.concurrency,
+      "navigator device-memory default and explicit budget preserve source width",
+    );
+    (globalThis as unknown as { Worker?: unknown }).Worker = undefined;
+    const noWorker = sparseResolverScheduling(createSparseStemResolver({ ...base, memoryBudgetBytes: 20 * 1024 * 1024 }));
+    assert.equal(noWorker?.concurrency, 2, "missing Worker capability preserves the cold source width");
+    const bytes = new Uint8Array([4, 5]);
+    const expected = expectation(bytes, 1);
+    fallbackStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "policy-missing-worker" });
+    await fallbackStore.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+    const fallbackEvents: StemProgress[] = [];
+    fallbackLease = await fallbackStore.openSession({
+      leaseId: "policy-missing-worker",
+      sources: [{ ...expected, sourceId: "source" }],
+      resolve: createSparseStemResolver({ ...base, memoryBudgetBytes: 20 * 1024 * 1024 }),
+      onProgress: (event) => fallbackEvents.push(event),
+    });
+    assert.equal(fallbackEvents.some((event) => event.verificationTiming !== undefined), true, "missing Worker capability takes the local verifier");
+    assert.equal(fallbackEvents.filter((event) => event.stage === "ready").length, 1);
+  } finally {
+    await fallbackLease?.close().catch(() => undefined);
+    await fallbackStore?.close().catch(() => undefined);
+    (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    if (previousNavigator === undefined) Reflect.deleteProperty(globalThis, "navigator");
+    else Object.defineProperty(globalThis, "navigator", previousNavigator);
+  }
+});
+
+test("native resolver admits two warm and two cold sources with overlapping preparation", async () => {
+  const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+  const previousFetch = globalThis.fetch;
+  let store: VerifiedSparsePcmStore | undefined;
+  let firstLease: Awaited<ReturnType<VerifiedSparsePcmStore["openSession"]>> | undefined;
+  let secondLease: Awaited<ReturnType<VerifiedSparsePcmStore["openSession"]>> | undefined;
+  MixedNativeWorker.pcmByIdentity.clear();
+  MixedNativeWorker.warmStarts = 0;
+  MixedNativeWorker.warmCompletions = 0;
+  MixedNativeWorker.decodeStarts = 0;
+  MixedNativeWorker.decodeCompletions = 0;
+  MixedNativeWorker.warmConstructed = 0;
+  MixedNativeWorker.warmTerminated = 0;
+  MixedNativeWorker.warmLive = 0;
+  MixedNativeWorker.warmPeak = 0;
+  MixedNativeWorker.coldConstructed = 0;
+  MixedNativeWorker.coldTerminated = 0;
+  MixedNativeWorker.coldLive = 0;
+  MixedNativeWorker.coldPeak = 0;
+  MixedNativeWorker.firstDecodeHeld = false;
+  MixedNativeWorker.secondWarmHeld = false;
+  const WorkerBoundary = class {
+    readonly #worker: MixedNativeWorker;
+    constructor(url: string | URL) { this.#worker = new MixedNativeWorker(url); }
+    postMessage(message: unknown, transfer?: Transferable[]): void { this.#worker.postMessage(message); void transfer; }
+    terminate(): void { this.#worker.terminate(); }
+    addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { this.#worker.addEventListener(type, listener); }
+    removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { this.#worker.removeEventListener(type, listener); }
+  };
+  (globalThis as unknown as { Worker: typeof WorkerBoundary }).Worker = WorkerBoundary;
+  const wasm = new Uint8Array(readFileSync("node_modules/@misofm/codec/wasm/flac-decoder.wasm"));
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).includes("engine-web-flac-decoder.wasm")) return new Response(responseBytes(wasm), { status: 200, headers: { "Content-Type": "application/wasm" } });
+    return previousFetch(input, init);
+  }) as typeof globalThis.fetch;
+  let holdColdB = false;
+  let releaseHeldColdB: (() => void) | undefined;
+  const releaseColdB = () => {
+    holdColdB = false;
+    const release = releaseHeldColdB;
+    releaseHeldColdB = undefined;
+    release?.();
+  };
+  try {
+    const flac = new Uint8Array(readFileSync("tests/fixtures/native-multiblock-stereo24.flac"));
+    const pcmA = multiblockPcm(72_000);
+    const pcmB = pcmA.slice();
+    pcmB[0] = (pcmB[0] ?? 0) ^ 1;
+    const coldA: SparsePcmExpectation = { identity: identity(pcmA), sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: 72_000, canonicalBytes: pcmA.byteLength };
+    const coldB: SparsePcmExpectation = { identity: identity(pcmB), sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: 72_000, canonicalBytes: pcmB.byteLength };
+    MixedNativeWorker.pcmByIdentity.set(coldA.identity, pcmA);
+    MixedNativeWorker.pcmByIdentity.set(coldB.identity, pcmB);
+    const packages = new Map([
+      ["cold-a", packageBody(flac, { expected: coldA, pcm: pcmA, packedFrames: coldA.frames }).body],
+      ["cold-b", packageBody(flac, { expected: coldB, pcm: pcmB, packedFrames: coldB.frames }).body],
+    ]);
+    const warmABytes = new Uint8Array([1, 2]);
+    const warmBBytes = new Uint8Array([3, 4]);
+    const warmCBytes = new Uint8Array([5, 6]);
+    const warmA = expectation(warmABytes, 1);
+    const warmB = expectation(warmBBytes, 1);
+    const warmC = expectation(warmCBytes, 1);
+    const measuredIdentities = new Set<string>([coldA.identity, warmA.identity, warmB.identity, coldB.identity]);
+    const activeSourceLocks = new Set<string>();
+    let peakAdmittedSources = 0;
+    holdColdB = true;
+    const locks = {
+      request: async <T>(name: string, _options: { readonly mode: "exclusive"; readonly signal?: AbortSignal }, callback: () => Promise<T>): Promise<T> => {
+        const identityHex = name.startsWith("miso:engine-web:v1:stem:") ? name.slice("miso:engine-web:v1:stem:".length) : undefined;
+        const identity = identityHex === undefined ? undefined : `blake3:${identityHex}`;
+        if (identity !== undefined && measuredIdentities.has(identity)) {
+          activeSourceLocks.add(identity);
+          peakAdmittedSources = Math.max(peakAdmittedSources, activeSourceLocks.size);
+        }
+        if (identity === coldB.identity && holdColdB) {
+          await new Promise<void>((resolve) => { releaseHeldColdB = resolve; });
+        }
+        try { return await callback(); }
+        finally { if (identity !== undefined) activeSourceLocks.delete(identity); }
+      },
+    };
+    store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), locks, instanceId: "native-mixed-admission" });
+    await store.installSource(warmA, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: warmABytes }) }) });
+    await store.installSource(warmB, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: warmBBytes }) }) });
+    await store.installSource(warmC, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: warmCBytes }) }) });
+    const resolver = createSparseStemResolver({
+      locate: (sourceIdentity) => `https://fixture.invalid/${sourceIdentity === coldA.identity ? "cold-a" : "cold-b"}`,
+      fetch: async (input) => {
+        const body = packages.get(new URL(String(input)).pathname.slice(1));
+        assert.ok(body);
+        return new Response(responseBytes(body), { status: 200, headers: { "Content-Length": String(body?.byteLength ?? 0) } });
+      },
+      hardwareConcurrency: 4,
+      maximumWorkers: 2,
+      memoryBudgetBytes: 20 * 1024 * 1024,
+    });
+    assert.equal(sparseResolverScheduling(resolver)?.concurrency, 2);
+    const firstEvents: StemProgress[] = [];
+    const firstOpening = store.openSession({
+      leaseId: "native-mixed-first",
+      sources: [
+        { ...coldA, sourceId: "cold-a" },
+        { ...warmA, sourceId: "warm-a" },
+        { ...warmB, sourceId: "warm-b" },
+        { ...coldB, sourceId: "cold-b" },
+      ],
+      resolve: resolver,
+      onProgress: (event) => firstEvents.push(event),
+    });
+    await waitFor(() => MixedNativeWorker.decodeStarts >= 1, 2_000);
+    await waitFor(() => MixedNativeWorker.warmStarts >= 1, 2_000);
+    const secondEvents: StemProgress[] = [];
+    const secondOpening = store.openSession({
+      leaseId: "native-mixed-overlap",
+      sources: [{ ...warmC, sourceId: "warm-c" }],
+      resolve: resolver,
+      onProgress: (event) => secondEvents.push(event),
+    });
+    secondLease = await secondOpening;
+    assert.ok(secondEvents.some((event) => event.stage === "verifying"), "the overlapping preparation uses local verification");
+    await waitFor(() => MixedNativeWorker.warmStarts >= 2, 2_000);
+    assert.equal(MixedNativeWorker.firstDecodeHeld, true, `one native cold decoder remains held across warm admission (decoders=${MixedNativeWorker.decodeStarts}, warms=${MixedNativeWorker.warmStarts})`);
+    assert.equal(MixedNativeWorker.warmStarts, 2, "the overlapping preparation does not create another warm pool");
+    MixedNativeWorker.releaseFirstDecode();
+    await waitFor(() => releaseHeldColdB !== undefined, 2_000);
+    await waitFor(() => firstEvents.some((event) => event.stage === "source-ready" && event.identity === coldA.identity), 2_000);
+    assert.equal(MixedNativeWorker.firstDecode?.isAliveAndIdle(coldA.identity), true, "the completed cold-a decoder remains alive and idle while retained");
+    assert.equal(MixedNativeWorker.warmCompletions, 1, "the second warm job is held until the first cold source preparation finishes");
+    MixedNativeWorker.releaseSecondWarm();
+    releaseColdB();
+    firstLease = await firstOpening;
+    const sourceWidth = sparseResolverScheduling(resolver)?.concurrency ?? 0;
+    const policyProbe = sparseResolverScheduling(createSparseStemResolver({ locate: () => "https://fixture.invalid/native-mixed-policy", hardwareConcurrency: 4, maximumWorkers: 2, memoryBudgetBytes: 20 * 1024 * 1024 }));
+    const probeClaim = policyProbe?.tryClaimWarmPreparation?.();
+    const warmWidth = probeClaim?.width ?? 0;
+    await probeClaim?.release();
+    assert.equal(peakAdmittedSources, sourceWidth, "the first preparation reaches its observed native source-task bound");
+    assert.equal(peakAdmittedSources <= sourceWidth, true, "observed source tasks stay within C");
+    assert.equal(MixedNativeWorker.coldPeak <= sourceWidth, true, "observed cold physical workers stay within C");
+    assert.equal(MixedNativeWorker.warmPeak <= warmWidth, true, "observed warm physical workers stay within K");
+    assert.equal(MixedNativeWorker.warmConstructed, MixedNativeWorker.warmTerminated, "every warm Worker construction is terminated");
+    assert.equal(MixedNativeWorker.coldConstructed, MixedNativeWorker.coldTerminated, "every cold Worker construction is terminated");
+    assert.equal(MixedNativeWorker.coldPeak * 8 * 1024 * 1024 + MixedNativeWorker.warmPeak * 2 * 1024 * 1024 <= 20 * 1024 * 1024, true, "observed reservations fit the budget");
+    assert.equal(firstEvents.filter((event) => event.stage === "ready").length, 1);
+    assert.equal(secondEvents.filter((event) => event.stage === "ready").length, 1);
+  } finally {
+    releaseColdB();
+    await firstLease?.close().catch(() => undefined);
+    await secondLease?.close().catch(() => undefined);
+    await store?.close().catch(() => undefined);
+    (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test("successful sparse progress flushes its latest coalesced boundary before close", () => {

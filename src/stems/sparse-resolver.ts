@@ -2,11 +2,11 @@ import { Cause, Channel, Context, Effect, Exit, Fiber, Pull, Schema, Scope, Stre
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { EngineWebAdapterError } from "../errors.js";
-import { BoundedStemAdmission, flacPipelineWidths } from "./flac-admission.js";
+import { BoundedStemAdmission, defaultFlacMemoryBudgetBytes, flacPipelineWidths, FLAC_WORKER_RESERVATION_BYTES } from "./flac-admission.js";
 import { createFlacStemChunkResolver, type BorrowedFlacPcm, type FlacChunkDecodeOptions } from "./flac-resolver.js";
 import { DecoderByteSourceError, makeFiniteDecoderByteSource } from "./decoder-byte-source.js";
 import { FlacWorkerPool } from "./flac-worker-pool.js";
-import { registerSparseResolver } from "./sparse-scheduling.js";
+import { registerSparseResolver, type SparseWarmPreparationClaim } from "./sparse-scheduling.js";
 import {
   SPARSE_STEM_HEADER_BYTES,
   admitSparseStemHeader,
@@ -503,7 +503,14 @@ export function createSparseStemResolver(
 ): (expected: SparsePcmExpectation, signal: AbortSignal, context?: SparseStemResolverContext) => Promise<SparsePcmResolved> {
   const snapshot = snapshotOptions(options);
   validateOptions(snapshot);
-  const widths = flacPipelineWidths(snapshot);
+  // Resolve the browser hint once and pass that snapshot to both width and
+  // warm-headroom calculations. A hostile or changing hint must not produce
+  // two inconsistent policies in one resolver.
+  const hintedDeviceMemory = snapshot.deviceMemory ?? (typeof navigator === "undefined" ? undefined : (navigator as Navigator & { readonly deviceMemory?: number }).deviceMemory);
+  const widths = flacPipelineWidths({ ...snapshot, deviceMemory: hintedDeviceMemory ?? Number.NaN });
+  const budget = snapshot.memoryBudgetBytes ?? defaultFlacMemoryBudgetBytes(hintedDeviceMemory);
+  const warmWidth = fundedWarmWidth(widths.processing, budget);
+  const warmEligible = snapshot.admission === undefined && snapshot.createWorker === undefined && snapshot.assets === undefined;
   const pool = new FlacWorkerPool({
     ...(snapshot.admission === undefined ? {} : { admission: snapshot.admission }),
     ...(snapshot.assets === undefined ? {} : { assets: snapshot.assets }),
@@ -637,6 +644,31 @@ export function createSparseStemResolver(
       }
     }
   };
-  registerSparseResolver(resolver, { concurrency: widths.processing, pool });
+  let warmPreparationOccupied = false;
+  const tryClaimWarmPreparation = (): SparseWarmPreparationClaim | undefined => {
+    if (!warmEligible || warmWidth < 1 || warmPreparationOccupied) return undefined;
+    warmPreparationOccupied = true;
+    let released = false;
+    return {
+      width: warmWidth,
+      release: async () => {
+        if (released) return;
+        released = true;
+        warmPreparationOccupied = false;
+      },
+    };
+  };
+  registerSparseResolver(resolver, { concurrency: widths.processing, pool, tryClaimWarmPreparation });
   return resolver;
+}
+
+function fundedWarmWidth(concurrency: number, memoryBudget: number): number {
+  const warmReservation = 2 * 1024 * 1024;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || !Number.isSafeInteger(memoryBudget) || memoryBudget < 0) return 0;
+  const coldReservation = concurrency * FLAC_WORKER_RESERVATION_BYTES;
+  if (!Number.isSafeInteger(coldReservation)) return 0;
+  const headroom = Math.max(0, memoryBudget - coldReservation);
+  if (!Number.isSafeInteger(headroom)) return 0;
+  const funded = Math.floor(headroom / warmReservation);
+  return Number.isSafeInteger(funded) ? Math.min(2, concurrency, funded) : 0;
 }

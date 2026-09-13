@@ -61,6 +61,17 @@ await build({
     emptyOutDir: false,
     outDir: "dist/internal",
     minify: true,
+    lib: { entry: "src/internal/engine-web-sparse-verify-worker.ts", formats: ["es"], fileName: () => "engine-web-sparse-verify-worker.js" },
+  },
+});
+
+await build({
+  configFile: false,
+  logLevel: "silent",
+  build: {
+    emptyOutDir: false,
+    outDir: "dist/internal",
+    minify: true,
     lib: { entry: "src/internal/engine-web-opfs-worker.ts", formats: ["es"], fileName: () => "engine-web-opfs-worker.js" },
   },
 });
@@ -68,7 +79,7 @@ await build({
 // Effect's defensive type error includes a documentation URL. Keep the
 // browser worker artifacts free of URL literals so the package policy can
 // prove that delivery endpoints are caller-owned.
-for (const worker of ["engine-web-flac-worker.js", "engine-web-opfs-worker.js"]) {
+for (const worker of ["engine-web-flac-worker.js", "engine-web-opfs-worker.js", "engine-web-sparse-verify-worker.js"]) {
   const path = new URL(`../dist/internal/${worker}`, import.meta.url);
   const text = await readFile(path, "utf8");
   await writeFile(path, text.replaceAll("https://github.com/Effect-TS/effect/issues", "the upstream Effect issue tracker"));
