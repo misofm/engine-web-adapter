@@ -4,8 +4,8 @@
 
 Build a headless, framework-neutral browser host for `@misofm/engine`. Native
 FLAC is the first-party browser delivery format. The adapter streams it through
-bounded Effect HTTP ranges, a single fixed shared input slot, and package-owned
-universal libFLAC Wasm, verifies canonical PCM into OPFS, then feeds the engine
+bounded Effect HTTP ranges, a single fixed shared input slot, and the public
+`@misofm/codec` universal libFLAC Wasm, verifies canonical PCM into OPFS, then feeds the engine
 through bounded browser primitives. An already-decoded canonical-PCM
 resolver remains an explicit lower-level escape hatch.
 

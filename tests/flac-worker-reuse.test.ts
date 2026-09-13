@@ -134,10 +134,10 @@ test("a shared-admission one-shot job retains its reservation until residual out
 });
 
 test("native retained pools single-flight and cache one validated decoder module", async () => {
-  const wasm = new Uint8Array(await readFile("src/internal/engine-web-flac-decoder.wasm"));
+  const wasm = new Uint8Array(await readFile("node_modules/@misofm/codec/wasm/flac-decoder.wasm"));
   const originalFetch = globalThis.fetch;
   const originalWorker = globalThis.Worker;
-  const originalCompile = WebAssembly.compileStreaming;
+  const originalCompile = WebAssembly.compile;
   let fetches = 0;
   let compiles = 0;
   const contexts: Array<WebAssembly.Module | undefined> = [];
@@ -149,10 +149,10 @@ test("native retained pools single-flight and cache one validated decoder module
     fetches += 1;
     return new Response(wasm.slice(), { headers: { "Content-Type": "application/wasm" } });
   }) as typeof fetch;
-  WebAssembly.compileStreaming = (async (source) => {
+  WebAssembly.compile = (async (source) => {
     compiles += 1;
     return originalCompile(source);
-  }) as typeof WebAssembly.compileStreaming;
+  }) as typeof WebAssembly.compile;
   try {
     const pool = new FlacWorkerPool({ hardwareConcurrency: 2 });
     const epoch = pool.retain();
@@ -174,12 +174,12 @@ test("native retained pools single-flight and cache one validated decoder module
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.Worker = originalWorker;
-    WebAssembly.compileStreaming = originalCompile;
+    WebAssembly.compile = originalCompile;
   }
 });
 
 test("a failed native module load can retry in a later job of the same epoch", async () => {
-  const wasm = new Uint8Array(await readFile("src/internal/engine-web-flac-decoder.wasm"));
+  const wasm = new Uint8Array(await readFile("node_modules/@misofm/codec/wasm/flac-decoder.wasm"));
   const originalFetch = globalThis.fetch;
   const originalWorker = globalThis.Worker;
   let requests = 0;
@@ -211,10 +211,10 @@ test("a failed native module load can retry in a later job of the same epoch", a
 });
 
 test("last module-load owner cancellation discards a late compile", async () => {
-  const wasm = new Uint8Array(await readFile("src/internal/engine-web-flac-decoder.wasm"));
+  const wasm = new Uint8Array(await readFile("node_modules/@misofm/codec/wasm/flac-decoder.wasm"));
   const originalFetch = globalThis.fetch;
   const originalWorker = globalThis.Worker;
-  const originalCompile = WebAssembly.compileStreaming;
+  const originalCompile = WebAssembly.compile;
   const compileGate = (() => {
     let resolve!: (module: WebAssembly.Module | PromiseLike<WebAssembly.Module>) => void;
     const promise = new Promise<WebAssembly.Module>((done) => { resolve = done; });
@@ -231,14 +231,14 @@ test("last module-load owner cancellation discards a late compile", async () => 
     fetches += 1;
     return new Response(wasm.slice(), { headers: { "Content-Type": "application/wasm" } });
   }) as typeof fetch;
-  WebAssembly.compileStreaming = (async (source) => {
+  WebAssembly.compile = (async (source) => {
     compiles += 1;
     if (compiles === 1) {
       firstCompileStarted = true;
       return compileGate.promise;
     }
     return originalCompile(source);
-  }) as typeof WebAssembly.compileStreaming;
+  }) as typeof WebAssembly.compile;
   try {
     const pool = new FlacWorkerPool({ hardwareConcurrency: 2 });
     const epoch = pool.retain();
@@ -249,7 +249,7 @@ test("last module-load owner cancellation discards a late compile", async () => 
     }
     assert.equal(firstCompileStarted, true);
     abort.abort("cancelled module waiter");
-    compileGate.resolve(originalCompile(new Response(wasm.slice(), { headers: { "Content-Type": "application/wasm" } })));
+    compileGate.resolve(originalCompile(wasm.slice().buffer));
     await assert.rejects(first, (error: unknown) => error instanceof Error && "code" in error && error.code === "stem.cancelled");
     assert.equal(await pool.run({
       requestId: 32,
@@ -261,6 +261,6 @@ test("last module-load owner cancellation discards a late compile", async () => 
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.Worker = originalWorker;
-    WebAssembly.compileStreaming = originalCompile;
+    WebAssembly.compile = originalCompile;
   }
 });

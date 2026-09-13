@@ -23,12 +23,12 @@ concurrency:
 
 env:
   PACKAGE_NAME: "@misofm/engine-web-adapter"
-  PACKAGE_VERSION: "0.3.8"
+  PACKAGE_VERSION: "0.4.0"
   NPM_CONFIG_REGISTRY: "https://registry.npmjs.org"
 
 jobs:
   publish:
-    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.3.8
+    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.4.0
     runs-on: ubuntu-24.04
     steps:
       - name: Refuse a non-main or mismatched dispatch
@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 24
+          node-version: 22.23.2
 
       - name: Pin the npm release client
         run: |
