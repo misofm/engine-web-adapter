@@ -56,6 +56,7 @@ export type {
   StemIdentity,
   StemProgress,
   StemProgressStage,
+  WarmVerificationTiming,
   StemRequirement,
   StemResolver,
   SparseStemResolverContext,

@@ -1121,6 +1121,15 @@ describe("VerifiedSparsePcmStore", () => {
     assert.equal(warmBytes.at(-1)?.bytes, expected.canonicalBytes);
     assert.equal(warm.some((event) => event.stage === "ingesting"), false);
     assert.equal(warm.filter((event) => event.stage === "source-ready").length, 1);
+    const timings = warm.filter((event) => event.verificationTiming !== undefined);
+    assert.equal(timings.length, 1);
+    const timing = timings[0]!.verificationTiming!;
+    assert.equal(timing.readCalls, 2);
+    assert.equal(timing.readBytes, 40_000);
+    assert.equal(timing.hashedBytes, canonical.byteLength);
+    for (const ms of [timing.elapsedMs, timing.metadataMs, timing.readWaitMs, timing.hashMs]) assert.ok(Number.isFinite(ms) && ms >= 0);
+    assert.ok(timing.elapsedMs >= timing.metadataMs + timing.readWaitMs + timing.hashMs);
+    assert.equal(cold.some((event) => event.verificationTiming !== undefined), false);
     const observedDespiteThrow = await store.openSource(expected, { onProgress: () => { throw new Error("observer failure"); } });
     assert.equal(observedDespiteThrow?.data.size, 40_000);
     await store.close();

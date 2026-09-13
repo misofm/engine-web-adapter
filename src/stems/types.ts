@@ -9,7 +9,22 @@ export interface DeclaredStemSource {
   readonly spec: SourceSpec;
 }
 
+/** Successful warm verification only. All times are elapsed milliseconds.
+ * Read waits include scheduling; concurrent sources overlap. Hash time covers
+ * synchronous updates and finalization, including canonical zero gaps.
+ */
+export interface WarmVerificationTiming {
+  readonly elapsedMs: number;
+  readonly metadataMs: number;
+  readonly readWaitMs: number;
+  readonly hashMs: number;
+  readonly readCalls: number;
+  readonly readBytes: number;
+  readonly hashedBytes: number;
+}
+
 interface StemProgressContext {
+  readonly verificationTiming?: WarmVerificationTiming;
   readonly sourceId?: string;
   readonly identity?: StemIdentity;
 }
