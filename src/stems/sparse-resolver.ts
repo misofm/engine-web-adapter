@@ -670,5 +670,5 @@ function fundedWarmWidth(concurrency: number, memoryBudget: number): number {
   const headroom = Math.max(0, memoryBudget - coldReservation);
   if (!Number.isSafeInteger(headroom)) return 0;
   const funded = Math.floor(headroom / warmReservation);
-  return Number.isSafeInteger(funded) ? Math.min(2, concurrency, funded) : 0;
+  return Number.isSafeInteger(funded) ? Math.min(3, concurrency, funded) : 0;
 }

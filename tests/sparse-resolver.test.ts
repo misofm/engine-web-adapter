@@ -164,6 +164,8 @@ class MixedNativeWorker {
   static coldPeak = 0;
   static firstDecodeHeld = false;
   static secondWarmHeld = false;
+  static warmHoldCount = 0;
+  static warmHeld = new Set<MixedNativeWorker>();
   static firstDecode: MixedNativeWorker | undefined;
   static secondWarm: MixedNativeWorker | undefined;
 
@@ -172,6 +174,7 @@ class MixedNativeWorker {
   #decode: DecodeWorker | undefined;
   #heldEvents: any[] = [];
   #warmCompletion: any | undefined;
+  #warmHeld = false;
   #released = false;
   #terminated = false;
   #resetAcknowledged = false;
@@ -203,6 +206,10 @@ class MixedNativeWorker {
       if (message.type !== "start") return;
       this.#warmCompletion = message;
       MixedNativeWorker.warmStarts += 1;
+      if (MixedNativeWorker.warmStarts <= MixedNativeWorker.warmHoldCount) {
+        this.#warmHeld = true;
+        MixedNativeWorker.warmHeld.add(this);
+      }
       if (MixedNativeWorker.warmStarts === 2) {
         MixedNativeWorker.secondWarm = this;
         MixedNativeWorker.secondWarmHeld = true;
@@ -216,7 +223,7 @@ class MixedNativeWorker {
       }).reduce((sum, count) => sum + count, Math.ceil(((message.frames - (message.intervalCount === 0 ? 0 : intervals[(message.intervalCount - 1) * 3]! + intervals[(message.intervalCount - 1) * 3 + 1]!)) * message.frameBytes) / (64 * 1024)));
       queueMicrotask(() => {
         this.emit({ type: "progress", version: 1, jobId: message.jobId, generation: message.generation, bytes: message.canonicalBytes });
-        if (this === MixedNativeWorker.secondWarm && MixedNativeWorker.secondWarmHeld) return;
+        if (this.#warmHeld || this === MixedNativeWorker.secondWarm && MixedNativeWorker.secondWarmHeld) return;
         MixedNativeWorker.warmCompletions += 1;
         this.emit({
           type: "complete", version: 1, jobId: message.jobId, generation: message.generation,
@@ -293,6 +300,24 @@ class MixedNativeWorker {
       hashedBytes: start?.canonicalBytes, hashUpdates: 1, zeroUpdates: 0,
       elapsedMs: 1, readWaitMs: 1, hashMs: 1,
     });
+  }
+  private emitWarmCompletion(): void {
+    if (!this.#warmHeld) return;
+    this.#warmHeld = false;
+    MixedNativeWorker.warmHeld.delete(this);
+    MixedNativeWorker.warmCompletions += 1;
+    const start = this.#warmCompletion;
+    this.emit({
+      type: "complete", version: 1, jobId: start?.jobId, generation: start?.generation,
+      identity: start?.identity, digest: start?.identity?.slice(7), progressBytes: start?.canonicalBytes,
+      canonicalBytes: start?.canonicalBytes, readCalls: 1, readBytes: start?.activeBytes,
+      hashedBytes: start?.canonicalBytes, hashUpdates: 1, zeroUpdates: 0,
+      elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+    });
+  }
+  static releaseHeldWarm(): void {
+    MixedNativeWorker.secondWarmHeld = false;
+    for (const worker of [...MixedNativeWorker.warmHeld]) worker.emitWarmCompletion();
   }
 }
 
@@ -490,6 +515,36 @@ test("native sparse scheduling funds only unused headroom and keeps wrapped/cust
   assert.equal(sparseResolverScheduling(wrapped), undefined);
 });
 
+test("funds at most three warm lanes at the residual headroom boundaries", async () => {
+  const coldBytes = 4 * 8 * 1024 * 1024;
+  const base = { locate: () => "https://fixture.invalid/policy-three", hardwareConcurrency: 5, maximumWorkers: 4 } as const;
+  for (const [headroom, expectedWarmWidth] of [[0, 0], [2, 1], [4, 2], [6, 3], [8, 3]] as const) {
+    const scheduling = sparseResolverScheduling(createSparseStemResolver({
+      ...base,
+      memoryBudgetBytes: coldBytes + headroom * 1024 * 1024,
+    }));
+    assert.ok(scheduling);
+    assert.equal(scheduling.concurrency, 4, `source width changed at ${headroom} MiB headroom`);
+    const claim = scheduling.tryClaimWarmPreparation?.();
+    assert.equal(claim?.width ?? 0, expectedWarmWidth, `warm width at ${headroom} MiB headroom`);
+    assert.equal(coldBytes + expectedWarmWidth * 2 * 1024 * 1024 <= coldBytes + headroom * 1024 * 1024, true, "reservation exceeds the validated budget");
+    if (expectedWarmWidth === 0) continue;
+    assert.equal(scheduling.tryClaimWarmPreparation?.(), undefined, "one preparation owns the warm reservation");
+    await claim?.release();
+    const retry = scheduling.tryClaimWarmPreparation?.();
+    assert.equal(retry?.width, expectedWarmWidth, "released reservation was not reusable");
+    await retry?.release();
+  }
+  const belowThree = sparseResolverScheduling(createSparseStemResolver({
+    ...base,
+    memoryBudgetBytes: coldBytes + 6 * 1024 * 1024 - 1,
+  }));
+  const belowClaim = belowThree?.tryClaimWarmPreparation?.();
+  assert.equal(belowClaim?.width, 2, "one byte below 6 MiB must not fund a third lane");
+  assert.equal(belowThree?.concurrency, 4);
+  await belowClaim?.release();
+});
+
 test("keeps warm eligibility and source width stable across bounded policy inputs", async () => {
   const base = { locate: () => "https://fixture.invalid/policy", hardwareConcurrency: 4, maximumWorkers: 2 } as const;
   const fundedOne = sparseResolverScheduling(createSparseStemResolver({ ...base, memoryBudgetBytes: 18 * 1024 * 1024 }));
@@ -501,13 +556,48 @@ test("keeps warm eligibility and source width stable across bounded policy input
   const explicitAssets = sparseResolverScheduling(createSparseStemResolver({ ...base, assets: { flacWorkerUrl: "https://fixture.invalid/flac-worker.js" }, memoryBudgetBytes: 20 * 1024 * 1024 }));
   assert.equal(explicitAssets?.tryClaimWarmPreparation?.(), undefined, "explicit assets stay conservative");
 
-  const preferences = [1, 2, 4, 8, 16];
+  const preferences = [1, 2, 4, 8, 12, 16];
   for (const preference of preferences) {
     const hardwareConcurrency = Math.max(2, preference + 1);
-    const shipped = sparseResolverScheduling(createSparseStemResolver({ locate: base.locate, hardwareConcurrency, maximumWorkers: preference, memoryBudgetBytes: preference * 8 * 1024 * 1024 }));
-    const appBudget = sparseResolverScheduling(createSparseStemResolver({ locate: base.locate, hardwareConcurrency, maximumWorkers: preference, memoryBudgetBytes: preference * 8 * 1024 * 1024 + 4 * 1024 * 1024 }));
-    assert.equal(shipped?.concurrency, appBudget?.concurrency, `+4 MiB app budget preserves source width at preference ${preference}`);
+    const coldBudget = preference * 8 * 1024 * 1024;
+    const shipped = sparseResolverScheduling(createSparseStemResolver({ locate: base.locate, hardwareConcurrency, maximumWorkers: preference, memoryBudgetBytes: coldBudget + 4 * 1024 * 1024 }));
+    const appBudget = sparseResolverScheduling(createSparseStemResolver({ locate: base.locate, hardwareConcurrency, maximumWorkers: preference, memoryBudgetBytes: coldBudget + 6 * 1024 * 1024 }));
+    assert.equal(shipped?.concurrency, appBudget?.concurrency, `+6 MiB app budget preserves source width at preference ${preference}`);
+    const oldClaim = shipped?.tryClaimWarmPreparation?.();
+    const candidateClaim = appBudget?.tryClaimWarmPreparation?.();
+    assert.equal(oldClaim?.width ?? 0, Math.min(2, shipped?.concurrency ?? 0), `+4 MiB funds at most two lanes at preference ${preference}`);
+    assert.equal(candidateClaim?.width ?? 0, Math.min(3, appBudget?.concurrency ?? 0), `+6 MiB funds three lanes when C permits at preference ${preference}`);
+    await oldClaim?.release();
+    await candidateClaim?.release();
   }
+
+  const hardwareCapped = sparseResolverScheduling(createSparseStemResolver({
+    locate: base.locate,
+    hardwareConcurrency: 4,
+    maximumWorkers: 12,
+    memoryBudgetBytes: 12 * 8 * 1024 * 1024 + 6 * 1024 * 1024,
+  }));
+  assert.equal(hardwareCapped?.concurrency, 3, "hardware cap must limit source width independently of preference");
+  const hardwareClaim = hardwareCapped?.tryClaimWarmPreparation?.();
+  assert.equal(hardwareClaim?.width, 3, "hardware-capped width still admits three funded warm lanes");
+  await hardwareClaim?.release();
+
+  const capturedThirtyTwo = (extraMiB: number) => sparseResolverScheduling(createSparseStemResolver({
+    locate: base.locate,
+    hardwareConcurrency: 32,
+    maximumWorkers: 8,
+    memoryBudgetBytes: 8 * 8 * 1024 * 1024 + extraMiB * 1024 * 1024,
+  }));
+  const shippedAtCapturedHardware = capturedThirtyTwo(4);
+  const candidateAtCapturedHardware = capturedThirtyTwo(6);
+  assert.equal(shippedAtCapturedHardware?.concurrency, 8, "captured hardwareConcurrency=32 and preference=8 derive C=8");
+  assert.equal(candidateAtCapturedHardware?.concurrency, 8, "the +6 MiB policy keeps C=8 at captured hardware");
+  const shippedCapturedClaim = shippedAtCapturedHardware?.tryClaimWarmPreparation?.();
+  const candidateCapturedClaim = candidateAtCapturedHardware?.tryClaimWarmPreparation?.();
+  assert.equal(shippedCapturedClaim?.width, 2, "the shipped +4 MiB allowance funds two lanes at captured hardware");
+  assert.equal(candidateCapturedClaim?.width, 3, "the candidate +6 MiB allowance funds three lanes at captured hardware");
+  await shippedCapturedClaim?.release();
+  await candidateCapturedClaim?.release();
 
   const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
   const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -566,6 +656,8 @@ test("native resolver admits two warm and two cold sources with overlapping prep
   MixedNativeWorker.coldPeak = 0;
   MixedNativeWorker.firstDecodeHeld = false;
   MixedNativeWorker.secondWarmHeld = false;
+  MixedNativeWorker.warmHoldCount = 0;
+  MixedNativeWorker.warmHeld.clear();
   const WorkerBoundary = class {
     readonly #worker: MixedNativeWorker;
     constructor(url: string | URL) { this.#worker = new MixedNativeWorker(url); }
@@ -695,6 +787,128 @@ test("native resolver admits two warm and two cold sources with overlapping prep
     await firstLease?.close().catch(() => undefined);
     await secondLease?.close().catch(() => undefined);
     await store?.close().catch(() => undefined);
+    (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("native resolver admits three warm lanes beside a retained cold worker and drains a fourth queued warm source", async () => {
+  const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+  const previousFetch = globalThis.fetch;
+  let store: VerifiedSparsePcmStore | undefined;
+  let lease: Awaited<ReturnType<VerifiedSparsePcmStore["openSession"]>> | undefined;
+  MixedNativeWorker.pcmByIdentity.clear();
+  MixedNativeWorker.warmStarts = 0;
+  MixedNativeWorker.warmCompletions = 0;
+  MixedNativeWorker.decodeStarts = 0;
+  MixedNativeWorker.decodeCompletions = 0;
+  MixedNativeWorker.warmConstructed = 0;
+  MixedNativeWorker.warmTerminated = 0;
+  MixedNativeWorker.warmLive = 0;
+  MixedNativeWorker.warmPeak = 0;
+  MixedNativeWorker.coldConstructed = 0;
+  MixedNativeWorker.coldTerminated = 0;
+  MixedNativeWorker.coldLive = 0;
+  MixedNativeWorker.coldPeak = 0;
+  MixedNativeWorker.firstDecodeHeld = false;
+  MixedNativeWorker.secondWarmHeld = false;
+  MixedNativeWorker.warmHoldCount = 3;
+  MixedNativeWorker.warmHeld.clear();
+  MixedNativeWorker.firstDecode = undefined;
+  MixedNativeWorker.secondWarm = undefined;
+  const WorkerBoundary = class {
+    readonly #worker: MixedNativeWorker;
+    constructor(url: string | URL) { this.#worker = new MixedNativeWorker(url); }
+    postMessage(message: unknown, transfer?: Transferable[]): void { this.#worker.postMessage(message); void transfer; }
+    terminate(): void { this.#worker.terminate(); }
+    addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { this.#worker.addEventListener(type, listener); }
+    removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { this.#worker.removeEventListener(type, listener); }
+  };
+  (globalThis as unknown as { Worker: typeof WorkerBoundary }).Worker = WorkerBoundary;
+  const previousFetchValue = globalThis.fetch;
+  const wasm = new Uint8Array(readFileSync("node_modules/@misofm/codec/wasm/flac-decoder.wasm"));
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).includes("engine-web-flac-decoder.wasm")) return new Response(responseBytes(wasm), { status: 200, headers: { "Content-Type": "application/wasm" } });
+    return previousFetchValue(input, init);
+  }) as typeof globalThis.fetch;
+  try {
+    const flac = new Uint8Array(readFileSync("tests/fixtures/native-multiblock-stereo24.flac"));
+    const pcm = multiblockPcm(72_000);
+    const cold: SparsePcmExpectation = { identity: identity(pcm), sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: 72_000, canonicalBytes: pcm.byteLength };
+    MixedNativeWorker.pcmByIdentity.set(cold.identity, pcm);
+    const coldBody = packageBody(flac, { expected: cold, pcm, packedFrames: cold.frames }).body;
+    const warmBytes = [new Uint8Array([11, 12]), new Uint8Array([21, 22]), new Uint8Array([31, 32]), new Uint8Array([41, 42])];
+    const warms = warmBytes.map((bytes) => expectation(bytes, 1));
+    const measuredIdentities = new Set<string>([cold.identity, ...warms.map((source) => source.identity)]);
+    const activeSourceTasks = new Set<string>();
+    let peakActiveSourceTasks = 0;
+    const locks = {
+      request: async <T>(name: string, _options: { readonly mode: "exclusive"; readonly signal?: AbortSignal }, callback: () => Promise<T>): Promise<T> => {
+        const hex = name.startsWith("miso:engine-web:v1:stem:") ? name.slice("miso:engine-web:v1:stem:".length) : undefined;
+        const sourceIdentity = hex === undefined ? undefined : `blake3:${hex}`;
+        if (sourceIdentity !== undefined && measuredIdentities.has(sourceIdentity)) {
+          activeSourceTasks.add(sourceIdentity);
+          peakActiveSourceTasks = Math.max(peakActiveSourceTasks, activeSourceTasks.size);
+        }
+        try { return await callback(); }
+        finally { if (sourceIdentity !== undefined) activeSourceTasks.delete(sourceIdentity); }
+      },
+    };
+    store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), locks, instanceId: "native-three-lane-admission" });
+    for (const source of warms) await store.installSource(source, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: warmBytes[warms.indexOf(source)]! }) }) });
+    activeSourceTasks.clear();
+    peakActiveSourceTasks = 0;
+    const resolver = createSparseStemResolver({
+      locate: (sourceIdentity) => { assert.equal(sourceIdentity, cold.identity); return "https://fixture.invalid/native-three-cold"; },
+      fetch: async () => new Response(responseBytes(coldBody), { status: 200, headers: { "Content-Length": String(coldBody.byteLength) } }),
+      hardwareConcurrency: 5,
+      maximumWorkers: 4,
+      memoryBudgetBytes: 38 * 1024 * 1024,
+    });
+    const scheduling = sparseResolverScheduling(resolver);
+    assert.equal(scheduling?.concurrency, 4, "three-lane mixed fixture changed its cold source width");
+    const claim = scheduling?.tryClaimWarmPreparation?.();
+    assert.equal(claim?.width, 3, "38 MiB must fund exactly three warm lanes beside C=4");
+    assert.equal(4 * 8 * 1024 * 1024 + 3 * 2 * 1024 * 1024 <= 38 * 1024 * 1024, true, "mixed reservation exceeds the budget");
+    await claim?.release();
+    const events: StemProgress[] = [];
+    const opening = store.openSession({
+      leaseId: "native-three-lane-admission",
+      sources: [
+        { ...cold, sourceId: "cold" },
+        ...warms.map((source, index) => ({ ...source, sourceId: `warm-${index}` })),
+      ],
+      resolve: resolver,
+      onProgress: (event) => events.push(event),
+    });
+    await waitFor(() => MixedNativeWorker.decodeStarts >= 1 && activeSourceTasks.size === 4 && MixedNativeWorker.warmStarts === 3 && MixedNativeWorker.warmLive === 3 && MixedNativeWorker.decodeCompletions === 0, 2_000);
+    MixedNativeWorker.releaseFirstDecode();
+    await waitFor(() => MixedNativeWorker.firstDecode?.isAliveAndIdle(cold.identity) === true && activeSourceTasks.size === 4 && MixedNativeWorker.warmStarts === 3 && MixedNativeWorker.warmLive === 3, 2_000);
+    assert.equal(MixedNativeWorker.warmStarts, 3, "the fourth warm source must remain queued while three lanes are held");
+    assert.equal(peakActiveSourceTasks <= 4, true, "active source tasks exceeded C");
+    assert.equal(MixedNativeWorker.warmPeak, 3, "the third warm lane was not physically admitted");
+    assert.equal(MixedNativeWorker.coldPeak <= 4, true, "cold physical workers exceeded C");
+    const retainedColdWorker = MixedNativeWorker.firstDecode as unknown as MixedNativeWorker;
+    assert.equal(retainedColdWorker.isAliveAndIdle(cold.identity), true, "completed cold worker was not retained idle during warm work");
+    assert.equal(MixedNativeWorker.warmCompletions, 0, "held warm lanes completed before the queue boundary was observed");
+    MixedNativeWorker.releaseHeldWarm();
+    await waitFor(() => MixedNativeWorker.warmStarts === 4 && MixedNativeWorker.warmCompletions === 4, 2_000);
+    lease = await opening;
+    assert.equal(events.filter((event) => event.stage === "source-ready").length, 5, "all five source readiness facts must be published");
+    assert.equal(events.filter((event) => event.stage === "ready").length, 1, "aggregate readiness must publish once");
+    assert.equal(MixedNativeWorker.warmConstructed, 3, "queued work must reuse the three-lane warm pool");
+    assert.equal(MixedNativeWorker.warmConstructed, MixedNativeWorker.warmTerminated, "every three-lane warm Worker must terminate");
+    assert.equal(MixedNativeWorker.coldConstructed, MixedNativeWorker.coldTerminated, "retained cold Worker must terminate on preparation close");
+    assert.equal(MixedNativeWorker.coldPeak * 8 * 1024 * 1024 + MixedNativeWorker.warmPeak * 2 * 1024 * 1024 <= 38 * 1024 * 1024, true, "observed mixed physical reservations exceeded 38 MiB");
+    const reacquired = scheduling?.tryClaimWarmPreparation?.();
+    assert.equal(reacquired?.width, 3, "warm claim is reusable after all three workers terminate");
+    await reacquired?.release();
+  } finally {
+    MixedNativeWorker.releaseHeldWarm();
+    await lease?.close().catch(() => undefined);
+    await store?.close().catch(() => undefined);
+    MixedNativeWorker.warmHoldCount = 0;
+    MixedNativeWorker.warmHeld.clear();
     (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
     globalThis.fetch = previousFetch;
   }
