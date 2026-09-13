@@ -1,0 +1,52 @@
+{
+  "runtime": {
+    "bun": "1.4.2",
+    "processVersionCompatibility": "v26.3.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "source": {
+    "codecCommit": "8c2823b041594a38284b01b5a39d77a6b515716e",
+    "adapterCommit": "088a14f57a945e6feb93145f3338943276a335dc",
+    "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+    "shaVariant": "simd"
+  },
+  "selection": {
+    "path": "/data/sparse-pcm-launch/final-per-stem/r1/c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f.mspcm",
+    "identity": "sha256:c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f",
+    "chunkIndex": 3,
+    "compressedBytes": 5124876,
+    "pcmBytes": 7938000,
+    "frames": 1323000,
+    "maximumPcmBlockBytes": 27648,
+    "expectedCompressedSha256": "ab35d73ddbfb7cbeb9384a34c585edc0141e88bb812d047caad4969a4abe884b",
+    "compressedSha256": "ab35d73ddbfb7cbeb9384a34c585edc0141e88bb812d047caad4969a4abe884b",
+    "expectedPcmSha256": "649b462aa016a111211498488ffca8da24e16f1a9b594f58bf38fb03933bb4f5",
+    "nodePcmSha256": "649b462aa016a111211498488ffca8da24e16f1a9b594f58bf38fb03933bb4f5",
+    "adapterPcmSha256": "649b462aa016a111211498488ffca8da24e16f1a9b594f58bf38fb03933bb4f5",
+    "md5Checked": true,
+    "md5Verified": true
+  },
+  "compileMs": 4.332292999999993,
+  "shaColdInit16KiBMs": 1.0941039999999589,
+  "shaWarm16KiBMs": 0.28046399999999494,
+  "rounds": 7,
+  "decodeMs": [
+    62.19507500000003,
+    54.903835999999956,
+    55.460425999999984,
+    52.37742299999991,
+    55.628777000000014,
+    51.869777,
+    56.829834000000005
+  ],
+  "shaMs": [
+    33.836445000000026,
+    33.51659600000005,
+    33.29868099999999,
+    33.199231000000054,
+    33.24026900000001,
+    33.18149799999992,
+    33.24723300000005
+  ]
+}

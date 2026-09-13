@@ -2,7 +2,7 @@
 
 Headless, framework-neutral browser session hosting for
 `@misofm/engine@0.2.3`. Version 0.3 streams standards-compliant native FLAC
-through bounded HTTP ranges and a one-stem universal `@misofm/codec@0.1.0`
+through bounded HTTP ranges and a one-stem universal `@misofm/codec@0.1.1`
 Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
 rings. URL, authentication, and request mapping remain caller-owned.
@@ -10,11 +10,11 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.4.0 @misofm/engine@0.2.3
+npm install @misofm/engine-web-adapter@0.4.1 @misofm/engine@0.2.3
 ```
 
 The package is ESM-only and remains pinned to exactly Engine `0.2.3` and
-`@misofm/codec` `0.1.0`. The codec currently supports Node `>=22.23.2 <23`
+`@misofm/codec` `0.1.1`. The codec currently supports Node `>=22.23.2 <23`
 and Bun `>=1.4.2 <1.5`; browser consumers use the bundled public codec asset.
 The integration uses the published Engine 0.2.3 archive
 from commit `0d9af85d9cfeb8ccb2567aea26bdcf284a73fa0c`, SHA256
@@ -261,11 +261,12 @@ verification and trailing writes after a decode Worker finishes.
 
 `reservation` reports fixed `components`, their `fixedBufferBytes` sum,
 `slotBytes`, `headroomBytes`, and selected `limit`. Each 8,388,608-byte slot
-includes 4,853,776 named bytes: the exact range, input SAB, one reusable
+includes 4,984,848 named bytes: the exact range, input SAB, one reusable
 262,144-byte public-codec input bridge, fixed 2,097,152-byte codec memory,
 two output credits, one 393,216-byte codec-owned pending PCM event, one
 393,216-byte in-flight store write, one 393,216-byte OPFS write-clone
-allowance, and metadata/control. The remaining 3,534,832 bytes are headroom.
+allowance, two fixed 64 KiB SHA Wasm realm reservations, and metadata/control.
+The remaining 3,403,760 bytes are headroom.
 This reservation is a policy envelope, not a measurement of total
 browser/process memory.
 

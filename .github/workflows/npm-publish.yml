@@ -23,12 +23,12 @@ concurrency:
 
 env:
   PACKAGE_NAME: "@misofm/engine-web-adapter"
-  PACKAGE_VERSION: "0.4.0"
+  PACKAGE_VERSION: "0.4.1"
   NPM_CONFIG_REGISTRY: "https://registry.npmjs.org"
 
 jobs:
   publish:
-    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.4.0
+    name: ${{ inputs.mode }} @misofm/engine-web-adapter 0.4.1
     runs-on: ubuntu-24.04
     steps:
       - name: Refuse a non-main or mismatched dispatch
@@ -66,9 +66,21 @@ jobs:
           [[ "$(node -p "require('./package.json').dependencies['@misofm/engine']")" == "0.2.3" ]]
           [[ "$(node -p "require('./package.json').repository.url")" == "git+https://github.com/misofm/engine-web-adapter.git" ]]
 
-      - name: Install and qualify
+      - name: Install dependencies
         run: |
           npm ci --ignore-scripts
+
+      - name: Install pinned Emscripten
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch 6.0.9 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/codec-emsdk"
+          test "$(git -C "$RUNNER_TEMP/codec-emsdk" rev-parse HEAD)" = 5eb0bde7585670252e8ba05e9d361627bffd08b5
+          "$RUNNER_TEMP/codec-emsdk/emsdk" install 6.0.9
+          "$RUNNER_TEMP/codec-emsdk/emsdk" activate 6.0.9
+          echo "CODEC_EMSCRIPTEN_ROOT=$RUNNER_TEMP/codec-emsdk/upstream/emscripten" >> "$GITHUB_ENV"
+
+      - name: Install and qualify
+        run: |
           npm run check
 
       - name: Refuse an existing immutable version

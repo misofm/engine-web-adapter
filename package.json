@@ -1,6 +1,6 @@
 {
   "name": "@misofm/engine-web-adapter",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Bounded FLAC browser session adapter for @misofm/engine using @misofm/codec",
   "license": "Apache-2.0",
   "repository": {
@@ -43,6 +43,8 @@
   },
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "build:sha256:wasm": "node scripts/build-sha256-wasm.mjs --verify",
+    "build:sha256:wasm:update": "node scripts/build-sha256-wasm.mjs --update",
     "prepack": "npm run build",
     "format:check": "node scripts/check-format.mjs",
     "lint": "npm run typecheck && node scripts/check-source-policy.mjs",
@@ -54,10 +56,10 @@
     "check:package": "npm run build && node scripts/check-package.mjs",
     "check:decoder": "node scripts/check-flac-decoder.mjs",
     "publish:dry-run": "npm publish --dry-run",
-    "check": "npm run format:check && npm run lint && npm run check:decoder && npm test && npm run check:package"
+    "check": "npm run format:check && npm run build:sha256:wasm && npm run lint && npm run check:decoder && npm test && npm run check:package"
   },
   "dependencies": {
-    "@misofm/codec": "0.1.0",
+    "@misofm/codec": "0.1.1",
     "@misofm/engine": "0.2.3",
     "effect": "4.0.0-rc.112"
   },

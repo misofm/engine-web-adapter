@@ -1,0 +1,41 @@
+{
+  "asset": "src/stems/sha256-wasm.ts",
+  "assetSha256": "4435c2078c2783a77c06532e480d195ce314f500b849688d89d494432789fc28",
+  "source": "native/sha256.c",
+  "sourceSha256": "4d8f598d634ac5ab9bb8627a4a3828f0b84139802013bc54c3efe26148cff816",
+  "emscripten": {
+    "version": "6.0.9",
+    "compilerCommit": "4e4223852a0835923411059a3929907d7df1232e",
+    "sdkTagCommit": "5eb0bde7585670252e8ba05e9d361627bffd08b5",
+    "sdkReleasesCommit": "f04ea239d533260dd1db760dd2d668d5f9a88d6b",
+    "wasmOptVersion": "wasm-opt version 132 (version_132-49-gd03c25ea4)"
+  },
+  "build": {
+    "selectedVariant": "simd",
+    "compilerFlags": [
+      "-O3",
+      "-ffreestanding",
+      "-fno-builtin",
+      "-nostdlib"
+    ],
+    "selectedCompilerFlags": [
+      "-msimd128",
+      "-DSHA256_SIMD=1"
+    ],
+    "wasmFeatures": [
+      "simd128"
+    ],
+    "initialMemoryBytes": 65536,
+    "maximumMemoryBytes": 65536,
+    "stackBytes": 4096,
+    "stateOffset": 0,
+    "inputOffset": 16384,
+    "scratchBytes": 16384,
+    "batchBytes": 16384,
+    "imports": [],
+    "exports": [
+      "memory:memory",
+      "sha256_compress:function"
+    ]
+  }
+}
