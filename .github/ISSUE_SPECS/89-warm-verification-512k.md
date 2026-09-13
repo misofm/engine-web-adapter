@@ -45,3 +45,7 @@ Luna xhigh completed the runtime change and four regression tests; typecheck, fo
 ## Qualification checkpoint
 
 Luna corrected all three Astra findings (exact packageguard/README0.5.1 and both shortreadfaults using publicopenSource); focused52tests, typecheck, format and packagecheck pass. Root full `CODEC_EMSCRIPTEN_ROOT=/data/codec-tooling/emsdk/upstream/emscripten npm run check` exited0 with336/336tests and packagepolicy213files. Logs `/tmp/miso-load-research/512k-full-check.log`; correction handoff512k-corrections.md. Browser gate initially could not autodiscover installed Chromium; rerun uses explicit CHROME_EXECUTABLE and is pending. OPFS/browser/finalreview/registry/appbenchmark remain pending.
+
+## Release qualification
+
+Fresh Astra medium independently approved corrected code44f24e4b393b9baf0e8066fbe5f7981fb4b8cfed with no remaining code/browser blockers (`/tmp/miso-load-research/512k-final-review.md`). Root fullcheck336tests, packedChromium freshconsumer and publishdryrun pass. LocalChromiumOPFS passes; localLinuxWebKit lacksFileSystemFileHandle and is explicitly notgreen. Required actualmacOSChromium151.0.7922.34/WebKit26.5 OPFS passed CI34763450227 on44f24e4, independently checked by reviewer. Packed dryrun SHA1c2142e2d27f6eeecd38769d1c52bf410de025e35,213files; registryidentity remains pending. This evidence-only followup changes no runtime/package bytes. PR90 may proceed after its current checks pass; publication/exactregistryappadoption/appchecks/candidatebenchmark remain pending.
