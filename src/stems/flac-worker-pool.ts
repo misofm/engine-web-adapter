@@ -1,7 +1,7 @@
 import { ADAPTER_ASSETS, createFlacWorker, type AdapterAssetOverrides } from "../assets.js";
 import { EngineWebAdapterError } from "../errors.js";
 import { BoundedStemAdmission, flacPipelineWidths, type FlacProcessingOptions, type StemAdmissionLease } from "./flac-admission.js";
-import { loadNativeFlacDecoderModule } from "./native-flac-decoder.js";
+import { loadFlacDecoderModule } from "./native-flac-decoder.js";
 import type { StemProgress } from "./types.js";
 import type { FlacWorkerLike, FlacWorkerResponse } from "./flac-worker-protocol.js";
 
@@ -85,7 +85,7 @@ class NativeDecoderModuleLoader {
     if (pending === undefined) {
       const controller = new AbortController();
       pending = { controller, owners: 0, promise: Promise.resolve(undefined as unknown as WebAssembly.Module) };
-      pending.promise = loadNativeFlacDecoderModule({ url: this.#url, signal: controller.signal }).then((module) => {
+      pending.promise = loadFlacDecoderModule({ url: this.#url, signal: controller.signal }).then((module) => {
         if (pending!.owners < 1 || this.#pending !== pending) {
           if (this.#pending === pending) this.#pending = undefined;
           throw cancelled(controller.signal.reason);

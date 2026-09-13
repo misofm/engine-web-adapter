@@ -2,7 +2,8 @@
 
 Headless, framework-neutral browser session hosting for
 `@misofm/engine@0.2.3`. Version 0.3 streams standards-compliant native FLAC
-through bounded HTTP ranges and a one-stem universal libFLAC Wasm Worker, verifies
+through bounded HTTP ranges and a one-stem universal `@misofm/codec@0.1.0`
+Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
 rings. URL, authentication, and request mapping remain caller-owned.
 
@@ -12,7 +13,9 @@ rings. URL, authentication, and request mapping remain caller-owned.
 npm install @misofm/engine-web-adapter@0.3.8 @misofm/engine@0.2.3
 ```
 
-The package is ESM-only and remains pinned to exactly Engine `0.2.3`.
+The package is ESM-only and remains pinned to exactly Engine `0.2.3` and
+`@misofm/codec` `0.1.0`. The codec currently supports Node `>=22.23.2 <23`
+and Bun `>=1.4.2 <1.5`; browser consumers use the bundled public codec asset.
 The integration uses the published Engine 0.2.3 archive
 from commit `0d9af85d9cfeb8ccb2567aea26bdcf284a73fa0c`, SHA256
 `2fd0f6f6bc4c7e311fdd10610c6c26de810e564a89ad912fc1961bebd8d5c590`.
@@ -130,15 +133,15 @@ Cross-Origin-Embedder-Policy: require-corp
 The browser must provide OPFS, Web Locks, module Workers, AudioWorklet,
 WebAssembly SIMD128, and WebAssembly for a cold FLAC open. Canonical PCM is
 written to OPFS through `FileSystemFileHandle.createSyncAccessHandle()` in a
-package-owned Worker, never `createWritable()`. The package-owned
-libFLAC module is the only decoder path. The server must expose exact `Content-Range` and `Content-Length`,
+package-owned Worker, never `createWritable()`. The published codec module is
+the only decoder path. The server must expose exact `Content-Range` and `Content-Length`,
 return status 206, avoid `Content-Encoding`, and keep total size and any visible
 ETag stable across attempts.
 
 ### Safari floor
 
 The **decoder** is universal: Chromium, macOS Safari, and mobile Safari run the
-same libFLAC Wasm module and the same error path, with no platform codec
+same published codec Wasm module and the same error path, with no platform codec
 fallback, from Safari 15.
 
 The **session** floor is higher, and it is the one that decides whether
@@ -161,7 +164,7 @@ that provide it; it is never an untyped `TypeError` from inside the store.
 
 Package-relative asset URLs and overrides are exported from
 `@misofm/engine-web-adapter/assets`. They cover the scratch Worker, FLAC Worker,
-libFLAC Wasm, PCM pump Worker, feed worklet, and Engine assets. The scratch and
+codec Wasm, PCM pump Worker, feed worklet, and Engine assets. The scratch and
 feed compatibility URLs alias the SDK's packaged assets. The adapter compiles
 shape once through the SDK before delivery, then injects that shape when it opens
 the SDK engine after every stem is verified and stored. Context/host boot and PCM
@@ -258,10 +261,11 @@ verification and trailing writes after a decode Worker finishes.
 
 `reservation` reports fixed `components`, their `fixedBufferBytes` sum,
 `slotBytes`, `headroomBytes`, and selected `limit`. Each 8,388,608-byte slot
-includes 4,198,416 named bytes: the exact range, input SAB, fixed 2,097,152-byte
-libFLAC memory, two output credits, one 393,216-byte in-flight store write,
+  includes 4,460,560 named bytes: the exact range, input SAB, one reusable
+  262,144-byte public-codec input bridge, fixed 2,097,152-byte codec memory,
+  two output credits, one 393,216-byte in-flight store write,
 one 393,216-byte OPFS write-clone allowance, and metadata/control. The remaining
-4,190,192 bytes are headroom. This reservation is a policy envelope, not a
+3,928,048 bytes are headroom. This reservation is a policy envelope, not a
 measurement of total browser/process memory.
 
 `processing` is also `null` before initialization or for an unknown producer.

@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 assert.deepEqual(packageJson.dependencies, {
+  "@misofm/codec": "0.1.0",
   "@misofm/engine": "0.2.3",
   effect: "4.0.0-rc.112",
 });
@@ -24,7 +25,12 @@ for (const required of [
   "dist/internal/engine-web-pcm-pump-worker.js", "dist/internal/engine-web-flac-worker.js",
   "dist/internal/engine-web-flac-decoder.wasm",
   "dist/internal/engine-web-opfs-worker.js",
-  "README.md", "NOTICE", "LICENSE", "vendor/libflac-1.5.0/COPYING.Xiph",
+  "dist/codec-licenses/THIRD_PARTY_NOTICES.md",
+  "dist/codec-licenses/vendor/licenses/compiler-rt.txt",
+  "dist/codec-licenses/vendor/licenses/emscripten.txt",
+  "dist/codec-licenses/vendor/licenses/libFLAC.txt",
+  "dist/codec-licenses/vendor/licenses/musl.txt",
+  "README.md", "NOTICE", "LICENSE",
 ]) assert.ok(names.has(required), `packed artifact missing ${required}`);
 assert.ok([...names].every((name) => !name.startsWith("tests/") && !name.startsWith("src/")), "source/tests leaked into tarball");
 for (const removed of ["dist/internal/engine-web-scratch-worker.js", "dist/internal/engine-web-feed-worklet.js", "dist/stems/flac-packetizer.js", "dist/stems/flac-ingest.js", "dist/stems/flac-pcm.js", "dist/stems/flac-metadata.js"]) {

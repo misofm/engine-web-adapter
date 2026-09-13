@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-const bytes = await readFile("src/internal/engine-web-flac-decoder.wasm");
-assert.ok(bytes.byteLength <= 256 * 1024, "decoder Wasm exceeds 256 KiB");
-const module = await WebAssembly.compile(bytes);
+const asset = await readFile("node_modules/@misofm/codec/wasm/flac-decoder.wasm");
+const hash = createHash("sha256").update(asset).digest("hex");
+assert.equal(hash, "5e282f9874ecb3f49b8ee8437efc318ec14ef5cff5b7580da9d875f94e5c5925", "installed codec asset hash changed");
+assert.ok(asset.byteLength <= 256 * 1024, "codec decoder Wasm exceeds 256 KiB");
+
+const module = await WebAssembly.compile(asset);
 assert.deepEqual(WebAssembly.Module.imports(module), [
-  { module: "env", name: "miso_flac_read", kind: "function" },
+  { module: "codec", name: "read", kind: "function" },
 ]);
-const instance = await WebAssembly.instantiate(module, { env: { miso_flac_read: () => -1 } });
+const instance = await WebAssembly.instantiate(module, { codec: { read: () => -1 } });
 const memory = instance.exports.memory;
 assert.ok(memory instanceof WebAssembly.Memory);
-assert.equal(memory.buffer.byteLength, 32 * 64 * 1024);
-assert.throws(() => memory.grow(1), RangeError, "decoder memory unexpectedly grows");
-console.log(`flac-decoder-policy: ${bytes.byteLength} bytes, one read import, fixed 32/32 pages`);
+assert.equal(memory.buffer.byteLength, 2 * 1024 * 1024, "codec decoder memory changed");
+assert.throws(() => memory.grow(1), RangeError, "codec decoder memory unexpectedly grows");
+assert.equal(typeof instance.exports.codec_decoder_process_single, "function");
+assert.equal(typeof instance.exports.codec_decoder_finish, "function");
+console.log(`codec-decoder-policy: ${asset.byteLength} bytes, public asset ${hash}, fixed 2 MiB memory`);

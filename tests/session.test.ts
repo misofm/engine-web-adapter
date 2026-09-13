@@ -2023,9 +2023,9 @@ test("per-open ingest diagnostics preserve warm admission lifetime, independent 
   assert.equal(second.snapshot().residency!.active, 1);
   assert.equal(first.snapshot().residency!.limit, 3);
   assert.equal(second.snapshot().residency!.limit, 2);
-  assert.equal(first.snapshot().reservation!.fixedBufferBytes, 4_198_416);
+  assert.equal(first.snapshot().reservation!.fixedBufferBytes, 4_460_560);
   assert.equal(first.snapshot().reservation!.slotBytes, 8_388_608);
-  assert.equal(first.snapshot().reservation!.headroomBytes, 4_190_192);
+  assert.equal(first.snapshot().reservation!.headroomBytes, 3_928_048);
   const during = first.snapshot();
   one.proceed.resolve(); await firstDone;
   assert.equal(first.snapshot().residency!.active, 0);

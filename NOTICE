@@ -18,7 +18,7 @@ prior adapter copies of the MSB1 allocation/reader and feed mechanism came from
 misofm/app commit 7485693e9bbcf2f65a91a4e5950e22d678d99062; their retained
 attribution is shipped with the SDK that now owns these implementations.
 
-This product includes libFLAC 1.5.0 from the Xiph.Org Foundation, built from
-the unmodified official release archive under its three-clause BSD license.
-The package-private streaming wrapper and build recipe are in `decoder/`; the
-upstream license is reproduced in `vendor/libflac-1.5.0/COPYING.Xiph`.
+This product redistributes the pinned libFLAC 1.5.0 WebAssembly decoder owned
+and published by `@misofm/codec@0.1.0`. Its Apache-2.0 package includes the
+required third-party notices and licenses for the bundled codec asset.
+They are included in `dist/codec-licenses/` in the packed adapter.

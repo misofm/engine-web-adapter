@@ -12,6 +12,8 @@ export const DEFAULT_MAXIMUM_ACTIVE_FLAC_WORKERS = 4;
 export const FLAC_PACKAGE_MEMORY_COMPONENTS = Object.freeze({
   exactRange: FLAC_INPUT_SLOT_BYTES,
   compressedInputSlot: FLAC_INPUT_SLOT_BYTES,
+  /** One reusable Uint8Array bridge element retained by the public codec pull. */
+  codecInputCopy: FLAC_INPUT_SLOT_BYTES,
   decoderLinearMemory: FLAC_DECODER_MEMORY_BYTES,
   decodedOutputCredits: FLAC_DECODE_OUTPUT_CREDITS * MAXIMUM_CANONICAL_OUTPUT_BYTES,
   decodedInFlightWrite: MAXIMUM_CANONICAL_OUTPUT_BYTES,

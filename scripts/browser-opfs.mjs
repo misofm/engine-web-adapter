@@ -21,6 +21,7 @@ const tarball = join(root, JSON.parse(packed)[0].filename);
 run("tar", ["-xzf", tarball, "-C", join(consumer, "node_modules", "@misofm")]);
 await rename(join(consumer, "node_modules", "@misofm", "package"), join(consumer, "node_modules", "@misofm", "engine-web-adapter"));
 await cp(join(process.cwd(), "node_modules", "@misofm", "engine"), join(consumer, "node_modules", "@misofm", "engine"), { recursive: true });
+await cp(join(process.cwd(), "node_modules", "@misofm", "codec"), join(consumer, "node_modules", "@misofm", "codec"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "effect"), join(consumer, "node_modules", "effect"), { recursive: true });
 for (const dependency of ["fast-check", "pure-rand", "msgpackr", "msgpackr-extract"]) {
   await cp(join(process.cwd(), "node_modules", dependency), join(consumer, "node_modules", dependency), { recursive: true });

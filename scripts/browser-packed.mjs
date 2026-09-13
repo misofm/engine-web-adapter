@@ -45,6 +45,7 @@ const tarball = join(root, JSON.parse(packed)[0].filename);
 run("tar", ["-xzf", tarball, "-C", join(consumer, "node_modules", "@misofm")]);
 await rename(join(consumer, "node_modules", "@misofm", "package"), join(consumer, "node_modules", "@misofm", "engine-web-adapter"));
 await cp(join(process.cwd(), "node_modules", "@misofm", "engine"), join(consumer, "node_modules", "@misofm", "engine"), { recursive: true });
+await cp(join(process.cwd(), "node_modules", "@misofm", "codec"), join(consumer, "node_modules", "@misofm", "codec"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "effect"), join(consumer, "node_modules", "effect"), { recursive: true });
 for (const dependency of ["fast-check", "pure-rand", "msgpackr", "msgpackr-extract"]) {
   await cp(join(process.cwd(), "node_modules", dependency), join(consumer, "node_modules", dependency), { recursive: true });
@@ -284,7 +285,7 @@ try {
   assert.deepEqual(consoleErrors, []);
   assert.deepEqual(requestFailures, []);
   const requested = [...requests.entries()];
-  assert.ok(requested.some(([path, mime]) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm") && mime === "application/wasm"), "decoder Wasm asset/MIME not observed");
+  assert.ok(requested.some(([path, mime]) => (path.includes("engine-web-flac-decoder") || path.includes("flac-decoder")) && path.endsWith(".wasm") && mime === "application/wasm"), "decoder Wasm asset/MIME not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("miso-engine") && path.endsWith(".wasm") && mime === "application/wasm"), "Engine Wasm asset/MIME not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("scratch-worker") && mime.includes("javascript")), "scratch Worker asset not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("flac-worker") && mime.includes("javascript")), "FLAC Worker asset not observed");
@@ -545,7 +546,7 @@ function assertIndexedResult(raw, fixture, requests, requestCounts, requestFailu
     assert.equal(requestCounts.get(delivery.profile.url), expectedCount, `${delivery.profile.name} was fetched an unexpected number of times`);
     assert.equal(requests.get(delivery.profile.url), "application/octet-stream", `${delivery.profile.name} MIME changed`);
   }
-  const decoderPaths = [...requests.keys()].filter((path) => path.includes("engine-web-flac-decoder") && path.endsWith(".wasm"));
+  const decoderPaths = [...requests.keys()].filter((path) => (path.includes("engine-web-flac-decoder") || path.includes("flac-decoder")) && path.endsWith(".wasm"));
   assert.equal(decoderPaths.length, 1, "decoder Wasm URL changed or was fetched through multiple assets");
   assert.equal(requests.get(decoderPaths[0]), "application/wasm", "decoder Wasm MIME changed");
   assert.equal(requestCounts.get(decoderPaths[0]), 3, "each native resolver did not fetch its decoder asset exactly once");
@@ -589,7 +590,7 @@ const fixture = ${JSON.stringify(browserFixture)} as const;
 const sourceByIdentity = new Map([...fixture.sources, fixture.silent].map((source) => [source.expected.identity, source]));
 const NativeFetch = globalThis.fetch;
 const NativeWorker = Worker;
-const nativeCompileStreaming = WebAssembly.compileStreaming.bind(WebAssembly);
+const nativeCompile = WebAssembly.compile.bind(WebAssembly);
 let locateCalls = 0;
 let networkRequests = 0;
 let decoderAssetFetches = 0;
@@ -635,15 +636,15 @@ let runnablePhase: RunnablePhase | undefined;
 const observedFetch: typeof fetch = async (input, init) => {
   const url = input instanceof Request ? input.url : new URL(input, location.href).href;
   if (identityForUrl(url) !== undefined) networkRequests += 1;
-  if (url.includes("engine-web-flac-decoder") && url.endsWith(".wasm")) decoderAssetFetches += 1;
+  if ((url.includes("engine-web-flac-decoder") || url.includes("flac-decoder")) && url.endsWith(".wasm")) decoderAssetFetches += 1;
   return NativeFetch(input, init);
 };
 globalThis.fetch = observedFetch;
 try {
-  WebAssembly.compileStreaming = ((source: Response | PromiseLike<Response>) => {
+  WebAssembly.compile = ((source: BufferSource) => {
     decoderCompileCalls += 1;
-    return nativeCompileStreaming(source);
-  }) as typeof WebAssembly.compileStreaming;
+    return nativeCompile(source);
+  }) as typeof WebAssembly.compile;
 } catch (error) {
   workerErrors.push({ worker: "main", error: "compile instrumentation failed", message: String(error) });
 }
