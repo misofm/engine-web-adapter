@@ -1175,6 +1175,192 @@ export function sparseSourceProgramForTest(source: AsyncIterable<SparsePcmSpan>,
 async function settlePhysical<T>(promise: PromiseLike<T>): Promise<void> {
   await Promise.resolve(promise).then(() => undefined, () => undefined);
 }
+
+interface WarmTaskYieldPort {
+  onmessage: ((event: MessageEvent<unknown>) => void) | null;
+  postMessage: (message: unknown) => void;
+  close: () => void;
+}
+interface WarmTaskYieldChannel {
+  readonly port1: WarmTaskYieldPort;
+  readonly port2: WarmTaskYieldPort;
+}
+interface WarmTaskYieldPending {
+  readonly resume: (effect: Effect.Effect<void, SparseFailure>) => void;
+  readonly onAbort: () => void;
+  active: boolean;
+}
+interface WarmTaskYieldResource {
+  readonly yieldEffect: Effect.Effect<void, SparseFailure>;
+  readonly close: () => void;
+}
+
+function makeWarmTaskYieldResource(signal: AbortSignal): WarmTaskYieldResource {
+  let channel: WarmTaskYieldChannel | undefined;
+  let pending: WarmTaskYieldPending | undefined;
+  let closed = false;
+  let fallback = false;
+
+  const cancellation = (): Effect.Effect<never, SparseCancelledError> => Effect.fail(new SparseCancelledError({ message: "Sparse operation was cancelled", cause: signal.reason }));
+  const detachPending = (): WarmTaskYieldPending | undefined => {
+    const wait = pending;
+    pending = undefined;
+    if (wait !== undefined) {
+      wait.active = false;
+      signal.removeEventListener("abort", wait.onAbort);
+    }
+    return wait;
+  };
+  const closeChannel = (): unknown[] => {
+    const current = channel;
+    channel = undefined;
+    if (current === undefined) return [];
+    const failures: unknown[] = [];
+    try { current.port1.onmessage = null; } catch (cause) { failures.push(cause); }
+    try { current.port1.close(); } catch (cause) { failures.push(cause); }
+    try { current.port2.close(); } catch (cause) { failures.push(cause); }
+    return failures;
+  };
+  const cleanupCause = (cause: unknown, failures: readonly unknown[]): unknown => {
+    if (failures.length === 0) return cause;
+    return new AggregateError([cause, ...failures], "Warm task-yield resource cleanup failed");
+  };
+  const boundaryFailure = (message: string, cause: unknown, failures: readonly unknown[] = []): SparseBoundaryError => new SparseBoundaryError({ message, cause: cleanupCause(cause, failures) });
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    const wait = detachPending();
+    const failures = closeChannel();
+    if (wait !== undefined) wait.resume(cancellation());
+    if (failures.length > 0) throw failures.length === 1 ? failures[0] : new AggregateError(failures, "Warm task-yield resource cleanup failed");
+  };
+  const failResource = (message: string, cause: unknown): SparseBoundaryError => {
+    closed = true;
+    const wait = detachPending();
+    const failures = closeChannel();
+    const error = boundaryFailure(message, cause, failures);
+    if (wait !== undefined) wait.resume(Effect.fail(error));
+    return error;
+  };
+  const cancellationWithCleanup = (): Effect.Effect<never, SparseFailure> => {
+    let cleanupFailure: unknown;
+    try { close(); } catch (cause) { cleanupFailure = cause; }
+    return cleanupFailure === undefined
+      ? cancellation()
+      : Effect.fail(new SparseBoundaryError({ message: "Warm task-yield cancellation cleanup failed", cause: cleanupFailure }));
+  };
+  const closeRawPorts = (ports: readonly unknown[]): unknown[] => {
+    const failures: unknown[] = [];
+    for (const value of ports) {
+      if (!isRecord(value) || typeof value.close !== "function") continue;
+      try { (value.close as () => void).call(value); } catch (cause) { failures.push(cause); }
+    }
+    return failures;
+  };
+  const asPort = (value: unknown): WarmTaskYieldPort | undefined => {
+    if (!isRecord(value) || typeof value.close !== "function" || typeof value.postMessage !== "function") return undefined;
+    return value as unknown as WarmTaskYieldPort;
+  };
+  const settle = (wait: WarmTaskYieldPending, result: Effect.Effect<void, SparseFailure>): void => {
+    if (pending !== wait || !wait.active) return;
+    pending = undefined;
+    wait.active = false;
+    signal.removeEventListener("abort", wait.onAbort);
+    wait.resume(result);
+  };
+  const onMessage = (): void => {
+    const wait = pending;
+    if (closed || wait === undefined || !wait.active) return;
+    settle(wait, Effect.succeed(undefined));
+  };
+  const ensureChannel = (): void => {
+    if (channel !== undefined) return;
+    const constructor = globalThis.MessageChannel as unknown;
+    if (typeof constructor !== "function") {
+      fallback = true;
+      return;
+    }
+    let created: unknown;
+    try { created = new (constructor as new () => unknown)(); }
+    catch (cause) { throw failResource("Warm task-yield channel could not be constructed", cause); }
+    const ports = isRecord(created) ? [created.port1, created.port2] : [undefined, undefined];
+    const port1 = asPort(ports[0]);
+    const port2 = asPort(ports[1]);
+    if (port1 === undefined || port2 === undefined) {
+      const failures = closeRawPorts(ports);
+      closed = true;
+      throw boundaryFailure("Warm task-yield channel is invalid", cleanupCause(new Error("MessageChannel did not provide two usable ports"), failures));
+    }
+    channel = { port1, port2 };
+    try { port1.onmessage = onMessage; }
+    catch (cause) {
+      throw failResource("Warm task-yield message handler could not be installed", cause);
+    }
+  };
+  const taskWait = Effect.callback<void, SparseFailure>((resume, effectSignal) => {
+    if (closed || signal.aborted || effectSignal.aborted) {
+      resume(cancellation());
+      return Effect.void;
+    }
+    if (pending !== undefined) {
+      resume(Effect.fail(new SparseBoundaryError({ message: "Warm task-yield wait overlapped" })));
+      return Effect.void;
+    }
+    try { ensureChannel(); }
+    catch (cause) {
+      resume(Effect.fail(cause instanceof SparseBoundaryError ? cause : new SparseBoundaryError({ message: "Warm task-yield channel failed", cause })));
+      return Effect.void;
+    }
+    if (fallback) {
+      resume(Effect.yieldNow);
+      return Effect.void;
+    }
+    if (signal.aborted || effectSignal.aborted) {
+      resume(cancellationWithCleanup());
+      return Effect.void;
+    }
+    const wait: WarmTaskYieldPending = {
+      resume,
+      onAbort: () => {
+        settle(wait, cancellation());
+      },
+      active: true,
+    };
+    signal.addEventListener("abort", wait.onAbort, { once: true });
+    if (signal.aborted || effectSignal.aborted) {
+      signal.removeEventListener("abort", wait.onAbort);
+      wait.active = false;
+      resume(cancellationWithCleanup());
+      return Effect.void;
+    }
+    pending = wait;
+    try { channel!.port2.postMessage(null); }
+    catch (cause) {
+      failResource("Warm task-yield notification failed", cause);
+      return Effect.void;
+    }
+    return Effect.sync(() => {
+      if (pending !== wait) return;
+      pending = undefined;
+      wait.active = false;
+      signal.removeEventListener("abort", wait.onAbort);
+    });
+  });
+  const yieldEffect = Effect.suspend(() => {
+    if (fallback) return Effect.yieldNow;
+    try {
+      if (typeof (globalThis.MessageChannel as unknown) !== "function") {
+        fallback = true;
+        return Effect.yieldNow;
+      }
+    } catch {
+      // Let taskWait convert a hostile capability getter into the typed boundary.
+    }
+    return taskWait;
+  });
+  return { yieldEffect, close };
+}
+
 function hashZeros(
   hash: IncrementalBlake3,
   bytes: number,
@@ -1182,6 +1368,7 @@ function hashZeros(
   onProgress?: (bytes: number) => void,
   baseBytes = 0,
   update: (chunk: Uint8Array) => void = (chunk) => { hash.update(chunk); },
+  yieldEffect: Effect.Effect<void, SparseFailure> = Effect.yieldNow,
 ): Effect.Effect<void, SparseFailure> {
   return Effect.fn("SparseProgram.hashZeros")(function*() {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isSafeInteger(baseBytes) || baseBytes < 0 || baseBytes + bytes > Number.MAX_SAFE_INTEGER) return yield* new SparseCorruptError({ message: "Sparse zero gap arithmetic is unsafe" });
@@ -1190,7 +1377,7 @@ function hashZeros(
       const count = Math.min(ZERO_BLOCK.byteLength, bytes - offset);
       update(ZERO_BLOCK.subarray(0, count));
       onProgress?.(baseBytes + offset + count);
-      yield* Effect.yieldNow;
+      yield* yieldEffect;
     }
   })();
 }
@@ -1256,6 +1443,12 @@ function verifyMarker(
   onProgress?: (progress: StemProgress) => void,
 ): Effect.Effect<SparsePcmDescriptor, SparseFailure> {
   return Effect.fn("SparseProgram.verifyMarker")(function*() {
+    return yield* Effect.scoped(Effect.gen(function*() {
+    const warmTaskYield = yield* Effect.acquireRelease(
+      Effect.sync(() => makeWarmTaskYieldResource(signal)),
+      (resource) => Effect.sync(resource.close),
+      { interruptible: true },
+    );
     const started = performance.now();
     const admitted = yield* admitMarkerMetadata(backend, marker, expected, signal);
     const metadataMs = performance.now() - started;
@@ -1281,7 +1474,7 @@ function verifyMarker(
     for (const interval of marker.index.intervals) {
       yield* hashZeros(hash, (interval.startFrame - frameCursor) * frameBytes, signal, (bytes) => onProgress?.({
         stage: "verifying", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
-      }), frameCursor * frameBytes, update);
+      }), frameCursor * frameBytes, update, warmTaskYield.yieldEffect);
       for (let offset = 0; offset < interval.frames * frameBytes; offset += WARM_VERIFY_READ_BYTES) {
         yield* checkSignal(signal);
         const end = Math.min(offset + WARM_VERIFY_READ_BYTES, interval.frames * frameBytes);
@@ -1303,7 +1496,7 @@ function verifyMarker(
     }
     yield* hashZeros(hash, (expected.frames - frameCursor) * frameBytes, signal, (bytes) => onProgress?.({
       stage: "verifying", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
-    }), frameCursor * frameBytes, update);
+    }), frameCursor * frameBytes, update, warmTaskYield.yieldEffect);
     const beforeDigest = performance.now();
     const digest = hash.digest("hex");
     hashMs += performance.now() - beforeDigest;
@@ -1316,6 +1509,7 @@ function verifyMarker(
     });
     yield* checkSignal(signal);
     return Object.freeze({ kind: "sparse-pcm", data, index: marker.index });
+    }));
   })();
 }
 

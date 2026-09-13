@@ -121,6 +121,70 @@ class RecordingPayloadBackend extends MemoryStemStorageBackend {
   }
 }
 
+interface WarmYieldProbe {
+  hold: boolean;
+  failPost?: boolean;
+  closeThrows?: boolean;
+  constructed: number;
+  posts: number;
+  closes: number;
+  listeners: number;
+  held: Array<() => void>;
+}
+
+class ProbeWarmMessagePort {
+  #handler: ((event: MessageEvent<unknown>) => void) | null = null;
+  peer!: ProbeWarmMessagePort;
+
+  constructor(private readonly probe: WarmYieldProbe) {}
+
+  get onmessage(): ((event: MessageEvent<unknown>) => void) | null { return this.#handler; }
+  set onmessage(handler: ((event: MessageEvent<unknown>) => void) | null) {
+    if (this.#handler === null && handler !== null) this.probe.listeners += 1;
+    if (this.#handler !== null && handler === null) this.probe.listeners -= 1;
+    this.#handler = handler;
+  }
+  postMessage(_message: unknown): void {
+    this.probe.posts += 1;
+    if (this.probe.failPost === true) throw new Error("warm task post failed");
+    const handler = this.peer.#handler;
+    if (handler === null) return;
+    const deliver = () => handler({ data: null } as MessageEvent<unknown>);
+    if (this.probe.hold) this.probe.held.push(deliver); else queueMicrotask(deliver);
+  }
+  close(): void {
+    this.probe.closes += 1;
+    if (this.probe.closeThrows === true) throw new Error("warm task close failed");
+  }
+}
+
+class ProbeWarmMessageChannel {
+  static probe: WarmYieldProbe;
+  readonly port1: ProbeWarmMessagePort;
+  readonly port2: ProbeWarmMessagePort;
+
+  constructor() {
+    const probe = ProbeWarmMessageChannel.probe;
+    probe.constructed += 1;
+    this.port1 = new ProbeWarmMessagePort(probe);
+    this.port2 = new ProbeWarmMessagePort(probe);
+    this.port1.peer = this.port2;
+    this.port2.peer = this.port1;
+  }
+}
+
+function warmYieldFixture(): { readonly canonical: Uint8Array; readonly expected: SparsePcmExpectation; readonly spans: readonly { readonly startFrame: number; readonly bytes: Uint8Array }[] } {
+  const frameBytes = 2;
+  const gapFrames = (64 * 1024) / frameBytes;
+  const first = { startFrame: 1, bytes: new Uint8Array([1, 2]) };
+  const second = { startFrame: first.startFrame + 1 + gapFrames, bytes: new Uint8Array([3, 4]) };
+  const frames = second.startFrame + 1 + gapFrames + 1;
+  const canonical = new Uint8Array(frames * frameBytes);
+  canonical.set(first.bytes, first.startFrame * frameBytes);
+  canonical.set(second.bytes, second.startFrame * frameBytes);
+  return { canonical, expected: expectation(canonical, frames), spans: [first, second] };
+}
+
 function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
   const result = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
   let offset = 0;
@@ -1236,6 +1300,133 @@ describe("VerifiedSparsePcmStore", () => {
     const observedDespiteThrow = await store.openSource(expected, { onProgress: () => { throw new Error("observer failure"); } });
     assert.equal(observedDespiteThrow?.data.size, 40_000);
     await store.close();
+  });
+
+  it("reuses one warm task channel across zero gaps and falls back without the capability", async () => {
+    const previous = globalThis.MessageChannel;
+    const probe: WarmYieldProbe = { hold: false, constructed: 0, posts: 0, closes: 0, listeners: 0, held: [] };
+    ProbeWarmMessageChannel.probe = probe;
+    globalThis.MessageChannel = ProbeWarmMessageChannel as unknown as typeof globalThis.MessageChannel;
+    try {
+      const activeBytes = new Uint8Array([1, 2]);
+      const activeExpected = expectation(activeBytes, 1);
+      const activeStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-task-active" });
+      await activeStore.installSource(activeExpected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: activeBytes }) }) });
+      assert.equal((await activeStore.openSource(activeExpected))?.data.size, 2);
+      assert.equal(probe.constructed, 0, "all-active warm verification has no zero checkpoint");
+      await activeStore.close();
+
+      const fixture = warmYieldFixture();
+      const backend = new MemoryStemStorageBackend();
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: "warm-task-probe" });
+      await store.installSource(fixture.expected, { resolve: async () => ({ spans: spans(...fixture.spans) }) });
+      const descriptor = await store.openSource(fixture.expected, { onProgress: () => undefined });
+      assert.equal(descriptor?.data.size, 4);
+      assert.equal(probe.constructed, 1);
+      assert.equal(probe.posts, 4, "leading, interior, and trailing gaps retain 64 KiB cadence");
+      assert.equal(probe.listeners, 0);
+      assert.equal(probe.closes, 2);
+      await store.close();
+
+      const fallbackProbe: WarmYieldProbe = { hold: false, constructed: 0, posts: 0, closes: 0, listeners: 0, held: [] };
+      ProbeWarmMessageChannel.probe = fallbackProbe;
+      globalThis.MessageChannel = undefined as unknown as typeof globalThis.MessageChannel;
+      const fallbackFixture = warmYieldFixture();
+      const fallbackStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-task-fallback" });
+      await fallbackStore.installSource(fallbackFixture.expected, { resolve: async () => ({ spans: spans(...fallbackFixture.spans) }) });
+      assert.equal((await fallbackStore.openSource(fallbackFixture.expected))?.data.size, 4);
+      assert.equal(fallbackProbe.constructed, 0);
+      await fallbackStore.close();
+    } finally {
+      globalThis.MessageChannel = previous;
+    }
+  });
+
+  it("cancels a held warm task, releases both ports, ignores stale delivery, and retries", async () => {
+    const previous = globalThis.MessageChannel;
+    const probe: WarmYieldProbe = { hold: true, constructed: 0, posts: 0, closes: 0, listeners: 0, held: [] };
+    ProbeWarmMessageChannel.probe = probe;
+    globalThis.MessageChannel = ProbeWarmMessageChannel as unknown as typeof globalThis.MessageChannel;
+    try {
+      const fixture = warmYieldFixture();
+      const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-task-abort" });
+      await store.installSource(fixture.expected, { resolve: async () => ({ spans: spans(...fixture.spans) }) });
+      const controller = new AbortController();
+      const opening = store.openSource(fixture.expected, { signal: controller.signal });
+      for (let count = 0; count < 100 && probe.posts === 0; count += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(probe.posts, 1);
+      controller.abort(new DOMException("warm task cancelled", "AbortError"));
+      await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+      assert.equal(probe.listeners, 0);
+      assert.equal(probe.closes, 2);
+      for (const deliver of probe.held.splice(0)) deliver();
+
+      probe.hold = false;
+      assert.equal((await store.openSource(fixture.expected))?.data.size, 4);
+      assert.equal(probe.constructed, 2);
+      assert.equal(probe.posts, 5);
+      assert.equal(probe.closes, 4);
+      assert.equal(probe.listeners, 0);
+
+      probe.hold = true;
+      const closingOpen = store.openSource(fixture.expected);
+      for (let count = 0; count < 100 && probe.posts < 6; count += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(probe.posts, 6);
+      const closingStore = store.close();
+      await assert.rejects(closingOpen, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+      await closingStore;
+      assert.equal(probe.closes, 6);
+      assert.equal(probe.listeners, 0);
+    } finally {
+      globalThis.MessageChannel = previous;
+    }
+  });
+
+  it("types warm task construction and post failures, and surfaces close faults after both attempts", async () => {
+    const previous = globalThis.MessageChannel;
+    const fixture = warmYieldFixture();
+    const probe: WarmYieldProbe = { hold: false, constructed: 0, posts: 0, closes: 0, listeners: 0, held: [] };
+    try {
+      class ThrowingWarmMessageChannel {
+        constructor() { probe.constructed += 1; throw new Error("warm task construction failed"); }
+      }
+      globalThis.MessageChannel = ThrowingWarmMessageChannel as unknown as typeof globalThis.MessageChannel;
+      const constructionStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-task-construction" });
+      await constructionStore.installSource(fixture.expected, { resolve: async () => ({ spans: spans(...fixture.spans) }) });
+      await assert.rejects(constructionStore.openSource(fixture.expected), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+      assert.equal(probe.constructed, 1);
+      await constructionStore.close();
+
+      const postProbe: WarmYieldProbe = { hold: false, failPost: true, constructed: 0, posts: 0, closes: 0, listeners: 0, held: [] };
+      ProbeWarmMessageChannel.probe = postProbe;
+      globalThis.MessageChannel = ProbeWarmMessageChannel as unknown as typeof globalThis.MessageChannel;
+      const postStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-task-post" });
+      await postStore.installSource(fixture.expected, { resolve: async () => ({ spans: spans(...fixture.spans) }) });
+      const postEvents: import("../src/stems/types.js").StemProgress[] = [];
+      await assert.rejects(postStore.openSource(fixture.expected, { onProgress: (event) => postEvents.push(event) }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+      assert.equal(postProbe.constructed, 1);
+      assert.equal(postProbe.posts, 1);
+      assert.equal(postProbe.closes, 2);
+      assert.equal(postProbe.listeners, 0);
+      assert.equal(postEvents.some((event) => event.stage === "source-ready"), false);
+      await postStore.close();
+
+      const closeProbe: WarmYieldProbe = { hold: false, closeThrows: true, constructed: 0, posts: 0, closes: 0, listeners: 0, held: [] };
+      ProbeWarmMessageChannel.probe = closeProbe;
+      const closeStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "warm-task-close" });
+      globalThis.MessageChannel = ProbeWarmMessageChannel as unknown as typeof globalThis.MessageChannel;
+      await closeStore.installSource(fixture.expected, { resolve: async () => ({ spans: spans(...fixture.spans) }) });
+      const closeEvents: import("../src/stems/types.js").StemProgress[] = [];
+      await assert.rejects(closeStore.openSource(fixture.expected, { onProgress: (event) => closeEvents.push(event) }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+      assert.equal(closeProbe.constructed, 1);
+      assert.equal(closeProbe.posts, 4);
+      assert.equal(closeProbe.closes, 2, "a fault in port1 close cannot skip port2 close");
+      assert.equal(closeProbe.listeners, 0);
+      assert.equal(closeEvents.some((event) => event.stage === "source-ready"), false);
+      await closeStore.close();
+    } finally {
+      globalThis.MessageChannel = previous;
+    }
   });
 
   it("reads warm payloads in 512 KiB windows without crossing sparse intervals", async () => {
