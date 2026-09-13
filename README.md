@@ -10,7 +10,7 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.4.1 @misofm/engine@0.2.3
+npm install @misofm/engine-web-adapter@0.4.2 @misofm/engine@0.2.3
 ```
 
 The package is ESM-only and remains pinned to exactly Engine `0.2.3` and

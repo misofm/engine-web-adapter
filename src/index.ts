@@ -23,5 +23,5 @@ export type {
 
 export { createIngestDiagnostics } from "./stems/ingest-diagnostics.js";
 export type { IngestDiagnostics, IngestResidency, IngestReservation, IngestProcessing, IngestStage } from "./stems/ingest-diagnostics.js";
-export type { SparseStemResolverContext, StemProgress } from "./stems/types.js";
+export type { SparseStemResolverContext, StemProgress, WarmVerificationTiming } from "./stems/types.js";
 export type { ProgressObserver } from "./stems/progress.js";

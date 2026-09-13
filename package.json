@@ -1,6 +1,6 @@
 {
   "name": "@misofm/engine-web-adapter",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Bounded FLAC browser session adapter for @misofm/engine using @misofm/codec",
   "license": "Apache-2.0",
   "repository": {

@@ -1177,13 +1177,14 @@ function hashZeros(
   signal: AbortSignal,
   onProgress?: (bytes: number) => void,
   baseBytes = 0,
+  update: (chunk: Uint8Array) => void = (chunk) => { hash.update(chunk); },
 ): Effect.Effect<void, SparseFailure> {
   return Effect.fn("SparseProgram.hashZeros")(function*() {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isSafeInteger(baseBytes) || baseBytes < 0 || baseBytes + bytes > Number.MAX_SAFE_INTEGER) return yield* new SparseCorruptError({ message: "Sparse zero gap arithmetic is unsafe" });
     for (let offset = 0; offset < bytes; offset += ZERO_BLOCK.byteLength) {
       yield* checkSignal(signal);
       const count = Math.min(ZERO_BLOCK.byteLength, bytes - offset);
-      hash.update(ZERO_BLOCK.subarray(0, count));
+      update(ZERO_BLOCK.subarray(0, count));
       onProgress?.(baseBytes + offset + count);
       yield* Effect.yieldNow;
     }
@@ -1251,22 +1252,39 @@ function verifyMarker(
   onProgress?: (progress: StemProgress) => void,
 ): Effect.Effect<SparsePcmDescriptor, SparseFailure> {
   return Effect.fn("SparseProgram.verifyMarker")(function*() {
+    const started = performance.now();
     const admitted = yield* admitMarkerMetadata(backend, marker, expected, signal);
+    const metadataMs = performance.now() - started;
+    let readWaitMs = 0;
+    let hashMs = 0;
+    let readCalls = 0;
+    let readBytes = 0;
+    let hashedBytes = 0;
     const data = admitted.data;
     const hash = new IncrementalSha256();
+    const update = (chunk: Uint8Array): void => {
+      const before = performance.now();
+      hash.update(chunk);
+      hashMs += performance.now() - before;
+      hashedBytes += chunk.byteLength;
+    };
     let payloadCursor = 0;
     let frameCursor = 0;
     const frameBytes = expected.channels * (expected.bitDepth / 8);
     for (const interval of marker.index.intervals) {
       yield* hashZeros(hash, (interval.startFrame - frameCursor) * frameBytes, signal, (bytes) => onProgress?.({
         stage: "verifying", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
-      }), frameCursor * frameBytes);
+      }), frameCursor * frameBytes, update);
       for (let offset = 0; offset < interval.frames * frameBytes; offset += MAX_SPAN_BYTES) {
         yield* checkSignal(signal);
         const end = Math.min(offset + MAX_SPAN_BYTES, interval.frames * frameBytes);
+        const beforeRead = performance.now();
         const bytes = yield* readBlobBytes(backend, data, payloadCursor + offset, payloadCursor + end, signal, "Sparse payload read");
+        readWaitMs += performance.now() - beforeRead;
+        readCalls += 1;
+        readBytes += bytes.byteLength;
         if (bytes.byteLength !== end - offset) return yield* new SparseCorruptError({ message: "Sparse payload read was short" });
-        hash.update(new Uint8Array(bytes));
+        update(new Uint8Array(bytes));
         onProgress?.({
           stage: "verifying", identity: expected.identity,
           bytes: interval.startFrame * frameBytes + end,
@@ -1278,8 +1296,17 @@ function verifyMarker(
     }
     yield* hashZeros(hash, (expected.frames - frameCursor) * frameBytes, signal, (bytes) => onProgress?.({
       stage: "verifying", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
-    }), frameCursor * frameBytes);
-    if (payloadCursor !== data.size || hash.digestHex() !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse payload failed canonical verification" });
+    }), frameCursor * frameBytes, update);
+    const beforeDigest = performance.now();
+    const digest = hash.digestHex();
+    hashMs += performance.now() - beforeDigest;
+    if (payloadCursor !== data.size || digest !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse payload failed canonical verification" });
+    yield* checkSignal(signal);
+    onProgress?.({
+      stage: "verifying", identity: expected.identity, bytes: expected.canonicalBytes,
+      totalBytes: expected.canonicalBytes, byteKind: "pcm",
+      verificationTiming: Object.freeze({ elapsedMs: performance.now() - started, metadataMs, readWaitMs, hashMs, readCalls, readBytes, hashedBytes }),
+    });
     yield* checkSignal(signal);
     return Object.freeze({ kind: "sparse-pcm", data, index: marker.index });
   })();
