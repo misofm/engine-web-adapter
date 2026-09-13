@@ -644,7 +644,9 @@ const observedFetch: typeof fetch = async (input, init) => {
 globalThis.fetch = observedFetch;
 try {
   WebAssembly.compile = ((source: BufferSource) => {
-    decoderCompileCalls += 1;
+    // hash-wasm also compiles its BLAKE3 module through this API. Count only
+    // the pinned public FLAC decoder asset for decoder reuse assertions.
+    if (source.byteLength === 75_923) decoderCompileCalls += 1;
     return nativeCompile(source);
   }) as typeof WebAssembly.compile;
 } catch (error) {

@@ -1,7 +1,7 @@
 # @misofm/engine-web-adapter
 
 Headless, framework-neutral browser session hosting for
-`@misofm/engine@0.2.3`. Version 0.3 streams standards-compliant native FLAC
+`@misofm/engine@0.2.3`. Version 0.5 identifies canonical PCM with BLAKE3-256 and streams standards-compliant native FLAC
 through bounded HTTP ranges and a one-stem universal `@misofm/codec@0.1.1`
 Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
