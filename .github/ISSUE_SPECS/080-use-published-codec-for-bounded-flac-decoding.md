@@ -215,3 +215,25 @@ Chromium OPFS and both packed browser profiles are green; Linux WebKit remains
 the known `FileSystemFileHandle` platform limitation. Fresh Astra medium
 review of the repair remains outstanding. No merge, publication, or issue
 synchronization is claimed here.
+
+## Independent acceptance
+
+Fresh Astra medium accepted immutable repair
+`823b8f06295071ec7c06ade4c45e844dfd83eadc`, tree
+`69653a04fdb29024b6e0930d8b9e27184a70b7d4`, with no remaining code or artifact
+blockers. The complete report is
+`../RELEASE_EVIDENCE/080/astra-repair-review.md`. Its independent checks passed
+24/24 focused tests, all nine original actual-worker probes, the original
+100,000-empty-chunk retention probe (one current chunk retained), public Wasm
+audit, and byte-for-byte packed license/worker/asset verification. Root's
+serialized full check passed 326/326 tests; its rebuilt archive exactly matches
+the normal npm consumer's recorded 0.4.0 archive SHA-256.
+
+The repaired candidate also passed actual macOS Chromium and WebKit OPFS:
+https://github.com/misofm/engine-web-adapter/actions/runs/34744445740 . This closes
+the platform qualification gate left open by Linux WebKit. The preceding
+uncommitted/first-candidate sections are historical checkpoints; this acceptance
+supersedes their pending technical gates. These evidence-only changes do not
+change the reviewed package bytes. Root is synchronizing issue/PR metadata and
+merging the accepted migration. npm publication of adapter 0.4.0 is not claimed
+by this implementation issue.
