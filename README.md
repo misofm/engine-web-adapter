@@ -261,11 +261,12 @@ verification and trailing writes after a decode Worker finishes.
 
 `reservation` reports fixed `components`, their `fixedBufferBytes` sum,
 `slotBytes`, `headroomBytes`, and selected `limit`. Each 8,388,608-byte slot
-includes 4,853,776 named bytes: the exact range, input SAB, one reusable
+includes 4,984,848 named bytes: the exact range, input SAB, one reusable
 262,144-byte public-codec input bridge, fixed 2,097,152-byte codec memory,
 two output credits, one 393,216-byte codec-owned pending PCM event, one
 393,216-byte in-flight store write, one 393,216-byte OPFS write-clone
-allowance, and metadata/control. The remaining 3,534,832 bytes are headroom.
+allowance, two fixed 64 KiB SHA Wasm realm reservations, and metadata/control.
+The remaining 3,403,760 bytes are headroom.
 This reservation is a policy envelope, not a measurement of total
 browser/process memory.
 

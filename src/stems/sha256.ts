@@ -1,3 +1,5 @@
+import { SHA256_WASM_BYTES } from "./sha256-wasm.js";
+
 /*
  * Bounded incremental SHA-256 adapted from the issue-authorized Engine
  * baseline bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c.
@@ -29,6 +31,108 @@ function asBytes(input: ArrayBuffer | ArrayBufferView): Uint8Array {
   return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
 }
 
+const SHA256_WASM_MEMORY_BYTES = 64 * 1024;
+const SHA256_WASM_STATE_OFFSET = 0;
+const SHA256_WASM_INPUT_OFFSET = 16 * 1024;
+const SHA256_WASM_BATCH_BYTES = 16 * 1024;
+const SHA256_WASM_MAX_BLOCKS = SHA256_WASM_BATCH_BYTES / 64;
+
+type Sha256BackendMode = "auto" | "js" | "wasm";
+type WasmSha256Exports = {
+  readonly memory: WebAssembly.Memory;
+  readonly sha256_compress: (
+    stateOffset: number,
+    inputOffset: number,
+    blockCount: number,
+  ) => void;
+};
+
+let backendMode: Sha256BackendMode = "auto";
+let selectedBackend: "js" | "wasm" | undefined;
+let wasmExports: WasmSha256Exports | undefined;
+
+function getWasmExports(): WasmSha256Exports {
+  if (wasmExports !== undefined) return wasmExports;
+  const module = new WebAssembly.Module(SHA256_WASM_BYTES);
+  const instance = new WebAssembly.Instance(module);
+  const exports = instance.exports as unknown as Partial<WasmSha256Exports>;
+  if (
+    !(exports.memory instanceof WebAssembly.Memory) ||
+    typeof exports.sha256_compress !== "function"
+  ) {
+    throw new Error("SHA-256 Wasm exports are incomplete");
+  }
+  if (exports.memory.buffer.byteLength !== SHA256_WASM_MEMORY_BYTES) {
+    throw new Error("SHA-256 Wasm memory is not the fixed 64 KiB reservation");
+  }
+  try {
+    exports.memory.grow(1);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+  }
+  if (exports.memory.buffer.byteLength !== SHA256_WASM_MEMORY_BYTES) {
+    throw new Error("SHA-256 Wasm memory unexpectedly grows");
+  }
+  wasmExports = exports as WasmSha256Exports;
+  return wasmExports;
+}
+
+function useWasmBackend(
+  state: Uint32Array,
+  bytes: Uint8Array,
+  offset: number,
+  blockCount: number,
+): void {
+  const exports = getWasmExports();
+  const memory = exports.memory;
+  const stateView = new Uint32Array(
+    memory.buffer,
+    SHA256_WASM_STATE_OFFSET,
+    INITIAL.length,
+  );
+  const inputView = new Uint8Array(
+    memory.buffer,
+    SHA256_WASM_INPUT_OFFSET,
+    SHA256_WASM_BATCH_BYTES,
+  );
+  const byteLength = blockCount * 64;
+  stateView.set(state);
+  inputView.set(bytes.subarray(offset, offset + byteLength));
+  exports.sha256_compress(
+    SHA256_WASM_STATE_OFFSET,
+    SHA256_WASM_INPUT_OFFSET,
+    blockCount,
+  );
+  state.set(stateView);
+}
+
+function compressionBackend(): "js" | "wasm" {
+  if (backendMode === "js") return "js";
+  if (backendMode === "wasm") {
+    getWasmExports();
+    return "wasm";
+  }
+  if (selectedBackend !== undefined) return selectedBackend;
+  try {
+    getWasmExports();
+    selectedBackend = "wasm";
+  } catch {
+    selectedBackend = "js";
+  }
+  return selectedBackend;
+}
+
+/** Internal test control; this module does not expose backend selection publicly. */
+export function setSha256BackendForTests(mode: Sha256BackendMode): () => void {
+  const previous = backendMode;
+  backendMode = mode;
+  selectedBackend = undefined;
+  return () => {
+    backendMode = previous;
+    selectedBackend = undefined;
+  };
+}
+
 export class IncrementalSha256 {
   readonly #state = new Uint32Array(INITIAL);
   readonly #block = new Uint8Array(64);
@@ -48,13 +152,17 @@ export class IncrementalSha256 {
       this.#blockBytes += take;
       offset = take;
       if (this.#blockBytes === 64) {
-        this.#compress(this.#block, 0);
+        this.#compress(this.#block, 0, 1);
         this.#blockBytes = 0;
       }
     }
     while (offset + 64 <= bytes.byteLength) {
-      this.#compress(bytes, offset);
-      offset += 64;
+      const blockCount = Math.min(
+        SHA256_WASM_MAX_BLOCKS,
+        Math.floor((bytes.byteLength - offset) / 64),
+      );
+      this.#compress(bytes, offset, blockCount);
+      offset += blockCount * 64;
     }
     if (offset < bytes.byteLength) {
       this.#block.set(bytes.subarray(offset), 0);
@@ -70,14 +178,14 @@ export class IncrementalSha256 {
     this.#block[this.#blockBytes++] = 0x80;
     if (this.#blockBytes > 56) {
       this.#block.fill(0, this.#blockBytes);
-      this.#compress(this.#block, 0);
+      this.#compress(this.#block, 0, 1);
       this.#blockBytes = 0;
     }
     this.#block.fill(0, this.#blockBytes, 56);
     const view = new DataView(this.#block.buffer);
     view.setUint32(56, Number((bitLength >> 32n) & 0xffff_ffffn), false);
     view.setUint32(60, Number(bitLength & 0xffff_ffffn), false);
-    this.#compress(this.#block, 0);
+    this.#compress(this.#block, 0, 1);
     const output = new Uint8Array(32);
     const outputView = new DataView(output.buffer);
     for (let index = 0; index < 8; index += 1) {
@@ -90,7 +198,8 @@ export class IncrementalSha256 {
     return Array.from(this.digest(), (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
-  #compress(bytes: Uint8Array, offset: number): void {
+  #compressJs(bytes: Uint8Array, offset: number, blockCount: number): void {
+    for (let block = 0; block < blockCount; block += 1) {
     const view = new DataView(bytes.buffer, bytes.byteOffset + offset, 64);
     for (let index = 0; index < 16; index += 1) {
       this.#words[index] = view.getUint32(index * 4, false);
@@ -124,6 +233,16 @@ export class IncrementalSha256 {
     this.#state[5] = (this.#state[5]! + f) >>> 0;
     this.#state[6] = (this.#state[6]! + g) >>> 0;
     this.#state[7] = (this.#state[7]! + h) >>> 0;
+      offset += 64;
+    }
+  }
+
+  #compress(bytes: Uint8Array, offset: number, blockCount: number): void {
+    if (compressionBackend() === "wasm") {
+      useWasmBackend(this.#state, bytes, offset, blockCount);
+      return;
+    }
+    this.#compressJs(bytes, offset, blockCount);
   }
 }
 
