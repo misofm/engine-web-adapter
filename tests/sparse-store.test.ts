@@ -69,6 +69,106 @@ function responseBody(bytes: Uint8Array | undefined): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
+interface PayloadReadObservation {
+  readonly start: number;
+  readonly end: number;
+  readonly returned: number;
+  readonly bytes: Uint8Array;
+}
+type PayloadReadFault = (bytes: Uint8Array, start: number, end: number, readCount: number) => Uint8Array | Promise<Uint8Array>;
+
+class RecordingPayloadBlob extends Blob {
+  constructor(
+    source: Blob,
+    private readonly observations: PayloadReadObservation[],
+    private readonly fault: PayloadReadFault | undefined,
+    private readonly requestStart = 0,
+    private readonly requestEnd = source.size,
+  ) {
+    super([source]);
+  }
+
+  override slice(start?: number, end?: number, contentType?: string): Blob {
+    return new RecordingPayloadBlob(
+      super.slice(start, end, contentType),
+      this.observations,
+      this.fault,
+      start ?? 0,
+      end ?? this.size,
+    );
+  }
+
+  override async arrayBuffer(): Promise<ArrayBuffer> {
+    const source = new Uint8Array(await super.arrayBuffer());
+    const bytes = this.fault === undefined
+      ? source
+      : await this.fault(source, this.requestStart, this.requestEnd, this.observations.length);
+    const snapshot = bytes.slice();
+    this.observations.push({ start: this.requestStart, end: this.requestEnd, returned: snapshot.byteLength, bytes: snapshot });
+    return snapshot.buffer;
+  }
+}
+
+class RecordingPayloadBackend extends MemoryStemStorageBackend {
+  readonly payloadReads: PayloadReadObservation[] = [];
+  recording = false;
+  fault: PayloadReadFault | undefined;
+
+  override async read(name: string): Promise<Blob> {
+    const blob = await super.read(name);
+    if (!this.recording || !name.startsWith("sparse-pcm-v1-data-")) return blob;
+    return new RecordingPayloadBlob(blob, this.payloadReads, this.fault);
+  }
+}
+
+function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
+function largeWarmFixture(): {
+  readonly canonical: Uint8Array;
+  readonly expected: SparsePcmExpectation;
+  readonly spans: readonly { readonly startFrame: number; readonly bytes: Uint8Array }[];
+  readonly intervals: readonly { readonly startFrame: number; readonly frames: number }[];
+} {
+  const frameBytes = 6;
+  const first = { startFrame: 3, frames: 200_001 } as const;
+  const second = { startFrame: first.startFrame + first.frames + 7, frames: 100_001 } as const;
+  const frames = second.startFrame + second.frames + 5;
+  const canonical = new Uint8Array(frames * frameBytes);
+  for (const interval of [first, second]) {
+    const start = interval.startFrame * frameBytes;
+    const end = (interval.startFrame + interval.frames) * frameBytes;
+    for (let index = start; index < end; index += 1) canonical[index] = (index * 17 + 13) % 251 + 1;
+  }
+  const expected = expectation(canonical, frames, { channels: 2, bitDepth: 24 });
+  const maximumIngestFrames = Math.floor((128 * 1024) / frameBytes);
+  const ingestSpans: { startFrame: number; bytes: Uint8Array }[] = [];
+  for (const interval of [first, second]) {
+    for (let startFrame = interval.startFrame; startFrame < interval.startFrame + interval.frames;) {
+      const spanFrames = Math.min(maximumIngestFrames, interval.startFrame + interval.frames - startFrame);
+      ingestSpans.push({ startFrame, bytes: canonical.slice(startFrame * frameBytes, (startFrame + spanFrames) * frameBytes) });
+      startFrame += spanFrames;
+    }
+  }
+  return { canonical, expected, spans: ingestSpans, intervals: [first, second] };
+}
+
+async function primeLargeWarmStore(backend: RecordingPayloadBackend, instanceId: string): Promise<ReturnType<typeof largeWarmFixture> & { readonly store: VerifiedSparsePcmStore }> {
+  const fixture = largeWarmFixture();
+  const store = new VerifiedSparsePcmStore({ backend, instanceId });
+  await store.installSource(fixture.expected, { resolve: async () => ({ spans: spans(...fixture.spans) }) });
+  backend.payloadReads.length = 0;
+  backend.recording = true;
+  return { ...fixture, store };
+}
+
 describe("VerifiedSparsePcmStore", () => {
   it("commits all-silent and all-active canonical sources, then opens warm without resolving", async () => {
     const silentBytes = new Uint8Array(12);
@@ -1135,6 +1235,132 @@ describe("VerifiedSparsePcmStore", () => {
     assert.equal(cold.some((event) => event.verificationTiming !== undefined), false);
     const observedDespiteThrow = await store.openSource(expected, { onProgress: () => { throw new Error("observer failure"); } });
     assert.equal(observedDespiteThrow?.data.size, 40_000);
+    await store.close();
+  });
+
+  it("reads warm payloads in 512 KiB windows without crossing sparse intervals", async () => {
+    const backend = new RecordingPayloadBackend();
+    const { store, canonical, expected, intervals } = await primeLargeWarmStore(backend, "warm-window-size");
+    const events: import("../src/stems/types.js").StemProgress[] = [];
+    let resolverCalls = 0;
+    const descriptor = await store.installSource(expected, {
+      resolve: async () => { resolverCalls += 1; throw new Error("warm sparse install must not resolve"); },
+      onProgress: (event) => events.push(event),
+    });
+    const frameBytes = 6;
+    const activeBytes = concatBytes(intervals.map((interval) => canonical.slice(
+      interval.startFrame * frameBytes,
+      (interval.startFrame + interval.frames) * frameBytes,
+    )));
+    const firstBytes = intervals[0]!.frames * frameBytes;
+    const warmReadBytes = 512 * 1024;
+    const expectedReads = [
+      [0, warmReadBytes],
+      [warmReadBytes, warmReadBytes * 2],
+      [warmReadBytes * 2, firstBytes],
+      [firstBytes, firstBytes + warmReadBytes],
+      [firstBytes + warmReadBytes, activeBytes.byteLength],
+    ];
+    assert.equal(resolverCalls, 0);
+    assert.equal(descriptor.data.size, activeBytes.byteLength);
+    assert.deepEqual(backend.payloadReads.map((read) => [read.start, read.end]), expectedReads);
+    assert.ok(backend.payloadReads.every((read) => read.end - read.start <= warmReadBytes));
+    assert.deepEqual(concatBytes(backend.payloadReads.map((read) => read.bytes)), activeBytes);
+    assert.equal(backend.payloadReads.reduce((total, read) => total + read.returned, 0), activeBytes.byteLength);
+    const timing = events.find((event) => event.verificationTiming !== undefined)?.verificationTiming;
+    assert.ok(timing);
+    assert.equal(timing.readCalls, backend.payloadReads.length);
+    assert.equal(timing.readBytes, activeBytes.byteLength);
+    assert.equal(timing.hashedBytes, canonical.byteLength);
+    const verification = events.filter((event): event is Extract<typeof event, { bytes: number; totalBytes: number }> => "bytes" in event && "totalBytes" in event && event.stage === "verifying");
+    assert.equal(verification.at(-1)?.bytes, canonical.byteLength);
+    assert.equal(events.filter((event) => event.stage === "source-ready").length, 1);
+    await store.close();
+  });
+
+  it("rejects short warm payload reads without readiness or verification timing", async () => {
+    const warmReadBytes = 512 * 1024;
+    for (const faultKind of ["full", "tail"] as const) {
+      const backend = new RecordingPayloadBackend();
+      const { store, expected } = await primeLargeWarmStore(backend, `warm-short-${faultKind}`);
+      backend.fault = (bytes, start, end) => {
+        const requested = end - start;
+        const target = faultKind === "full" ? requested === warmReadBytes : requested < warmReadBytes;
+        return target ? bytes.slice(0, bytes.byteLength - 1) : bytes;
+      };
+      const events: import("../src/stems/types.js").StemProgress[] = [];
+      let returnedDescriptor: unknown;
+      const opening = store.openSource(expected, {
+        onProgress: (event) => events.push(event),
+      }).then((descriptor) => {
+        returnedDescriptor = descriptor;
+        throw new Error("short warm payload read unexpectedly succeeded");
+      });
+      await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+      const target = backend.payloadReads.find((read) => faultKind === "full" ? read.end - read.start === warmReadBytes && read.returned < warmReadBytes : read.end - read.start < warmReadBytes);
+      assert.ok(target);
+      assert.equal(target.returned, target.end - target.start - 1);
+      assert.equal(returnedDescriptor, undefined);
+      assert.equal(events.some((event) => event.stage === "source-ready"), false);
+      assert.equal(events.some((event) => event.stage === "ready"), false);
+      assert.equal(events.some((event) => event.verificationTiming !== undefined), false);
+      await store.close();
+    }
+  });
+
+  it("refuses tampered warm bytes and stops after cancellation of a deferred read", async () => {
+    const tamperedBackend = new RecordingPayloadBackend();
+    const tampered = await primeLargeWarmStore(tamperedBackend, "warm-tampered");
+    tamperedBackend.fault = (bytes, _start, _end, readCount) => {
+      if (readCount > 0) bytes[0] = (bytes[0] ?? 0) ^ 1;
+      return bytes;
+    };
+    const tamperedEvents: import("../src/stems/types.js").StemProgress[] = [];
+    await assert.rejects(tampered.store.openSource(tampered.expected, {
+      onProgress: (event) => tamperedEvents.push(event),
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+    assert.ok(tamperedBackend.payloadReads.length >= 2);
+    assert.equal(tamperedEvents.some((event) => event.stage === "source-ready"), false);
+    assert.equal(tamperedEvents.some((event) => event.verificationTiming !== undefined), false);
+    await tampered.store.close();
+
+    const cancelledBackend = new RecordingPayloadBackend();
+    const cancelled = await primeLargeWarmStore(cancelledBackend, "warm-cancelled-read");
+    const controller = new AbortController();
+    const entered = deferred();
+    const release = deferred();
+    cancelledBackend.fault = async (bytes, start, end, readCount) => {
+      if (readCount === 0 && start === 0 && end === 512 * 1024) {
+        entered.resolve();
+        await release.promise;
+      }
+      return bytes;
+    };
+    const cancelledEvents: import("../src/stems/types.js").StemProgress[] = [];
+    const opening = cancelled.store.openSource(cancelled.expected, {
+      signal: controller.signal,
+      onProgress: (event) => cancelledEvents.push(event),
+    });
+    await entered.promise;
+    controller.abort(new DOMException("warm read cancelled", "AbortError"));
+    release.resolve();
+    await assert.rejects(opening, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    assert.equal(cancelledBackend.payloadReads.length, 1);
+    assert.equal(cancelledEvents.some((event) => event.stage === "source-ready"), false);
+    assert.equal(cancelledEvents.some((event) => event.verificationTiming !== undefined), false);
+    await cancelled.store.close();
+  });
+
+  it("keeps ingest spans bounded at 128 KiB while allowing larger warm reads", async () => {
+    const bytes = new Uint8Array(128 * 1024 + 4);
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = (index * 19 + 7) % 251 + 1;
+    const expected = expectation(bytes, bytes.byteLength / 6, { channels: 2, bitDepth: 24 });
+    const backend = new MemoryStemStorageBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "ingest-span-bound" });
+    await assert.rejects(store.installSource(expected, {
+      resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }),
+    }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration");
+    assert.deepEqual(await backend.list(), []);
     await store.close();
   });
 

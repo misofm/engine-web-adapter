@@ -1,0 +1,47 @@
+# 512 KiB warm verification: minimal issue-ready plan
+
+Design only. Baselines inspected: adapter main `0564511db3c581b278dadc8440d3e4eb4880d83d` (`0.5.0`), app main `00f777135146c509486ea5248e66140420ba1e15`. Both worktrees were clean. Read both AGENTS.md files. The user's explicit Astra medium design → Luna xhigh implementation → fresh Astra medium adversarial verification workflow overrides the adapter's generic Sol workflow. Root owns the numbered synchronized issue, commits, publication, app adoption coordination, and benchmarks. No implementation or publication is performed by this plan.
+
+## Requirement and smallest change
+
+In adapter `src/stems/sparse-store.ts`, add a private named constant `WARM_VERIFY_READ_BYTES = 512 * 1024` beside the existing bounds. Replace only the two `MAX_SPAN_BYTES` references in `verifyMarker`'s payload loop: offset increment and clamped end. This is 524,288 bytes per full warm payload read; each read still ends at its current sparse interval boundary. No public setting, global override, new abstraction, or storage schema change.
+
+Keep `MAX_SPAN_BYTES = 128 * 1024` and both ingest validation uses unchanged. Preserve the existing Effect pipeline, sequential reads per verifier, admission width, read deadline and cancellation checks, short-read rejection, full canonical BLAKE3-256 verification including implicit zeros, exact payload byte count, progress/timing accounting, and verification-before-ready/alias publication. Byte reads may split a 24-bit PCM frame; hashing concatenated bytes must remain exact. No engine, audio-render, PCM pump, codec, HTTP, worker topology, dense-store, zero-hashing, or UI changes. Engine stays exact `0.2.4`; codec stays `0.1.1` and other dependencies stay unchanged.
+
+## Evidence and limits
+
+Basis: `/tmp/miso-chunk-study/report.md` and `results.json`. On this Chromium145/Linux Ghost sample, 128→512 KiB reduced median ready from 2332.8 to 1916.4 ms (416.4 ms, 17.85%), reads from 2238 to 845, and sampled main-isolate peak medians were 58.9→60.0 MiB. Eight simultaneous returned chunks imply 4 MiB instead of 1 MiB; this is not a total memory ceiling. Preserve bounded concurrency; do not promise a universal timing threshold.
+
+Raw JSON contains 55 ready outcomes: one cold prime, six warm primes, 30 timing rows, 18 memory rows. This clarifies the report's ambiguous cold-prime-per-size wording. Keep its disclosed final aggregate housekeeping failure (localStorage on about:blank); per-run assertions passed, but the overall harness must not be called fully green. Root's future benchmark should use the origin-guarded harness and retain raw results. No rerun or new speed claim is required from the implementer.
+
+## Focused regression gates
+
+Extend `tests/sparse-store.test.ts` using a test-only storage backend/Blob wrapper on committed payload reads. Prime via valid frame-aligned ingest spans no larger than 128 KiB; enable recording/fault injection only for warm open. Observe actual `slice(start,end).arrayBuffer()` requests and returned lengths, excluding marker/index metadata. Do not test only the constant value or timing counters, and do not add a production test seam.
+
+1. **Actual size and sparse boundaries:** use deterministic nonzero active PCM, leading/interior/trailing silence, and at least two disjoint active intervals. Make the first active interval exceed two 512 KiB reads and have a tail; make the next interval exceed 512 KiB. Prefer stereo 24-bit (six-byte frames) to cover chunk cuts inside frames. Assert the exact packed payload offset sequence, full reads of 524,288 bytes, exact tails, no interval-crossing read, no skipped/duplicated bytes, and no read above 512 KiB. Warm open succeeds against the independently computed canonical digest with no resolver invocation. Timing readCalls/readBytes match observation; hashedBytes and final progress equal canonicalBytes including zeros. This test must fail under the old 128 KiB loop and under a loop that merges interval boundaries.
+2. **Short returned reads:** keep the Blob's advertised size valid but return one fewer byte from a requested full 512 KiB slice, then separately from an interval tail. Public `openSource` rejects with `stem.corrupt`, with no descriptor or source-ready event and no successful verification timing. This must reach the loop's returned-length guard, not metadata-size rejection. Keep existing short/extra stored-size regressions green.
+3. **Full verification and cancellation:** tamper a byte after the first 512 KiB read without changing size and assert corruption refusal/no ready. Abort while a recorded 512 KiB read is deferred, then release it: assert `stem.cancelled`, no next read, no descriptor/ready. Retain existing final-progress cancellation tests for direct open and session aliases, implicit-zero verification, observer isolation, and bounded admission.
+4. **Ingest stays bounded:** retain or add a focused valid-shape span just over 128 KiB and assert ingest refusal/no publication. The larger warm fixture's successful prime already proves valid bounded ingest still works. No broad test refactor.
+
+## Qualification and delivery gates
+
+- Luna implements the tiny runtime diff, focused tests, and adapter version `0.5.1` in `package.json`/`package-lock.json`. Only necessary spec/release metadata may accompany those paths. Root supplies the numbered issue and keeps evidence/blockers synchronized; no artist data, cache, node_modules, or tarball committed.
+- Run adapter `npm run check`, `npm run test:browser`, `npm run test:browser:opfs`, and `npm run publish:dry-run` using the repo-supported toolchain. Require packed fresh-consumer coverage and actual Chromium/WebKit OPFS coverage; unavailable browser lanes remain explicit release blockers. Packed Worker/AudioWorklet/Wasm URLs and existing cold/warm/offline verification gates must remain green.
+- Fresh Astra medium independently reviews the final diff and focused test oracles, confirms the new read-size test fails with the old bound, checks all evidence against the exact candidate revision/artifact, and reports blockers to Root. No engine or codec rebuild/release.
+- Root publishes `@misofm/engine-web-adapter@0.5.1` only after qualification, then verifies registry version, source revision, integrity and archive identity against the reviewed artifact. Record actual values; never prefill guessed release provenance.
+- App adoption changes only the exact adapter pin to `0.5.1` in `package.json`, registry-derived `bun.lock`, adapter identity in `src/lib/mixer/engine/package-identities.json`, and installed-package-derived `public/wasm/mixer-engine.provenance.json`, plus Root's issue/evidence record. Preserve exact engine `0.2.4`, its revision `64018c1a97ea84224362b0c659f06756a186e3b7`, integrity, binaries and catalog. No local tarball dependency or unrelated lock churn. Existing key-map generation should be a no-op.
+- Require app frozen-lock installation, `bun run verify:mixer-assets` (including identical app/adapter SDK realpath and unchanged asset hashes), `bun run lint`, `bun run typecheck`, `bun run test`, and `bun run build`. Do not weaken provenance verification. Root owns any final real-Ghost cold/warm benchmark and records build identity, canonical byte/digest success, read sizes/counts and limitations; earlier benchmark medians are supporting evidence, not a release SLA.
+
+Completion means independently verified adapter 0.5.1 and exact registry app adoption with the above gates recorded by Root. At design time all implementation, verification, release and adoption gates remain pending.
+
+## Root baseline checkpoint
+
+2026-09-13: clean app main 00f7771 with published adapter 0.5.0 built successfully (`bun run build`). Origin-guarded `/tmp/miso-load-research/benchmark-release.mjs` completed all 10 baseline rows (cold prime, warm prime, five timings, three separate memory measurements) with zero page errors. Chromium 145.0.7632.6, Ghost eight stems, concurrency eight, median ready 2405.3 ms. Every warm row retained exact payload/canonical byte assertions and ready following full verification. Raw journal and aggregate: `/tmp/miso-load-research/baseline-128-{runs.jsonl,results.json}`. Candidate implementation and all release qualification remain pending.
+
+## Implementation checkpoint
+
+Luna xhigh completed the runtime change and four regression tests; typecheck, format check, test compilation, and all 52 sparse-store tests pass. The old128KiB mutation failed the new read-boundary test as expected, then the restored512KiB tree passed. Handoff: `/tmp/miso-load-research/512k-implementation.md`. Fresh Astra medium review is now running; root flagged remaining oldversion strings in check-package/README for review. No release qualification, candidate benchmark, publication or app adoption is claimed complete.
+
+## Qualification checkpoint
+
+Luna corrected all three Astra findings (exact packageguard/README0.5.1 and both shortreadfaults using publicopenSource); focused52tests, typecheck, format and packagecheck pass. Root full `CODEC_EMSCRIPTEN_ROOT=/data/codec-tooling/emsdk/upstream/emscripten npm run check` exited0 with336/336tests and packagepolicy213files. Logs `/tmp/miso-load-research/512k-full-check.log`; correction handoff512k-corrections.md. Browser gate initially could not autodiscover installed Chromium; rerun uses explicit CHROME_EXECUTABLE and is pending. OPFS/browser/finalreview/registry/appbenchmark remain pending.
