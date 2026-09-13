@@ -7,7 +7,7 @@ import {
   type FlacDecodeEvent,
 } from "@misofm/codec";
 
-import { IncrementalSha256 } from "../stems/sha256.js";
+import { createIncrementalBlake3, type IncrementalBlake3 } from "../stems/blake3.js";
 import { EngineWebAdapterError } from "../errors.js";
 import { FlacInputSlotConsumer, FLAC_INPUT_SLOT_BYTES, type FlacInputReadResult, type FlacInputSlotBuffers } from "../stems/flac-input-slot.js";
 import { FlacOutputCredits } from "../stems/flac-output-credits.js";
@@ -24,7 +24,7 @@ interface WorkerScope {
 const scope = ((globalThis as unknown as { readonly self?: WorkerScope }).self ?? globalThis) as unknown as WorkerScope;
 let active = 0;
 let credits: FlacOutputCredits | undefined;
-let hash: IncrementalSha256 | undefined;
+let hash: IncrementalBlake3 | undefined;
 let decoderModule: WebAssembly.Module | undefined;
 let inputSlot: FlacInputSlotBuffers | undefined;
 let loadController: AbortController | undefined;
@@ -248,7 +248,7 @@ function decodeJob(options: {
     return {
       pcmBytes: decodedBytes,
       frames: decodedFrames,
-      ...(hash === undefined ? {} : { digest: hash.digestHex() }),
+      ...(hash === undefined ? {} : { digest: hash.digest("hex") }),
       // Per-PCM messages carry blocks: 1. The terminal message intentionally
       // carries zero so diagnostics do not double-count the same blocks.
       metrics: { decodeMs, hashMs, inputWaitMs, outputWaitMs, blocks: 0 },
@@ -262,22 +262,26 @@ scope.onmessage = (event) => {
     if (active !== 0) return;
     active = message.requestId;
     credits = new FlacOutputCredits();
-    hash = message.verifyPcm ? new IncrementalSha256() : undefined;
     inputSlot = message.inputSlot;
     runnable = message.runnable === undefined ? undefined : new Int32Array(message.runnable);
     runnableMask = message.runnableMask ?? 0;
     const requestId = message.requestId;
+    const prepareHash = message.verifyPcm
+      ? createIncrementalBlake3()
+      : Promise.resolve(undefined);
+    let prepareDecoder: Promise<WebAssembly.Module>;
     if (message.decoderModule !== undefined) {
-      decoderModule = message.decoderModule;
-      scope.postMessage({ type: "ready", requestId });
+      prepareDecoder = Promise.resolve(message.decoderModule);
     } else {
       loadController = new AbortController();
-      void loadFlacDecoderModule({ url: message.decoderWasmUrl, signal: loadController.signal }).then((loaded) => {
-        if (active !== requestId || credits?.cancelled) return;
-        decoderModule = loaded;
-        scope.postMessage({ type: "ready", requestId });
-      }, fail);
+      prepareDecoder = loadFlacDecoderModule({ url: message.decoderWasmUrl, signal: loadController.signal });
     }
+    void Promise.all([prepareDecoder, prepareHash]).then(([loaded, preparedHash]) => {
+      if (active !== requestId || credits?.cancelled) return;
+      decoderModule = loaded;
+      hash = preparedHash;
+      scope.postMessage({ type: "ready", requestId });
+    }, fail);
     return;
   }
   if (message.requestId !== active || credits === undefined) return;

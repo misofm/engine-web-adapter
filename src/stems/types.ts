@@ -2,7 +2,7 @@ import type { IngestDiagnostics } from "./ingest-diagnostics.js";
 import type { SourceSpec } from "@misofm/engine";
 import type { BoundedStemAdmission } from "./flac-admission.js";
 
-export type StemIdentity = `sha256:${string}`;
+export type StemIdentity = `blake3:${string}`;
 
 export interface DeclaredStemSource {
   readonly id: string;

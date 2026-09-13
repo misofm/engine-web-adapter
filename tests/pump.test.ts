@@ -19,7 +19,7 @@ import type { StemIdentity } from "../src/stems/types.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "../src/stems/worker-protocol.js";
 import type { PumpWorkerLike } from "../src/stems/worker-client.js";
 
-const IDENTITY = `sha256:${"1".repeat(64)}` as StemIdentity;
+const IDENTITY = `blake3:${"1".repeat(64)}` as StemIdentity;
 
 function pcm16(samples: readonly number[]): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(new ArrayBuffer(samples.length * 2));

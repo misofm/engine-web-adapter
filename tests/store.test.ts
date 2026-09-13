@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import test from "node:test";
+import { createBLAKE3 } from "hash-wasm";
 
 import { EngineWebAdapterError } from "../src/errors.js";
 import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
@@ -12,11 +12,13 @@ import type { StemIdentity, StemProgress, StemResolver } from "../src/stems/type
 import type { StemStorageBackend } from "../src/stems/storage.js";
 import type { WebLockProvider } from "../src/stems/store.js";
 
+const identityHasher = await createBLAKE3(256);
+
 function fixture(values: readonly number[]): { bytes: Uint8Array; identity: StemIdentity } {
   const bytes = new Uint8Array(values);
   return {
     bytes,
-    identity: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    identity: `blake3:${identityHasher.init().update(bytes).digest("hex")}`,
   };
 }
 
@@ -57,7 +59,7 @@ test("corruption and truncation are removed then self-healed", async () => {
   const stems = [requirement("source", item.identity, item.bytes.length)];
   await (await store.openSession({ leaseId: "first", stems, resolver })).close();
 
-  const final = `sha256-${item.identity.slice(7)}`;
+  const final = `blake3-${item.identity.slice(7)}`;
   backend.files.set(final, new Uint8Array([10, 99, 30, 40, 50, 60]));
   await (await store.openSession({ leaseId: "corrupt", stems, resolver })).close();
   backend.files.set(final, item.bytes.slice(0, 3));
@@ -87,7 +89,7 @@ test("conflicting byte count cannot demote valid cached content or live pins", a
   assert.equal(index.stems[item.identity].bytes, item.bytes.length);
   assert.equal(index.stems[item.identity].pins.length, 1);
   assert.match(index.stems[item.identity].pins[0], /^session:conflict:a:/);
-  assert.equal(backend.files.has(`sha256-${item.identity.slice(7)}`), true);
+  assert.equal(backend.files.has(`blake3-${item.identity.slice(7)}`), true);
   await leaseA.close();
 });
 
@@ -110,7 +112,7 @@ test("missing or malformed index recovers verified finals without resolving", as
 test("recovery without lock query keeps ambiguous final and staging files", async () => {
   const backend = new MemoryStemStorageBackend();
   const digest = "c".repeat(64);
-  const final = `sha256-${digest}`;
+  const final = `blake3-${digest}`;
   backend.files.set(final, new Uint8Array([1, 2, 3]));
   backend.files.set(`staging-tab-${digest}`, new Uint8Array([1]));
   backend.files.set("index.json", new TextEncoder().encode("{broken"));
@@ -138,7 +140,7 @@ test("duplicate content locks once and distinct source IDs share one verified Bl
   assert.equal(a.stems.length, 2);
   assert.equal((await a.read(item.identity)).size, item.bytes.length);
   assert.equal((await b.read(item.identity)).size, item.bytes.length);
-  assert.equal([...backend.files.keys()].filter((name) => name.startsWith("sha256-")).length, 1);
+  assert.equal([...backend.files.keys()].filter((name) => name.startsWith("blake3-")).length, 1);
   await Promise.all([a.close(), b.close()]);
 });
 
@@ -213,7 +215,7 @@ test("cancellation during OPFS write awaits writer abort and removes staging", a
     (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled",
   );
   assert.equal(writerAborted, true);
-  assert.equal([...storage.files.keys()].some((name) => name.startsWith("staging-") || name.startsWith("sha256-")), false);
+  assert.equal([...storage.files.keys()].some((name) => name.startsWith("staging-") || name.startsWith("blake3-")), false);
 });
 
 test("Web Locks serialize separate tab/store instances into one resolve", async () => {
@@ -242,7 +244,7 @@ test("late-opening store preserves a live promoted final until its index commit"
     ...backendView(storage),
     async move(from, to) {
       await storage.move(from, to);
-      if (to.startsWith("sha256-")) { promoted.resolve(); await releaseMove.promise; }
+      if (to.startsWith("blake3-")) { promoted.resolve(); await releaseMove.promise; }
     },
   };
   const stems = [requirement("source", item.identity, item.bytes.length)];
@@ -253,7 +255,7 @@ test("late-opening store preserves a live promoted final until its index commit"
 
   const late = new VerifiedStemStore({ backend: backendView(storage), locks, instanceId: "late" });
   await late.open();
-  assert.equal(storage.files.has(`sha256-${item.identity.slice(7)}`), true);
+  assert.equal(storage.files.has(`blake3-${item.identity.slice(7)}`), true);
   releaseMove.resolve();
   await (await opening).close();
   const warmResolver = new MemoryStemResolver({});
@@ -278,7 +280,7 @@ test("warm verification uses bounded task and admission width", async () => {
   const delayed = backendView(storage);
   const read = delayed.read;
   delayed.read = async (name) => {
-    if (!name.startsWith("sha256-")) return read(name);
+    if (!name.startsWith("blake3-")) return read(name);
     active += 1;
     maximum = Math.max(maximum, active);
     try {
@@ -360,7 +362,7 @@ test("bounded open aborts sibling work and awaits cleanup before rejecting", asy
   cleanupRelease.resolve();
   assert.equal(await observed, authoritative);
   assert.equal(cleanupFinished, true);
-  assert.equal([...backend.files.keys()].some((name) => name.startsWith("staging-") || name.startsWith("sha256-")), false);
+  assert.equal([...backend.files.keys()].some((name) => name.startsWith("staging-") || name.startsWith("blake3-")), false);
   const settledFiles = [...backend.files.keys()].sort();
   await new Promise<void>((resolve) => setTimeout(resolve, 5));
   assert.deepEqual([...backend.files.keys()].sort(), settledFiles);
@@ -427,7 +429,7 @@ test("session gate serializes replacement and close is idempotent", async () => 
 function seededCache(pins: string[] = []) {
   const item = fixture([101, 102, 103, 104]);
   const backend = new MemoryStemStorageBackend();
-  backend.files.set(`sha256-${item.identity.slice(7)}`, item.bytes.slice());
+  backend.files.set(`blake3-${item.identity.slice(7)}`, item.bytes.slice());
   backend.files.set("index.json", new TextEncoder().encode(JSON.stringify({ version: 1, stems: {
     [item.identity]: { bytes: item.bytes.length, pins, lastUsedAt: 11 },
   } }) + "\n"));
@@ -454,13 +456,13 @@ test("durable offline pins share the historical cache and preserve metadata acro
   const missing = fixture([201]).identity;
   await assert.rejects(store.setOfflinePin(missing, "missing", true), { code: "stem.not_found" });
   await store.setOfflinePin(missing, "missing", false);
-  backend.files.set(`sha256-${item.identity.slice(7)}`, new Uint8Array([0]));
+  backend.files.set(`blake3-${item.identity.slice(7)}`, new Uint8Array([0]));
   const resolver = new MemoryStemResolver({ [item.identity]: item.bytes });
   const lease = await store.openSession({ leaseId: "repair", stems: [requirement("source", item.identity, item.bytes.length)], resolver });
   assert.equal(resolver.requests.length, 1, "pins never bypass corrupt-content verification");
   await lease.close();
   assert.deepEqual(row().pins, ["offline:existing", "session:unknown-owner:old", "offline:two"]);
-  assert.deepEqual(backend.files.get(`sha256-${item.identity.slice(7)}`), item.bytes);
+  assert.deepEqual(backend.files.get(`blake3-${item.identity.slice(7)}`), item.bytes);
 });
 
 test("missing and already-equal offline mutations are true no-ops without persistence", async () => {
@@ -674,13 +676,13 @@ function deferred<T>() {
 function quotaCache(items: readonly ReturnType<typeof fixture>[], capacity: number) {
   const storage = new MemoryStemStorageBackend();
   const stems = Object.fromEntries(items.map(item => {
-    storage.files.set(`sha256-${item.identity.slice(7)}`, item.bytes);
+    storage.files.set(`blake3-${item.identity.slice(7)}`, item.bytes);
     return [item.identity, { bytes: item.bytes.length, pins: [] as string[], lastUsedAt: 0 }];
   }));
   storage.files.set("index.json", new TextEncoder().encode(JSON.stringify({ version: 1, stems })));
   const backend: StemStorageBackend = { ...backendView(storage), async estimate() {
     return { quota: capacity, usage: [...storage.files].reduce((sum, [name, bytes]) =>
-      sum + (name.startsWith("sha256-") || name.startsWith("staging-") ? bytes.length : 0), 0) };
+      sum + (name.startsWith("blake3-") || name.startsWith("staging-") ? bytes.length : 0), 0) };
   } };
   const open = (store: VerifiedStemStore, id: string, entries: readonly ReturnType<typeof fixture>[]) => store.openSession({
     leaseId: id, stems: entries.map(item => requirement(item.identity, item.identity, item.bytes.length)),
@@ -725,7 +727,7 @@ test("provisional verified sources survive quota pressure and failed opens roll 
   const store = new VerifiedStemStore({ backend: cache.backend, locks: new TestLocks() });
   await assert.rejects(cache.open(store, "partial", [first, fixture([23])]), { code: "stem.quota" });
   assert.deepEqual((await cache.row())[first.identity].pins, []);
-  assert.deepEqual(cache.storage.files.get(`sha256-${first.identity.slice(7)}`), first.bytes);
+  assert.deepEqual(cache.storage.files.get(`blake3-${first.identity.slice(7)}`), first.bytes);
   const lease = await cache.open(store, "other", [first]);
   await assert.rejects(cache.open(store, "partial", [first, fixture([24])]), { code: "stem.quota" });
   assert.equal((await cache.row())[first.identity].pins.length, 1);
@@ -757,7 +759,7 @@ test("pin admitted after victim selection wins the coordinated eviction recheck"
   proceed.resolve();
   await assert.rejects(opening, { code: "stem.quota" });
   assert.deepEqual((await cache.row())[item.identity].pins, ["offline:race"]);
-  assert.ok(cache.storage.files.has(`sha256-${item.identity.slice(7)}`));
+  assert.ok(cache.storage.files.has(`blake3-${item.identity.slice(7)}`));
 });
 
 test("two concurrent cold opens finish without nested victim and ingest lock deadlock", { timeout: 2000 }, async () => {
@@ -802,7 +804,7 @@ test("quota failure persisting reclamation metadata remains typed without acknow
   });
   assert.equal(ready, false);
   assert.equal(resolver.requests.length, 0);
-  assert.equal(cache.storage.files.has(`sha256-${victim.identity.slice(7)}`), false, "failure occurred after victim removal");
+  assert.equal(cache.storage.files.has(`blake3-${victim.identity.slice(7)}`), false, "failure occurred after victim removal");
   assert.equal(cache.storage.files.has("index.pending"), false);
   assert.deepEqual((await cache.row())[victim.identity].pins, []);
   assert.deepEqual((await locks.query()).held, [], "failed opening releases lifetime and mutation locks");
@@ -845,7 +847,7 @@ test("source-ready follows persisted ownership while another source is incomplet
         if (event.stage === "source-ready" && event.identity === first.identity) {
           const index = JSON.parse(new TextDecoder().decode(backend.files.get("index.json")!));
           assert.equal(index.stems[first.identity].pins.length, 1);
-          assert.deepEqual(backend.files.get(`sha256-${first.identity.slice(7)}`), first.bytes);
+          assert.deepEqual(backend.files.get(`blake3-${first.identity.slice(7)}`), first.bytes);
           assert.equal(event.bytes, first.bytes.length);
           proved.resolve();
         }
@@ -877,6 +879,6 @@ test("failed canonical proof emits no source-ready or aggregate ready", async ()
       resolver: new MemoryStemResolver({ [item.identity]: bytes }), onProgress: event => events.push(event),
     }));
     assert.equal(events.some(event => event.stage === "source-ready" || event.stage === "ready"), false);
-    assert.equal(backend.files.has(`sha256-${item.identity.slice(7)}`), false);
+    assert.equal(backend.files.has(`blake3-${item.identity.slice(7)}`), false);
   }
 });

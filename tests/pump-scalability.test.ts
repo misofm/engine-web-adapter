@@ -100,7 +100,7 @@ test("finite ticks stay bounded and arbitrary window sizes preserve exact PCM24 
     bytes[offset] = sample; bytes[offset + 1] = sample >> 8; bytes[offset + 2] = sample >> 16;
   }));
   const pump = new CanonicalPcmPump({ lease: { read: async () => new Blob([bytes]) }, windowFrames: 9,
-    sources: [{ sourceId: "stereo", identity: `sha256:${"1".repeat(64)}`, channels: 2, bitDepth: 24, frames: 19, ring }] });
+    sources: [{ sourceId: "stereo", identity: `blake3:${"1".repeat(64)}`, channels: 2, bitDepth: 24, frames: 19, ring }] });
   const first = await pump.pumpUntilBlocked(2);
   assert.ok(first.chunks <= 2, "a finite tick cannot exceed its pass budget");
   await pump.pumpUntilBlocked();
@@ -137,7 +137,7 @@ test("rejected playback reads fail closed even when a custom lease rejects witho
 
 function source(index: number, frames: number, capacity = 4) {
   const sourceId = `s${index}`;
-  return { sourceId, identity: `sha256:${index.toString(16).padStart(64, "0")}` as StemIdentity,
+  return { sourceId, identity: `blake3:${index.toString(16).padStart(64, "0")}` as StemIdentity,
     channels: 1 as const, bitDepth: 16 as const, frames,
     ring: createMsb1Ring({ sourceId, channels: 1, frameCapacity: 4, capacity }) };
 }

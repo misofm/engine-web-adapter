@@ -3,7 +3,7 @@ import { createBLAKE3, type IHasher } from "hash-wasm";
 import { deadline } from "./sha256.js";
 
 /** One operation-owned incremental BLAKE3-256 state. Never share concurrently. */
-export type IncrementalBlake3 = Pick<IHasher, "update" | "digest">;
+export type IncrementalBlake3 = Pick<IHasher, "init" | "update" | "digest">;
 
 /**
  * Create a fresh, initialized BLAKE3-256 state.

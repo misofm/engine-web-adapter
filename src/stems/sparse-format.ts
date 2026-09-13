@@ -118,7 +118,7 @@ function identity(value: unknown, path: string): StemIdentity {
   try {
     assertStemIdentity(value);
   } catch (error) {
-    throw corrupt(path + " must be sha256 followed by 64 lowercase hex digits", { path, cause: String(error) });
+    throw corrupt(path + " must be blake3 followed by 64 lowercase hex digits", { path, cause: String(error) });
   }
   return value;
 }

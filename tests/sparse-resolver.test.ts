@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createBLAKE3 } from "hash-wasm";
 
 import { EngineWebAdapterError } from "../src/errors.js";
 import { serializeSparseStemIndex, MemoryStemStorageBackend, VerifiedSparsePcmStore, createSparseStemResolver } from "../src/stems/index.js";
@@ -10,7 +11,9 @@ import type { FlacWorkerLike, FlacWorkerRequest, FlacWorkerResponse } from "../s
 import type { SparsePcmExpectation } from "../src/stems/sparse-store.js";
 import type { StemProgress } from "../src/stems/types.js";
 
-const ZERO_IDENTITY = `sha256:${createHash("sha256").update(new Uint8Array(4096)).digest("hex")}` as const;
+const identityHasher = await createBLAKE3(256);
+const identity = (bytes: Uint8Array) => `blake3:${identityHasher.init().update(bytes).digest("hex")}` as const;
+const ZERO_IDENTITY = identity(new Uint8Array(4096));
 
 function responseBytes(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -291,7 +294,7 @@ test("factory validates locator and decoder deadlines before the first request",
 });
 
 test("successful sparse progress flushes its latest coalesced boundary before close", () => {
-  const identity = `sha256:${"c".repeat(64)}` as const;
+  const identity = `blake3:${"c".repeat(64)}` as const;
   const observed: Array<StemProgress & { readonly bytes: number }> = [];
   const reporter = sparseProgressReporter((event) => {
     if ("bytes" in event) observed.push(event);
@@ -312,7 +315,7 @@ test("successful sparse progress flushes its latest coalesced boundary before cl
 });
 
 test("successful sparse progress forces a boundary through an outer coalescer", () => {
-  const identity = `sha256:${"d".repeat(64)}` as const;
+  const identity = `blake3:${"d".repeat(64)}` as const;
   const observed: number[] = [];
   const outer = sparseProgressReporter((event) => {
     if (event.stage === "decoding" && "bytes" in event) observed.push(event.bytes);
@@ -345,7 +348,7 @@ test("successful sparse progress forces a boundary through an outer coalescer", 
 test("native decoder asset loading is bounded by the decoder progress deadline", async () => {
   const pcm = new Uint8Array([1, 2]);
   const expected: SparsePcmExpectation = {
-    identity: `sha256:${createHash("sha256").update(pcm).digest("hex")}`,
+    identity: identity(pcm),
     sampleRateHz: 48_000,
     channels: 1,
     bitDepth: 16,
@@ -753,7 +756,7 @@ test("sparse decoding flushes the final active PCM boundary below the canonical 
   const activePcm = new Uint8Array(activeFrames * frameBytes);
   const canonicalPcm = new Uint8Array(canonicalFrames * frameBytes);
   const expected: SparsePcmExpectation = {
-    identity: `sha256:${createHash("sha256").update(canonicalPcm).digest("hex")}`,
+    identity: identity(canonicalPcm),
     sampleRateHz: 48_000,
     channels: 1,
     bitDepth: 16,
@@ -820,7 +823,7 @@ test("a real stereo24 block stays borrowed across mapper slices and an indexed g
   canonical.set(packed.subarray(0, 86_400), 0);
   canonical.set(packed.subarray(86_400), 24_000 * 6);
   const expected: SparsePcmExpectation = {
-    identity: `sha256:${createHash("sha256").update(canonical).digest("hex")}`,
+    identity: identity(canonical),
     sampleRateHz: 48_000,
     channels: 2,
     bitDepth: 24,
@@ -921,7 +924,7 @@ test("store cancellation settles a pending BYOB read before cleanup", async () =
 test("quota failure leaves a prior cache intact and the same resolver safely reuses admission", async () => {
   const oldBytes = new Uint8Array([1, 2, 3, 4]);
   const oldExpected: SparsePcmExpectation = {
-    identity: `sha256:${createHash("sha256").update(oldBytes).digest("hex")}`,
+    identity: identity(oldBytes),
     sampleRateHz: 48_000,
     channels: 1,
     bitDepth: 16,

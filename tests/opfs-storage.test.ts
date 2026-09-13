@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createBLAKE3 } from "hash-wasm";
 import { getEventListeners } from "node:events";
 
 import { EngineWebAdapterError } from "../src/errors.js";
 import { OpfsStorageBackend } from "../src/stems/storage.js";
 import { OpfsWriteWorkerClient } from "../src/stems/opfs-worker-client.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
-import { IncrementalSha256 } from "../src/stems/sha256.js";
 import type { OpfsWorkerLike, OpfsWorkerRequest, OpfsWorkerResponse } from "../src/stems/opfs-worker-protocol.js";
 import type { StemIdentity } from "../src/stems/types.js";
+
+const identityHasher = await createBLAKE3(256);
+const identityFor = (bytes: Uint8Array) => `blake3:${identityHasher.init().update(bytes).digest("hex")}` as StemIdentity;
 
 /**
  * The OPFS backend had no coverage at all, which is how a Safari-26-only write
@@ -556,14 +559,10 @@ test("termination closes the only owned physical lock and preserves unrelated fi
 
 test("timed staging open maps stem.read_deadline and preserves verified bytes and index", async () => {
   const cachedBytes = new Uint8Array([4, 5, 6]);
-  const cachedHash = new IncrementalSha256();
-  cachedHash.update(cachedBytes);
-  const cachedIdentity = `sha256:${cachedHash.digestHex()}` as StemIdentity;
+  const cachedIdentity = identityFor(cachedBytes);
   const bytes = new Uint8Array([7, 8, 9]);
-  const contentHash = new IncrementalSha256();
-  contentHash.update(bytes);
-  const identity = `sha256:${contentHash.digestHex()}` as StemIdentity;
-  const finalName = `sha256-${cachedIdentity.slice("sha256:".length)}`;
+  const identity = identityFor(bytes);
+  const finalName = `blake3-${cachedIdentity.slice("blake3:".length)}`;
   const index = JSON.stringify({ version: 1, stems: { [cachedIdentity]: { bytes: cachedBytes.byteLength, pins: [], lastUsedAt: 1 } } }) + "\n";
   const root = new FakeDirectory();
   const folder = new FakeDirectory();
@@ -592,7 +591,7 @@ test("timed staging open maps stem.read_deadline and preserves verified bytes an
   assert.ok(performance.now() - started < 250, "store cancellation does not wait for the worker deadline");
   assert.deepEqual([...folder.files.get(finalName)!.bytes], [...cachedBytes]);
   assert.deepEqual([...folder.files.get("index.json")!.bytes], [...beforeIndex]);
-  assert.equal(folder.files.has(`staging-owned-${identity.slice("sha256:".length)}`), false);
+  assert.equal(folder.files.has(`staging-owned-${identity.slice("blake3:".length)}`), false);
   assert.deepEqual([...folder.files.get("staging-foreign")!.bytes], [8]);
   assert.equal(folder.locked.has("unrelated"), true);
   unrelatedHandle.close();
@@ -743,10 +742,8 @@ test("the verified store ingests, promotes, and rereads canonical PCM on the OPF
   const backend = backendFor(root, "opfs-store-v1");
   const bytes = new Uint8Array(4_096);
   for (let index = 0; index < bytes.byteLength; index += 1) bytes[index] = (index * 31) & 0xff;
-  const hash = new IncrementalSha256();
-  hash.update(bytes);
-  const digest = hash.digestHex();
-  const identity = `sha256:${digest}` as StemIdentity;
+  const identity = identityFor(bytes);
+  const digest = identity.slice("blake3:".length);
   const store = new VerifiedStemStore({ backend, readDeadlineMs: 5_000 });
   const requirement = { sourceId: "source-000", identity, bytes: bytes.byteLength };
   const resolver = {
@@ -769,7 +766,7 @@ test("the verified store ingests, promotes, and rereads canonical PCM on the OPF
   const folder = root.directories.get("opfs-store-v1")!;
   assert.deepEqual(
     [...folder.files.keys()].sort(),
-    ["index.json", `sha256-${digest}`].sort(),
+    ["index.json", `blake3-${digest}`].sort(),
   );
   assert.equal(folder.locked.size, 0);
 

@@ -1,7 +1,8 @@
 import { beginIngestStage, flacResolverScheduling, diagnosticResolver, initializeIngestDiagnostics, releaseDecoded, retainActive, type IngestDiagnostics } from "./ingest-diagnostics.js";
 import { EngineWebAdapterError } from "../errors.js";
+import { blake3Stream, createIncrementalBlake3 } from "./blake3.js";
 import { assertStemIdentity } from "./identity.js";
-import { deadline, IncrementalSha256, sha256Stream } from "./sha256.js";
+import { deadline } from "./sha256.js";
 import { flacResult } from "./flac-result.js";
 import type { BoundedStemAdmission } from "./flac-admission.js";
 import { ownsOpfsWriteDeadlines, OpfsStorageBackend } from "./storage.js";
@@ -18,7 +19,7 @@ import type {
 
 const INDEX_FILE = "index.json";
 const INDEX_TEMP = "index.pending";
-const FINAL_PREFIX = "sha256-";
+const FINAL_PREFIX = "blake3-";
 const STAGING_PREFIX = "staging-";
 const INDEX_VERSION = 1;
 
@@ -36,7 +37,7 @@ export interface VerifiedStemStoreOptions {
 
 /**
  * Verify-on-every-open canonical PCM store. A final/index row becomes visible
- * only after exact byte count and incremental SHA-256 both match.
+ * only after exact byte count and incremental BLAKE3-256 both match.
  */
 export class VerifiedStemStore implements StemStore {
   readonly #backend: StemStorageBackend;
@@ -55,7 +56,7 @@ export class VerifiedStemStore implements StemStore {
     this.#instanceId = options.instanceId ?? randomId();
     this.#readDeadlineMs = positive(options.readDeadlineMs ?? 30_000, "readDeadlineMs");
     this.#shared = sharedFor(this.#backend);
-    this.#folderName = this.#backend.folderName ?? "miso-engine-web-stems-v1";
+    this.#folderName = this.#backend.folderName ?? "miso-engine-web-stems-v2";
   }
 
   async open(): Promise<this> {
@@ -205,7 +206,7 @@ export class VerifiedStemStore implements StemStore {
       }
       for (const name of await this.#backend.list()) {
         if (name.startsWith(FINAL_PREFIX)) {
-          const identity = `sha256:${name.slice(FINAL_PREFIX.length)}`;
+          const identity = `blake3:${name.slice(FINAL_PREFIX.length)}`;
           if (!Object.hasOwn(index.stems, identity) && liveLocks !== undefined && !this.#hasLiveStem(liveLocks, name)) {
             await this.#backend.remove(name);
           }
@@ -293,7 +294,7 @@ export class VerifiedStemStore implements StemStore {
     if (!(await this.#backend.exists(finalName(identity)))) return false;
     try {
       const blob = await deadline(this.#backend.read(finalName(identity)), this.#readDeadlineMs, signal);
-      const observed = await sha256Stream(blob.stream(), {
+      const observed = await blake3Stream(blob.stream(), {
         ...(signal === undefined ? {} : { signal }),
         readDeadlineMs: this.#readDeadlineMs,
         onChunk: (count) => onProgress?.({
@@ -338,10 +339,11 @@ export class VerifiedStemStore implements StemStore {
         signal,
       );
       if (!(resolved.stream instanceof ReadableStream)) throw new TypeError("Resolver must return a ReadableStream");
+      const packageResult = flacResult(resolved);
+      const hash = packageResult?.digest === undefined ? await createIncrementalBlake3() : undefined;
+      signal.throwIfAborted();
       reader = resolved.stream.getReader();
       writer = await writeOperation(() => this.#backend.createWriter(staging, writerLifetime.signal));
-      const packageResult = flacResult(resolved);
-      const hash = packageResult?.digest === undefined ? new IncrementalSha256() : undefined;
       let bytes = 0;
       while (true) {
         signal.throwIfAborted();
@@ -368,9 +370,9 @@ export class VerifiedStemStore implements StemStore {
           if (result.value instanceof Uint8Array) releaseDecoded(result.value.buffer);
         }
       }
-      const observed = hash?.digestHex() ?? packageResult?.digest?.();
+      const observed = hash?.digest("hex") ?? packageResult?.digest?.();
       if (bytes !== stem.bytes || observed !== digest(stem.identity)) {
-        throw integrity(stem, bytes, observed !== digest(stem.identity) ? "SHA-256 mismatch" : "truncated stream");
+        throw integrity(stem, bytes, observed !== digest(stem.identity) ? "BLAKE3 mismatch" : "truncated stream");
       }
       signal.throwIfAborted();
       await writeOperation(() => writer!.close());
@@ -475,11 +477,11 @@ export class VerifiedStemStore implements StemStore {
     for (const name of await this.#backend.list()) {
       if (!name.startsWith(FINAL_PREFIX) || name.length !== FINAL_PREFIX.length + 64) continue;
       if (liveLocks !== undefined && this.#hasLiveStem(liveLocks, name)) continue;
-      const identity = `sha256:${name.slice(FINAL_PREFIX.length)}` as StemIdentity;
+      const identity = `blake3:${name.slice(FINAL_PREFIX.length)}` as StemIdentity;
       try {
         assertStemIdentity(identity);
         const blob = await this.#backend.read(name);
-        const observed = await sha256Stream(blob.stream(), { readDeadlineMs: this.#readDeadlineMs });
+        const observed = await blake3Stream(blob.stream(), { readDeadlineMs: this.#readDeadlineMs });
         if (observed.hex === digest(identity)) {
           index.stems[identity] = { bytes: observed.bytes, pins: [], lastUsedAt: this.#now() };
         } else if (liveLocks !== undefined) {
@@ -686,7 +688,7 @@ function validIndex(value: unknown): value is StoreIndex {
   });
 }
 function finalName(identity: StemIdentity): string { return `${FINAL_PREFIX}${digest(identity)}`; }
-function digest(identity: StemIdentity): string { return identity.slice("sha256:".length); }
+function digest(identity: StemIdentity): string { return identity.slice("blake3:".length); }
 function nonempty(value: string, label: string): string { if (typeof value !== "string" || value.trim().length === 0) throw new TypeError(`${label} must not be empty`); return value; }
 function positive(value: number, label: string): number { if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${label} must be positive`); return value; }
 function randomId(): string { return globalThis.crypto?.randomUUID?.().replaceAll("-", "") ?? Math.random().toString(36).slice(2); }

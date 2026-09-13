@@ -5,7 +5,7 @@ import { readExactFlacRange } from "../src/stems/flac-delivery.js";
 import { createIngestDiagnostics } from "../src/stems/ingest-diagnostics.js";
 import { flacResult } from "../src/stems/flac-result.js";
 
-const identity = `sha256:${"a".repeat(64)}` as const;
+const identity = `blake3:${"a".repeat(64)}` as const;
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 test("processing adapts through 16 while preserving legacy and low-device download widths", () => {

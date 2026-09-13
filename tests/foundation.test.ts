@@ -11,7 +11,7 @@ import { ADAPTER_PROVENANCE } from "../src/index.js";
 import { assertStemIdentity, canonicalPcmBytes } from "../src/stems/identity.js";
 import { MemoryStemResolver } from "../src/stems/memory-resolver.js";
 
-const IDENTITY = `sha256:${"a".repeat(64)}` as const;
+const IDENTITY = `blake3:${"a".repeat(64)}` as const;
 
 test("foundation is pinned to the exact public Engine release", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
@@ -48,7 +48,8 @@ test("canonical byte accounting accepts launch PCM and rejects 32f", () => {
 
 test("identity grammar is exact", () => {
   assert.doesNotThrow(() => assertStemIdentity(IDENTITY));
-  assert.throws(() => assertStemIdentity(`sha256:${"A".repeat(64)}`));
+  assert.throws(() => assertStemIdentity(`blake3:${"A".repeat(64)}`));
+  assert.throws(() => assertStemIdentity(`sha256:${"a".repeat(64)}`));
 });
 
 test("memory resolver returns fresh bounded streams", async () => {
