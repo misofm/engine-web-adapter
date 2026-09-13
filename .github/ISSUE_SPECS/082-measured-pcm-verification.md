@@ -64,7 +64,8 @@ and the SIMD build is 957 bytes
 export only `memory` and `sha256_compress`, use one fixed 64 KiB page with no
 growth, and agree with Node crypto for a 16 KiB batch plus padding. The selected
 SIMD generated module records the pinned Emscripten 6.0.9 provenance and
-`-msimd128`/`simd128`; its `wasm2wat` output contains 13 SIMD operations. The
+`-msimd128`/`simd128`; its `wasm2wat` output contains 12 SIMD instruction lines
+(the earlier count included a `v128` local declaration). The
 single intrinsic refinement is four-at-a-time big-endian message-word loading;
 compression rounds remain ordered and scalar.
 
@@ -92,9 +93,17 @@ gaps and hashed 547,303,704 bytes.
 Local gates passed: SHA `--verify`, `npm run check` (329 tests passed), packed
 ordinary browser and `--indexed-sparse` profiles, and Chromium OPFS. The
 required WebKit OPFS run is blocked on this Linux host by its known missing
-`FileSystemFileHandle` global; the established macOS qualification workflow
-remains the appropriate gate. Fresh independent review and root release remain
-pending; this candidate does not claim publication.
+`FileSystemFileHandle` global. The established macOS qualification workflow
+passed Chromium and WebKit OPFS for the frozen adapter revision in
+[run 34750387870](https://github.com/misofm/engine-web-adapter/actions/runs/34750387870).
+
+Fresh Astra medium independent review passed the runtime implementation and
+identified one release-CI blocker: this workflow did not provision the pinned
+Emscripten toolchain before its reproducibility check. The workflow now clones
+the pinned emsdk 6.0.9 revision, verifies its commit, activates it, and exports
+`CODEC_EMSCRIPTEN_ROOT` before `npm run check`. Review details are recorded in
+`/tmp/miso-simd-study/verification.md`; root release remains pending and this
+candidate does not claim publication.
 
 The frozen implementation commit is `faf88955fd5c35282c0123554a475bed853014e6`.
 The post-commit final browser record is

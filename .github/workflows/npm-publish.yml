@@ -66,9 +66,21 @@ jobs:
           [[ "$(node -p "require('./package.json').dependencies['@misofm/engine']")" == "0.2.3" ]]
           [[ "$(node -p "require('./package.json').repository.url")" == "git+https://github.com/misofm/engine-web-adapter.git" ]]
 
-      - name: Install and qualify
+      - name: Install dependencies
         run: |
           npm ci --ignore-scripts
+
+      - name: Install pinned Emscripten
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch 6.0.9 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/codec-emsdk"
+          test "$(git -C "$RUNNER_TEMP/codec-emsdk" rev-parse HEAD)" = 5eb0bde7585670252e8ba05e9d361627bffd08b5
+          "$RUNNER_TEMP/codec-emsdk/emsdk" install 6.0.9
+          "$RUNNER_TEMP/codec-emsdk/emsdk" activate 6.0.9
+          echo "CODEC_EMSCRIPTEN_ROOT=$RUNNER_TEMP/codec-emsdk/upstream/emscripten" >> "$GITHUB_ENV"
+
+      - name: Install and qualify
+        run: |
           npm run check
 
       - name: Refuse an existing immutable version
