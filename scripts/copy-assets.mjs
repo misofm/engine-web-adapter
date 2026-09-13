@@ -16,6 +16,7 @@ await copyFile(
 
 const codecLicenseRoot = new URL("../node_modules/@misofm/codec/", import.meta.url);
 const effectLicenseRoot = new URL("../node_modules/effect/", import.meta.url);
+const hashWasmLicenseRoot = new URL("../node_modules/hash-wasm/", import.meta.url);
 const adapterLicenseRoot = new URL("../dist/codec-licenses/", import.meta.url);
 await mkdir(new URL("vendor/licenses/", adapterLicenseRoot), { recursive: true });
 await copyFile(
@@ -25,6 +26,10 @@ await copyFile(
 await copyFile(
   new URL("LICENSE", effectLicenseRoot),
   new URL("effect-LICENSE", adapterLicenseRoot),
+);
+await copyFile(
+  new URL("LICENSE", hashWasmLicenseRoot),
+  new URL("hash-wasm-LICENSE", adapterLicenseRoot),
 );
 await copyFile(
   new URL("THIRD_PARTY_NOTICES.md", codecLicenseRoot),

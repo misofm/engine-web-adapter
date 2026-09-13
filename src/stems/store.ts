@@ -56,7 +56,7 @@ export class VerifiedStemStore implements StemStore {
     this.#instanceId = options.instanceId ?? randomId();
     this.#readDeadlineMs = positive(options.readDeadlineMs ?? 30_000, "readDeadlineMs");
     this.#shared = sharedFor(this.#backend);
-    this.#folderName = this.#backend.folderName ?? "miso-engine-web-stems-v2";
+    this.#folderName = this.#backend.folderName ?? "miso-engine-web-stems-blake3-v1";
   }
 
   async open(): Promise<this> {

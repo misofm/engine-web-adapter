@@ -23,6 +23,7 @@ await rename(join(consumer, "node_modules", "@misofm", "package"), join(consumer
 await cp(join(process.cwd(), "node_modules", "@misofm", "engine"), join(consumer, "node_modules", "@misofm", "engine"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "@misofm", "codec"), join(consumer, "node_modules", "@misofm", "codec"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "effect"), join(consumer, "node_modules", "effect"), { recursive: true });
+await cp(join(process.cwd(), "node_modules", "hash-wasm"), join(consumer, "node_modules", "hash-wasm"), { recursive: true });
 for (const dependency of ["fast-check", "pure-rand", "msgpackr", "msgpackr-extract"]) {
   await cp(join(process.cwd(), "node_modules", dependency), join(consumer, "node_modules", dependency), { recursive: true });
 }
@@ -154,6 +155,7 @@ function resolveChromeExecutable() {
 function browserSource() { return String.raw`
 import { EngineWebAdapterError, openEngineWebSession } from "@misofm/engine-web-adapter";
 import { OpfsStemStore, OpfsStorageBackend, VerifiedSparsePcmStore, VerifiedStemStore } from "@misofm/engine-web-adapter/stems";
+import { blake3 } from "hash-wasm";
 
 declare global { var __result: unknown; var __error: unknown }
 
@@ -183,8 +185,7 @@ function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 async function identityOf(bytes: Uint8Array): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return "sha256:" + [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
+  return "blake3:" + await blake3(bytes, 256);
 }
 
 async function ingest(folderName: string, seed: number) {
@@ -440,9 +441,9 @@ async function timeoutCleanup() {
     expect(!stagingPresent, "store removes its failed staging file after release: " + removalErrors.join(","));
     const indexAfter = await (await (await folder.getFileHandle("index.json")).getFile()).text();
     expect(indexAfter === indexBefore, "valid index bytes unchanged");
-    const cache = new Uint8Array(await (await (await folder.getFileHandle("sha256-" + cachedIdentity.slice(7))).getFile()).arrayBuffer());
+    const cache = new Uint8Array(await (await (await folder.getFileHandle("blake3-" + cachedIdentity.slice(7))).getFile()).arrayBuffer());
     expect(cache.length === cached.length && cache.every((value, i) => value === cached[i]), "valid cached PCM unchanged");
-    expect(!(await backend.exists("sha256-" + identity.slice(7))), "failed final absent");
+    expect(!(await backend.exists("blake3-" + identity.slice(7))), "failed final absent");
     expect(!Object.hasOwn(JSON.parse(indexAfter).stems, identity), "failed index row absent");
     expect(await backend.readText("staging-foreign") === "[", "foreign staging bytes preserved");
     return { stagingRemoved: true, validBytesPreserved: true, indexPreserved: true, failedFinalAbsent: true, foreignStagingPreserved: true };
