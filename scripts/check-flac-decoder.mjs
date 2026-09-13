@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const asset = await readFile("node_modules/@misofm/codec/wasm/flac-decoder.wasm");
 const hash = createHash("sha256").update(asset).digest("hex");
-assert.equal(hash, "5e282f9874ecb3f49b8ee8437efc318ec14ef5cff5b7580da9d875f94e5c5925", "installed codec asset hash changed");
+assert.equal(hash, "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd", "installed codec asset hash changed");
 assert.ok(asset.byteLength <= 256 * 1024, "codec decoder Wasm exceeds 256 KiB");
 
 const module = await WebAssembly.compile(asset);

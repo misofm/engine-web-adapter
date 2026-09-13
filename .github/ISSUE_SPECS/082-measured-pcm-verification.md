@@ -112,3 +112,13 @@ adapter commit and the selected SIMD backend, with PCM verification at 2,183.3
 ms (2,182.4–2,189.2) and all corpus identities/counts passing. The final record
 also reports one-worker decode at 2,200.9 ms and eight-worker makespan at 386.2
 ms for the paired codec candidate.
+
+## Independent verification and official acceptance
+
+Fresh Astra medium verified the frozen runtime and the adapter CI correction; no implementation blockers remain. Sol high repeated the frozen corpus after review: Chromium serial decode 2232.9 → 2175.5 ms, eight-worker decode 399.9 → 382.7 ms, indexed PCM verification 11568.0 → 2193.2 ms. Every digest and count passed. Both candidates are accepted for release. Most hashing improvement comes from scalar Wasm; the separately measured SIMD increment is 1.54%. These are compute measurements, not app-open timings.
+
+Full review, report, and immutable raw measurements are retained in `.github/RELEASE_EVIDENCE/082/`. Root is preparing the release; publication remains pending.
+
+## Adapter 0.4.1 release preparation
+
+Codec 0.1.1 is published and registry-qualified at codec main `04093a95187308e41e142e29862bfee3fb0e20b6` (https://github.com/misofm/codec/actions/runs/34751375776). Adapter now pins that exact registry release and decoder hash `70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd`. Version 0.4.1 passed `npm run check` (329 tests) and both ordinary/indexed packed browser profiles against the released codec. The final macOS OPFS release check and trusted publication follow this commit.

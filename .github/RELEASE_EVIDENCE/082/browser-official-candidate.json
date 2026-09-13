@@ -1,0 +1,640 @@
+{
+  "generatedAt": "2026-09-13T10:03:22.676Z",
+  "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 32,
+  "receipt": {
+    "path": "/data/sparse-pcm-launch/publication-per-stem-20260911/receipt.json",
+    "completedAt": "2026-09-11T21:48:24.317111+00:00",
+    "inputQualificationSha256": "b3e7c511719a01cbb33ef49dfaf06919d5dcafc346c6fa3a08519059b871c7cb"
+  },
+  "totals": {
+    "containerBytes": 92722644,
+    "payloadBytes": 92685354,
+    "chunks": 35,
+    "activePcmBytes": 249323400,
+    "omittedPcmBytes": 48656904,
+    "canonicalPcmBytes": 297980304,
+    "indexedPcmVerificationBytes": 547303704,
+    "maximumPcmBlockBytes": 27648
+  },
+  "source": {
+    "codecVersion": "0.1.0",
+    "codecCommit": "8c2823b041594a38284b01b5a39d77a6b515716e",
+    "adapterVersion": "0.4.0",
+    "adapterCommit": "088a14f57a945e6feb93145f3338943276a335dc",
+    "decoderWasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd"
+  },
+  "correctness": {
+    "admittedPackages": [
+      {
+        "id": "drums",
+        "identity": "sha256:03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2",
+        "bytes": 16542989,
+        "payloadBytes": 16538208,
+        "chunks": 4,
+        "fetchMs": 86,
+        "admissionMs": 1.5,
+        "compressedVerificationMs": 37.40000009536743,
+        "packageSha256": "9e12a781f0596d78f177463570203389999bd6312f1b340506a163b10b370824"
+      },
+      {
+        "id": "lead-vox",
+        "identity": "sha256:27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac",
+        "bytes": 19754378,
+        "payloadBytes": 19752920,
+        "chunks": 5,
+        "fetchMs": 112.90000009536743,
+        "admissionMs": 1.1999999284744263,
+        "compressedVerificationMs": 44.700000047683716,
+        "packageSha256": "8d9595ec06be9422d2a8bd5622790c2e78a03451d92db294ee6c391eba74dbc9"
+      },
+      {
+        "id": "vocal-fx",
+        "identity": "sha256:361eb2581ace51a5a34c59d83c06ebe6dad73300115db995e6c0692fb4061ae3",
+        "bytes": 4223284,
+        "payloadBytes": 4217158,
+        "chunks": 4,
+        "fetchMs": 25.399999976158142,
+        "admissionMs": 0.6000000238418579,
+        "compressedVerificationMs": 9.299999952316284,
+        "packageSha256": "b703951ff75704a35a5c3aa0254da5d8fe10e9d4a0d54efe21732eeee9062f82"
+      },
+      {
+        "id": "fx",
+        "identity": "sha256:9184f49ee35fa748ecf4d898eb06058d2f499b8348b80736c5c252a99fe36b98",
+        "bytes": 8777838,
+        "payloadBytes": 8766086,
+        "chunks": 4,
+        "fetchMs": 50,
+        "admissionMs": 1.2000000476837158,
+        "compressedVerificationMs": 19.699999928474426,
+        "packageSha256": "e7a2b1ba6519adffc8618c12e9d4331840f7b02b9abda0b7e8e915bd2c2303f3"
+      },
+      {
+        "id": "synth-6",
+        "identity": "sha256:9a57207ac802bad426435d920b77048ba9dd391797c6a462444c6e375716d36f",
+        "bytes": 8486166,
+        "payloadBytes": 8481847,
+        "chunks": 4,
+        "fetchMs": 54.40000009536743,
+        "admissionMs": 0.2999999523162842,
+        "compressedVerificationMs": 19.100000023841858,
+        "packageSha256": "b951265b6d86af8c93148d77e547d36e8015e2d370e5ea58c73937ad1bc9c68a"
+      },
+      {
+        "id": "bass",
+        "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+        "bytes": 4192048,
+        "payloadBytes": 4186111,
+        "chunks": 4,
+        "fetchMs": 25.600000023841858,
+        "admissionMs": 0.3999999761581421,
+        "compressedVerificationMs": 9.100000023841858,
+        "packageSha256": "0724e73b3b3f737deedd3dfe685be7323674596cef963ec5331a1eab19700bd3"
+      },
+      {
+        "id": "bv_s",
+        "identity": "sha256:c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f",
+        "bytes": 22224639,
+        "payloadBytes": 22223178,
+        "chunks": 5,
+        "fetchMs": 78.69999992847443,
+        "admissionMs": 0.20000004768371582,
+        "compressedVerificationMs": 50.199999928474426,
+        "packageSha256": "376641bd8b9d97160d26e9cff6ecce224676f0674d4d5b40e64130cd4200e354"
+      },
+      {
+        "id": "guitar",
+        "identity": "sha256:e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62",
+        "bytes": 8521302,
+        "payloadBytes": 8519846,
+        "chunks": 5,
+        "fetchMs": 42.200000047683716,
+        "admissionMs": 0.20000004768371582,
+        "compressedVerificationMs": 19.299999952316284,
+        "packageSha256": "bbed614e9d8020e592657fd6e8ce726f89eb1d5a42317bd58c04b0bd7457df97"
+      }
+    ],
+    "decodedPcmBytes": 249323400,
+    "chunkPcmSha256Checks": 35,
+    "canonicalPcmSha256Checks": 8,
+    "compressedChunkSha256Checks": 35,
+    "packageSha256Checks": 8
+  },
+  "ioAndSetup": {
+    "oneWorker": {
+      "setupWallMs": 695.8000000715256,
+      "wasmFetchMs": 2.799999952316284,
+      "compileMs": 3.3000000715255737,
+      "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+      "stems": [
+        {
+          "id": "drums",
+          "identity": "sha256:03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2",
+          "bytes": 16542989,
+          "payloadBytes": 16538208,
+          "chunks": 4,
+          "fetchMs": 86,
+          "admissionMs": 1.5,
+          "compressedVerificationMs": 37.40000009536743,
+          "packageSha256": "9e12a781f0596d78f177463570203389999bd6312f1b340506a163b10b370824"
+        },
+        {
+          "id": "lead-vox",
+          "identity": "sha256:27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac",
+          "bytes": 19754378,
+          "payloadBytes": 19752920,
+          "chunks": 5,
+          "fetchMs": 112.90000009536743,
+          "admissionMs": 1.1999999284744263,
+          "compressedVerificationMs": 44.700000047683716,
+          "packageSha256": "8d9595ec06be9422d2a8bd5622790c2e78a03451d92db294ee6c391eba74dbc9"
+        },
+        {
+          "id": "vocal-fx",
+          "identity": "sha256:361eb2581ace51a5a34c59d83c06ebe6dad73300115db995e6c0692fb4061ae3",
+          "bytes": 4223284,
+          "payloadBytes": 4217158,
+          "chunks": 4,
+          "fetchMs": 25.399999976158142,
+          "admissionMs": 0.6000000238418579,
+          "compressedVerificationMs": 9.299999952316284,
+          "packageSha256": "b703951ff75704a35a5c3aa0254da5d8fe10e9d4a0d54efe21732eeee9062f82"
+        },
+        {
+          "id": "fx",
+          "identity": "sha256:9184f49ee35fa748ecf4d898eb06058d2f499b8348b80736c5c252a99fe36b98",
+          "bytes": 8777838,
+          "payloadBytes": 8766086,
+          "chunks": 4,
+          "fetchMs": 50,
+          "admissionMs": 1.2000000476837158,
+          "compressedVerificationMs": 19.699999928474426,
+          "packageSha256": "e7a2b1ba6519adffc8618c12e9d4331840f7b02b9abda0b7e8e915bd2c2303f3"
+        },
+        {
+          "id": "synth-6",
+          "identity": "sha256:9a57207ac802bad426435d920b77048ba9dd391797c6a462444c6e375716d36f",
+          "bytes": 8486166,
+          "payloadBytes": 8481847,
+          "chunks": 4,
+          "fetchMs": 54.40000009536743,
+          "admissionMs": 0.2999999523162842,
+          "compressedVerificationMs": 19.100000023841858,
+          "packageSha256": "b951265b6d86af8c93148d77e547d36e8015e2d370e5ea58c73937ad1bc9c68a"
+        },
+        {
+          "id": "bass",
+          "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+          "bytes": 4192048,
+          "payloadBytes": 4186111,
+          "chunks": 4,
+          "fetchMs": 25.600000023841858,
+          "admissionMs": 0.3999999761581421,
+          "compressedVerificationMs": 9.100000023841858,
+          "packageSha256": "0724e73b3b3f737deedd3dfe685be7323674596cef963ec5331a1eab19700bd3"
+        },
+        {
+          "id": "bv_s",
+          "identity": "sha256:c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f",
+          "bytes": 22224639,
+          "payloadBytes": 22223178,
+          "chunks": 5,
+          "fetchMs": 78.69999992847443,
+          "admissionMs": 0.20000004768371582,
+          "compressedVerificationMs": 50.199999928474426,
+          "packageSha256": "376641bd8b9d97160d26e9cff6ecce224676f0674d4d5b40e64130cd4200e354"
+        },
+        {
+          "id": "guitar",
+          "identity": "sha256:e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62",
+          "bytes": 8521302,
+          "payloadBytes": 8519846,
+          "chunks": 5,
+          "fetchMs": 42.200000047683716,
+          "admissionMs": 0.20000004768371582,
+          "compressedVerificationMs": 19.299999952316284,
+          "packageSha256": "bbed614e9d8020e592657fd6e8ce726f89eb1d5a42317bd58c04b0bd7457df97"
+        }
+      ]
+    },
+    "eightWorkersWallMs": 918.2999999523163,
+    "eightWorkers": [
+      {
+        "setupWallMs": 213.20000004768372,
+        "wasmFetchMs": 2.5,
+        "compileMs": 1.399999976158142,
+        "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+        "stems": [
+          {
+            "id": "drums",
+            "identity": "sha256:03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2",
+            "bytes": 16542989,
+            "payloadBytes": 16538208,
+            "chunks": 4,
+            "fetchMs": 168.40000009536743,
+            "admissionMs": 1.2999999523162842,
+            "compressedVerificationMs": 39.60000002384186,
+            "packageSha256": "9e12a781f0596d78f177463570203389999bd6312f1b340506a163b10b370824"
+          }
+        ]
+      },
+      {
+        "setupWallMs": 248,
+        "wasmFetchMs": 2.700000047683716,
+        "compileMs": 1.399999976158142,
+        "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+        "stems": [
+          {
+            "id": "lead-vox",
+            "identity": "sha256:27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac",
+            "bytes": 19754378,
+            "payloadBytes": 19752920,
+            "chunks": 5,
+            "fetchMs": 198,
+            "admissionMs": 0.7999999523162842,
+            "compressedVerificationMs": 45,
+            "packageSha256": "8d9595ec06be9422d2a8bd5622790c2e78a03451d92db294ee6c391eba74dbc9"
+          }
+        ]
+      },
+      {
+        "setupWallMs": 51.299999952316284,
+        "wasmFetchMs": 5.399999976158142,
+        "compileMs": 1.899999976158142,
+        "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+        "stems": [
+          {
+            "id": "vocal-fx",
+            "identity": "sha256:361eb2581ace51a5a34c59d83c06ebe6dad73300115db995e6c0692fb4061ae3",
+            "bytes": 4223284,
+            "payloadBytes": 4217158,
+            "chunks": 4,
+            "fetchMs": 31.5,
+            "admissionMs": 1.399999976158142,
+            "compressedVerificationMs": 11,
+            "packageSha256": "b703951ff75704a35a5c3aa0254da5d8fe10e9d4a0d54efe21732eeee9062f82"
+          }
+        ]
+      },
+      {
+        "setupWallMs": 148.70000004768372,
+        "wasmFetchMs": 7,
+        "compileMs": 2,
+        "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+        "stems": [
+          {
+            "id": "fx",
+            "identity": "sha256:9184f49ee35fa748ecf4d898eb06058d2f499b8348b80736c5c252a99fe36b98",
+            "bytes": 8777838,
+            "payloadBytes": 8766086,
+            "chunks": 4,
+            "fetchMs": 108.90000009536743,
+            "admissionMs": 2.6999999284744263,
+            "compressedVerificationMs": 28.100000023841858,
+            "packageSha256": "e7a2b1ba6519adffc8618c12e9d4331840f7b02b9abda0b7e8e915bd2c2303f3"
+          }
+        ]
+      },
+      {
+        "setupWallMs": 125.09999990463257,
+        "wasmFetchMs": 2.5,
+        "compileMs": 1.6999999284744263,
+        "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+        "stems": [
+          {
+            "id": "synth-6",
+            "identity": "sha256:9a57207ac802bad426435d920b77048ba9dd391797c6a462444c6e375716d36f",
+            "bytes": 8486166,
+            "payloadBytes": 8481847,
+            "chunks": 4,
+            "fetchMs": 95.09999990463257,
+            "admissionMs": 1.3000000715255737,
+            "compressedVerificationMs": 24.5,
+            "packageSha256": "b951265b6d86af8c93148d77e547d36e8015e2d370e5ea58c73937ad1bc9c68a"
+          }
+        ]
+      },
+      {
+        "setupWallMs": 92.70000004768372,
+        "wasmFetchMs": 13.399999976158142,
+        "compileMs": 1.5,
+        "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+        "stems": [
+          {
+            "id": "bass",
+            "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "bytes": 4192048,
+            "payloadBytes": 4186111,
+            "chunks": 4,
+            "fetchMs": 62.60000002384186,
+            "admissionMs": 3.100000023841858,
+            "compressedVerificationMs": 12,
+            "packageSha256": "0724e73b3b3f737deedd3dfe685be7323674596cef963ec5331a1eab19700bd3"
+          }
+        ]
+      },
+      {
+        "setupWallMs": 199.70000004768372,
+        "wasmFetchMs": 3.4000000953674316,
+        "compileMs": 1.5,
+        "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+        "stems": [
+          {
+            "id": "bv_s",
+            "identity": "sha256:c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f",
+            "bytes": 22224639,
+            "payloadBytes": 22223178,
+            "chunks": 5,
+            "fetchMs": 135.20000004768372,
+            "admissionMs": 1,
+            "compressedVerificationMs": 58.59999990463257,
+            "packageSha256": "376641bd8b9d97160d26e9cff6ecce224676f0674d4d5b40e64130cd4200e354"
+          }
+        ]
+      },
+      {
+        "setupWallMs": 134.60000002384186,
+        "wasmFetchMs": 2.600000023841858,
+        "compileMs": 1.7000000476837158,
+        "wasmSha256": "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd",
+        "stems": [
+          {
+            "id": "guitar",
+            "identity": "sha256:e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62",
+            "bytes": 8521302,
+            "payloadBytes": 8519846,
+            "chunks": 5,
+            "fetchMs": 99.5,
+            "admissionMs": 0.8999999761581421,
+            "compressedVerificationMs": 29.899999976158142,
+            "packageSha256": "bbed614e9d8020e592657fd6e8ce726f89eb1d5a42317bd58c04b0bd7457df97"
+          }
+        ]
+      }
+    ]
+  },
+  "measurements": {
+    "oneWorkerDecodeMs": {
+      "values": [
+        2155.399999976158,
+        2175.5,
+        2187.5,
+        2167.5,
+        2199.7000000476837
+      ],
+      "min": 2155.399999976158,
+      "median": 2175.5,
+      "max": 2199.7000000476837,
+      "mean": 2177.1200000047684,
+      "coefficientOfVariation": 0.007069770184553304
+    },
+    "browserMainThreadIndexedPcmSha256Ms": {
+      "values": [
+        2184.2999999523163,
+        2201.600000023842,
+        2193.2000000476837
+      ],
+      "min": 2184.2999999523163,
+      "median": 2193.2000000476837,
+      "max": 2201.600000023842,
+      "mean": 2193.0333333412805,
+      "coefficientOfVariation": 0.0032209627349599084
+    },
+    "eightWorkerDecodeWallMs": {
+      "values": [
+        371.3000000715256,
+        404.2999999523163,
+        379.2999999523163,
+        382.7000000476837,
+        394.60000002384186
+      ],
+      "min": 371.3000000715256,
+      "median": 382.7000000476837,
+      "max": 404.2999999523163,
+      "mean": 386.44000000953673,
+      "coefficientOfVariation": 0.030172282853619007
+    },
+    "eightWorkerPerStem": [
+      [
+        {
+          "id": "drums",
+          "elapsedMs": 312.60000002384186,
+          "pcmBytes": 30791214
+        },
+        {
+          "id": "lead-vox",
+          "elapsedMs": 371.10000002384186,
+          "pcmBytes": 37247538
+        },
+        {
+          "id": "vocal-fx",
+          "elapsedMs": 304.1999999284744,
+          "pcmBytes": 30161286
+        },
+        {
+          "id": "fx",
+          "elapsedMs": 270.2999999523163,
+          "pcmBytes": 26982702
+        },
+        {
+          "id": "synth-6",
+          "elapsedMs": 245.39999997615814,
+          "pcmBytes": 24399084
+        },
+        {
+          "id": "bass",
+          "elapsedMs": 226.39999997615814,
+          "pcmBytes": 25258248
+        },
+        {
+          "id": "bv_s",
+          "elapsedMs": 366.5,
+          "pcmBytes": 37235790
+        },
+        {
+          "id": "guitar",
+          "elapsedMs": 355.60000002384186,
+          "pcmBytes": 37247538
+        }
+      ],
+      [
+        {
+          "id": "drums",
+          "elapsedMs": 309.8000000715256,
+          "pcmBytes": 30791214
+        },
+        {
+          "id": "lead-vox",
+          "elapsedMs": 404,
+          "pcmBytes": 37247538
+        },
+        {
+          "id": "vocal-fx",
+          "elapsedMs": 349.5,
+          "pcmBytes": 30161286
+        },
+        {
+          "id": "fx",
+          "elapsedMs": 284.60000002384186,
+          "pcmBytes": 26982702
+        },
+        {
+          "id": "synth-6",
+          "elapsedMs": 264.39999997615814,
+          "pcmBytes": 24399084
+        },
+        {
+          "id": "bass",
+          "elapsedMs": 231.70000004768372,
+          "pcmBytes": 25258248
+        },
+        {
+          "id": "bv_s",
+          "elapsedMs": 359.8000000715256,
+          "pcmBytes": 37235790
+        },
+        {
+          "id": "guitar",
+          "elapsedMs": 365,
+          "pcmBytes": 37247538
+        }
+      ],
+      [
+        {
+          "id": "drums",
+          "elapsedMs": 315.1999999284744,
+          "pcmBytes": 30791214
+        },
+        {
+          "id": "lead-vox",
+          "elapsedMs": 378.90000009536743,
+          "pcmBytes": 37247538
+        },
+        {
+          "id": "vocal-fx",
+          "elapsedMs": 303.89999997615814,
+          "pcmBytes": 30161286
+        },
+        {
+          "id": "fx",
+          "elapsedMs": 285.2999999523163,
+          "pcmBytes": 26982702
+        },
+        {
+          "id": "synth-6",
+          "elapsedMs": 241,
+          "pcmBytes": 24399084
+        },
+        {
+          "id": "bass",
+          "elapsedMs": 219.19999992847443,
+          "pcmBytes": 25258248
+        },
+        {
+          "id": "bv_s",
+          "elapsedMs": 365.39999997615814,
+          "pcmBytes": 37235790
+        },
+        {
+          "id": "guitar",
+          "elapsedMs": 363.89999997615814,
+          "pcmBytes": 37247538
+        }
+      ],
+      [
+        {
+          "id": "drums",
+          "elapsedMs": 313.8000000715256,
+          "pcmBytes": 30791214
+        },
+        {
+          "id": "lead-vox",
+          "elapsedMs": 382.5,
+          "pcmBytes": 37247538
+        },
+        {
+          "id": "vocal-fx",
+          "elapsedMs": 310.89999997615814,
+          "pcmBytes": 30161286
+        },
+        {
+          "id": "fx",
+          "elapsedMs": 257.39999997615814,
+          "pcmBytes": 26982702
+        },
+        {
+          "id": "synth-6",
+          "elapsedMs": 236.5,
+          "pcmBytes": 24399084
+        },
+        {
+          "id": "bass",
+          "elapsedMs": 215.89999997615814,
+          "pcmBytes": 25258248
+        },
+        {
+          "id": "bv_s",
+          "elapsedMs": 378.2000000476837,
+          "pcmBytes": 37235790
+        },
+        {
+          "id": "guitar",
+          "elapsedMs": 357.7000000476837,
+          "pcmBytes": 37247538
+        }
+      ],
+      [
+        {
+          "id": "drums",
+          "elapsedMs": 327.5,
+          "pcmBytes": 30791214
+        },
+        {
+          "id": "lead-vox",
+          "elapsedMs": 394.5,
+          "pcmBytes": 37247538
+        },
+        {
+          "id": "vocal-fx",
+          "elapsedMs": 332.2999999523163,
+          "pcmBytes": 30161286
+        },
+        {
+          "id": "fx",
+          "elapsedMs": 303.6999999284744,
+          "pcmBytes": 26982702
+        },
+        {
+          "id": "synth-6",
+          "elapsedMs": 291,
+          "pcmBytes": 24399084
+        },
+        {
+          "id": "bass",
+          "elapsedMs": 237.60000002384186,
+          "pcmBytes": 25258248
+        },
+        {
+          "id": "bv_s",
+          "elapsedMs": 381.7999999523163,
+          "pcmBytes": 37235790
+        },
+        {
+          "id": "guitar",
+          "elapsedMs": 375.1999999284744,
+          "pcmBytes": 37247538
+        }
+      ]
+    ]
+  },
+  "browserVersion": "153.0.8010.12",
+  "runner": {
+    "node": "v22.23.2",
+    "chrome": "/home/bl/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome",
+    "codecRoot": "/tmp/miso-simd-study/candidates/codec",
+    "adapterRoot": "/tmp/miso-simd-study/candidates/adapter",
+    "decodeRounds": 5,
+    "shaRounds": 3
+  }
+}

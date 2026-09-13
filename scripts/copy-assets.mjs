@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 const codecAsset = new URL("../node_modules/@misofm/codec/wasm/flac-decoder.wasm", import.meta.url);
 const codecBytes = await readFile(codecAsset);
 const codecHash = createHash("sha256").update(codecBytes).digest("hex");
-if (codecHash !== "5e282f9874ecb3f49b8ee8437efc318ec14ef5cff5b7580da9d875f94e5c5925") {
+if (codecHash !== "70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd") {
   throw new Error(`installed @misofm/codec decoder asset hash ${codecHash} is not the pinned public asset`);
 }
 
