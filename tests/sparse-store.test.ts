@@ -210,6 +210,75 @@ class NativeWarmWorker {
   private emit(message: any): void { for (const listener of this.listeners) listener({ data: message }); }
 }
 
+type ThreeLaneLifecycleMode = "cancel" | "failure" | "success";
+
+/** Small three-slot lifecycle seam: held reads stay stale after physical close. */
+class ThreeLaneLifecycleWorker {
+  static mode: ThreeLaneLifecycleMode = "success";
+  static starts = 0;
+  static completions = 0;
+  static failures = 0;
+  static readonly workers: ThreeLaneLifecycleWorker[] = [];
+  static readonly heldMessages: any[] = [];
+  readonly listeners = new Set<(event: { readonly data: any }) => void>();
+  readonly startMessages: any[] = [];
+  terminated = false;
+
+  constructor() { ThreeLaneLifecycleWorker.workers.push(this); }
+
+  postMessage(message: any): void {
+    if (message.type === "ack" || message.type !== "start") return;
+    ThreeLaneLifecycleWorker.starts += 1;
+    this.startMessages.push(message);
+    if (ThreeLaneLifecycleWorker.mode === "cancel" || ThreeLaneLifecycleWorker.mode === "failure" && ThreeLaneLifecycleWorker.starts === 2 || ThreeLaneLifecycleWorker.mode === "failure" && ThreeLaneLifecycleWorker.starts === 3) {
+      ThreeLaneLifecycleWorker.heldMessages.push(message);
+      return;
+    }
+    queueMicrotask(() => {
+      if (ThreeLaneLifecycleWorker.mode === "failure" && ThreeLaneLifecycleWorker.starts === 4 && message === this.startMessages.at(-1)) {
+        ThreeLaneLifecycleWorker.failures += 1;
+        this.emit({ type: "failure", version: 1, jobId: message.jobId, generation: message.generation, kind: "io", message: "three-lane fixture failure" });
+        return;
+      }
+      ThreeLaneLifecycleWorker.completions += 1;
+      this.emit({
+        type: "complete", version: 1, jobId: message.jobId, generation: message.generation,
+        identity: message.identity, digest: message.identity.slice(7), progressBytes: message.canonicalBytes,
+        canonicalBytes: message.canonicalBytes, readCalls: 1, readBytes: message.activeBytes,
+        hashedBytes: message.canonicalBytes, hashUpdates: 1, zeroUpdates: 0,
+        elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+      });
+    });
+  }
+
+  terminate(): void { this.terminated = true; }
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.listeners.add(listener); }
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.listeners.delete(listener); }
+  emit(message: any): void { for (const listener of this.listeners) listener({ data: message }); }
+
+  static reset(mode: ThreeLaneLifecycleMode): void {
+    ThreeLaneLifecycleWorker.mode = mode;
+    ThreeLaneLifecycleWorker.starts = 0;
+    ThreeLaneLifecycleWorker.completions = 0;
+    ThreeLaneLifecycleWorker.failures = 0;
+    ThreeLaneLifecycleWorker.workers.length = 0;
+    ThreeLaneLifecycleWorker.heldMessages.length = 0;
+  }
+
+  static deliverStale(): void {
+    for (const message of ThreeLaneLifecycleWorker.heldMessages.splice(0)) {
+      const worker = ThreeLaneLifecycleWorker.workers.find((candidate) => candidate.startMessages.includes(message));
+      worker?.emit({
+        type: "complete", version: 1, jobId: message.jobId, generation: message.generation,
+        identity: message.identity, digest: message.identity.slice(7), progressBytes: message.canonicalBytes,
+        canonicalBytes: message.canonicalBytes, readCalls: 1, readBytes: message.activeBytes,
+        hashedBytes: message.canonicalBytes, hashUpdates: 1, zeroUpdates: 0,
+        elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+      });
+    }
+  }
+}
+
 class ThrowingNativeWarmWorker extends NativeWarmWorker {
   override terminate(): void { throw new Error("native warm Worker termination failed"); }
 }
@@ -1670,6 +1739,113 @@ describe("VerifiedSparsePcmStore", () => {
     await runHeld("sibling");
     await runHeld("abort");
     await runHeld("close");
+  });
+
+  it("closes three warm lanes on cancellation and slot reuse failure before a clean retry", async () => {
+    const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+    class LifecycleWorkerBoundary extends ThreeLaneLifecycleWorker {
+      constructor(_url: string | URL) { super(); }
+    }
+    (globalThis as unknown as { Worker: typeof LifecycleWorkerBoundary }).Worker = LifecycleWorkerBoundary;
+    const bytes = [
+      new Uint8Array([11, 12]),
+      new Uint8Array([21, 22]),
+      new Uint8Array([31, 32]),
+      new Uint8Array([41, 42]),
+    ];
+    const sources = bytes.map((value, index) => ({ ...expectation(value, 1), sourceId: `source-${index}` }));
+    const waitUntil = async (predicate: () => boolean, label: string): Promise<void> => {
+      for (let count = 0; count < 200; count += 1) {
+        if (predicate()) return;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      throw new Error(`${label} did not settle`);
+    };
+    let store: VerifiedSparsePcmStore | undefined;
+    try {
+      store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "three-lane-lifecycle" });
+      for (const [index, source] of sources.entries()) {
+        const { sourceId: _sourceId, ...expected } = source;
+        await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: bytes[index]! }) }) });
+      }
+      const resolver = createSparseStemResolver({
+        locate: () => "https://fixture.invalid/three-lane-lifecycle",
+        hardwareConcurrency: 4,
+        maximumWorkers: 3,
+        memoryBudgetBytes: 30 * 1024 * 1024,
+      });
+
+      const runInterrupted = async (mode: "cancel" | "failure"): Promise<void> => {
+        ThreeLaneLifecycleWorker.reset(mode);
+        const events: import("../src/stems/types.js").StemProgress[] = [];
+        const controller = new AbortController();
+        const opening = store!.openSession({
+          leaseId: `three-lane-${mode}`,
+          sources,
+          resolve: resolver,
+          ...(mode === "cancel" ? { signal: controller.signal } : {}),
+          onProgress: (event) => events.push(event),
+        });
+        const settled = opening.then(
+          () => ({ ok: true as const }),
+          (error: unknown) => ({ ok: false as const, error }),
+        );
+        if (mode === "cancel") {
+          await waitUntil(() => ThreeLaneLifecycleWorker.starts === 3, "three warm cancellation starts");
+          assert.equal(ThreeLaneLifecycleWorker.heldMessages.length, 3);
+          controller.abort(new DOMException("three-lane fixture abort", "AbortError"));
+        } else {
+          await waitUntil(() => ThreeLaneLifecycleWorker.starts === 4 && ThreeLaneLifecycleWorker.failures === 1, "three warm slot reuse failure");
+        }
+        const outcome = await settled;
+        assert.equal(outcome.ok, false, `${mode} must fail closed`);
+        if (outcome.ok) return;
+        assert.equal(mode === "cancel"
+          ? outcome.error instanceof EngineWebAdapterError && outcome.error.code === "stem.cancelled"
+          : outcome.error instanceof EngineWebAdapterError && outcome.error.code === "stem.corrupt", true);
+        const sourceReady = events.filter((event) => event.stage === "source-ready");
+        assert.equal(events.filter((event) => event.stage === "ready").length, 0, `${mode} cannot publish aggregate readiness`);
+        if (mode === "cancel") {
+          assert.equal(sourceReady.length, 0, "cancellation cannot publish a source-ready fact");
+          assert.equal(ThreeLaneLifecycleWorker.starts, 3, "cancellation leaves the fourth source queued");
+        } else {
+          assert.equal(sourceReady.length, 1, "failure preserves only the earlier completed sibling");
+          assert.equal(sourceReady[0]?.identity, sources[0]!.identity, "failure preserves the first completed sibling only");
+          assert.equal(sources.slice(1).some((source) => source.identity === sourceReady[0]?.identity), false, "failed and held identities stay unpublished");
+          assert.equal(ThreeLaneLifecycleWorker.heldMessages.length, 2, "failure leaves the two held lanes stale");
+          const reused = ThreeLaneLifecycleWorker.workers.filter((worker) => worker.startMessages.length === 2);
+          assert.equal(reused.length, 1, "failure reuses exactly one completed slot");
+          assert.deepEqual(reused[0]!.startMessages.map((message) => message.generation), [1, 2], "slot reuse advances its generation");
+        }
+        assert.equal(ThreeLaneLifecycleWorker.workers.length, 3, `${mode} starts exactly three physical warm workers`);
+        assert.equal(ThreeLaneLifecycleWorker.workers.every((worker) => worker.terminated), true, `${mode} terminates every physical warm worker`);
+        assert.equal(ThreeLaneLifecycleWorker.workers.every((worker) => worker.listeners.size === 0), true, `${mode} removes every worker listener`);
+        ThreeLaneLifecycleWorker.deliverStale();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(events.filter((event) => event.stage === "ready").length, 0, `${mode} ignores stale completion after close`);
+      };
+
+      await runInterrupted("cancel");
+      await runInterrupted("failure");
+
+      ThreeLaneLifecycleWorker.reset("success");
+      const retryEvents: import("../src/stems/types.js").StemProgress[] = [];
+      const retry = await store.openSession({
+        leaseId: "three-lane-retry",
+        sources,
+        resolve: resolver,
+        onProgress: (event) => retryEvents.push(event),
+      });
+      assert.equal(ThreeLaneLifecycleWorker.starts, 4, "retry admits every queued source after claim release");
+      assert.equal(ThreeLaneLifecycleWorker.completions, 4);
+      assert.equal(retryEvents.filter((event) => event.stage === "source-ready").length, sources.length);
+      assert.equal(retryEvents.filter((event) => event.stage === "ready").length, 1);
+      assert.equal(ThreeLaneLifecycleWorker.workers.every((worker) => worker.terminated), true, "retry terminates every warm worker before ready");
+      await retry.close();
+    } finally {
+      await store?.close().catch(() => undefined);
+      (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    }
   });
 
   it("charges one captured boundary snapshot despite accessor substitutions", async () => {

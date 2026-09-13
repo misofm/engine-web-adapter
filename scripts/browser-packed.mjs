@@ -12,6 +12,8 @@ import { spawnSync } from "node:child_process";
 const supportModules = join(process.cwd(), "node_modules");
 const live = process.argv.includes("--live");
 const indexedSparse = process.argv.includes("--indexed-sparse");
+const useWebKit = process.argv.includes("--webkit");
+assert.ok(!useWebKit || (indexedSparse && !live), "--webkit requires --indexed-sparse and cannot use --live");
 const profile = live ? {
   name: "live",
   url: "https://stems.miso.fm/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.flac",
@@ -36,7 +38,7 @@ const profile = live ? {
   etag: '"native-silence-v1"',
 };
 const indexedFixture = indexedSparse ? await prepareIndexedFixture() : undefined;
-const chrome = resolveChromeExecutable();
+const chrome = useWebKit ? undefined : resolveChromeExecutable();
 const root = await mkdtemp(join(tmpdir(), "engine-web-adapter-browser-"));
 process.env.npm_config_cache = join(root, "npm-cache");
 const consumer = join(root, "consumer");
@@ -241,9 +243,14 @@ const server = createServer(async (request, response) => {
 await new Promise((resolve) => server.listen(live ? 5173 : 0, "127.0.0.1", resolve));
 const address = server.address();
 assert.ok(address && typeof address === "object");
-const { chromium } = await import(pathToFileURL(join(supportModules, "playwright-core", "index.mjs")).href);
-const browser = await chromium.launch({ executablePath: chrome, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
+const { chromium, webkit } = await import(pathToFileURL(join(supportModules, "playwright-core", "index.mjs")).href);
+let browser;
 try {
+  browser = useWebKit
+    ? await webkit.launchPersistentContext(await mkdtemp(join(tmpdir(), "indexed-sparse-webkit-")), { headless: true })
+    : await chromium.launch({ executablePath: chrome, headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
+  console.log(JSON.stringify({ gate: "packed-browser", browser: useWebKit ? "webkit" : "chromium",
+    browserVersion: useWebKit ? browser.browser()?.version() : browser.version(), indexedSparse }));
   const page = await browser.newPage();
   const consoleErrors = [];
   const requestFailures = [];
@@ -348,7 +355,7 @@ try {
     assets: requested.filter(([path]) => /\.(?:js|wasm)$/u.test(path)).length, root, requestFailures, consoleErrors }));
   }
 } finally {
-  await browser.close();
+  await browser?.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
@@ -407,6 +414,17 @@ async function prepareIndexedFixture() {
         { startFrame: 240_000, frames: firstFrames, packedFrameOffset: firstFrames + secondFrames },
       ],
     },
+    {
+      name: "indexed-source-c",
+      url: "/native-indexed-source-c.sparse",
+      etag: '"adapter-99-source-c-v1"',
+      frames: 196_000,
+      intervals: [
+        { startFrame: 0, frames: firstFrames, packedFrameOffset: 0 },
+        { startFrame: 80_000, frames: secondFrames, packedFrameOffset: firstFrames },
+        { startFrame: 124_000, frames: firstFrames, packedFrameOffset: firstFrames + secondFrames },
+      ],
+    },
   ];
   const makeDelivery = async (shape) => {
     const canonical = new Uint8Array(shape.frames * frameBytes);
@@ -447,7 +465,9 @@ async function prepareIndexedFixture() {
     const activeBytes = chunks.reduce((sum, chunk) => sum + chunk.pcm.byteLength, 0);
     const windowStarts = shape.name.endsWith("-a")
       ? [[0, 1024], [72_000, 1024], [100_000, 1024], [141_024, 1024], [200_000, 1024], [279_000, 1000]]
-      : [[0, 1024], [20_000, 1024], [92_000, 1024], [150_000, 1024], [191_024, 1024], [240_000, 1024], [319_000, 1000]];
+      : shape.name.endsWith("-b")
+        ? [[0, 1024], [20_000, 1024], [92_000, 1024], [150_000, 1024], [191_024, 1024], [240_000, 1024], [319_000, 1000]]
+        : [[0, 1024], [72_000, 1024], [80_000, 1024], [121_024, 1024], [124_000, 1024], [195_000, 1000]];
     return {
       body,
       profile: {
@@ -464,8 +484,10 @@ async function prepareIndexedFixture() {
       },
     };
   };
-  const sources = [];
-  for (const shape of sourceShapes) sources.push(await makeDelivery(shape));
+  const allSources = [];
+  for (const shape of sourceShapes) allSources.push(await makeDelivery(shape));
+  const sources = allSources.slice(0, 2);
+  const threeWarmSources = allSources;
   const silentFrames = 131_072;
   const silentCanonical = new Uint8Array(silentFrames * frameBytes);
   const silentIdentity = `blake3:${await blake3(silentCanonical, 256)}`;
@@ -502,8 +524,9 @@ async function prepareIndexedFixture() {
   };
   return {
     sources,
+    threeWarmSources,
     silent,
-    sourcesByUrl: new Map([...sources, silent].map((delivery) => [delivery.profile.url, delivery])),
+    sourcesByUrl: new Map([...threeWarmSources, silent].map((delivery) => [delivery.profile.url, delivery])),
   };
 }
 
@@ -596,6 +619,20 @@ function assertIndexedResult(raw, fixture, requests, requestCounts, requestFailu
   assert.equal(raw?.warm?.spanCount, 0, "indexed warm open remapped stored PCM");
   assert.equal(raw?.warm?.progress?.stages?.[0], "verifying", "indexed warm progress omitted verification");
   assert.equal(raw?.warm?.progress?.stages?.at(-1), "ready", "indexed warm progress omitted aggregate readiness");
+  assert.deepEqual(new Set(raw?.threeWarm?.sourceIdentities), new Set(fixture.threeWarmSources.map((source) => source.profile.expected.identity)), "three-lane proof did not use three distinct source identities");
+  for (const [label, proof] of [["first", raw?.threeWarm?.first], ["reopen", raw?.threeWarm?.reopen]]) {
+    assert.equal(proof?.locateCalls, 0, `three-lane ${label} warm open reacquired a locator`);
+    assert.equal(proof?.networkRequests, 0, `three-lane ${label} warm open made a network request`);
+    assert.equal(proof?.physicalWorkers, 0, `three-lane ${label} warm open created a decoder Worker`);
+    assert.equal(proof?.sparseVerifyWorkers, 3, `three-lane ${label} warm open did not construct exactly three verification Workers`);
+    assert.equal(proof?.sparseVerifyCompletions, 3, `three-lane ${label} warm open did not complete exactly three verification Workers`);
+    assert.equal(proof?.progress?.sourceReady, 3, `three-lane ${label} warm open did not publish three source-ready facts`);
+    assert.equal(proof?.progress?.stages?.at(-1), "ready", `three-lane ${label} warm open did not publish aggregate readiness`);
+    assert.equal(proof?.sparseWorkers?.length, 3, `three-lane ${label} did not observe three native Worker records`);
+    assert.equal(new Set(proof?.sparseWorkers?.map((worker) => worker.id)).size, 3, `three-lane ${label} reused a Worker URL record`);
+    assert.equal(proof?.sparseWorkers?.every((worker) => worker.terminated), true, `three-lane ${label} left a verification Worker alive`);
+    assert.equal(proof?.sparseWorkers?.every((worker) => worker.label.includes("sparse-verify-worker")), true, `three-lane ${label} did not use the packaged verification Worker URL`);
+  }
   const multiSourceJobs = fixture.sources.length * fixture.sources[0].profile.chunks.length;
   assert.equal(raw?.serial?.maximumWorkers, 1, "indexed serial comparison used the wrong worker policy");
   assert.equal(raw?.serial?.physicalWorkers, 1, "indexed serial comparison constructed more than one Worker");
@@ -633,7 +670,7 @@ function assertIndexedResult(raw, fixture, requests, requestCounts, requestFailu
   assert.deepEqual(raw?.workers?.errors, []);
   assert.deepEqual(requestFailures, []);
   assert.deepEqual(consoleErrors, []);
-  for (const [delivery, expectedCount] of [[fixture.sources[0], 3], [fixture.sources[1], 3], [fixture.silent, 1]]) {
+  for (const [delivery, expectedCount] of [[fixture.sources[0], 3], [fixture.sources[1], 3], [fixture.threeWarmSources[2], 1], [fixture.silent, 1]]) {
     assert.equal(requestCounts.get(delivery.profile.url), expectedCount, `${delivery.profile.name} was fetched an unexpected number of times`);
     assert.equal(requests.get(delivery.profile.url), "application/octet-stream", `${delivery.profile.name} MIME changed`);
   }
@@ -671,6 +708,7 @@ function resolveChromeExecutable() {
 function indexedBrowserSource(fixture) {
   const browserFixture = {
     sources: fixture.sources.map((delivery) => delivery.profile),
+    threeWarmSources: fixture.threeWarmSources.map((delivery) => delivery.profile),
     silent: fixture.silent.profile,
   };
   return String.raw`
@@ -679,7 +717,7 @@ import { blake3 } from "hash-wasm";
 
 declare global { var __result: unknown; var __error: unknown }
 const fixture = ${JSON.stringify(browserFixture)} as const;
-const sourceByIdentity = new Map([...fixture.sources, fixture.silent].map((source) => [source.expected.identity, source]));
+const sourceByIdentity = new Map([...fixture.sources, ...fixture.threeWarmSources, fixture.silent].map((source) => [source.expected.identity, source]));
 const NativeFetch = globalThis.fetch;
 const NativeWorker = Worker;
 const nativeCompile = WebAssembly.compile.bind(WebAssembly);
@@ -890,7 +928,7 @@ globalThis.Worker = class ObservedWorker extends NativeWorker {
 } as typeof Worker;
 function sourceUrl(source: SourceProfile): string { return new URL(source.url, location.href).href; }
 function identityForUrl(url: string): string | undefined {
-  for (const source of [...fixture.sources, fixture.silent]) if (sourceUrl(source) === url) return source.expected.identity;
+  for (const source of [...fixture.sources, ...fixture.threeWarmSources, fixture.silent]) if (sourceUrl(source) === url) return source.expected.identity;
   return undefined;
 }
 function resolverFor(maximumWorkers: number) {
@@ -906,7 +944,7 @@ function resolverFor(maximumWorkers: number) {
     maximumWorkers,
     // Candidate warm verification is funded only by explicit unused headroom;
     // the derived cold width remains capped by maximumWorkers.
-    memoryBudgetBytes: maximumWorkers * 8 * 1024 * 1024 + 4 * 1024 * 1024,
+    memoryBudgetBytes: maximumWorkers * 8 * 1024 * 1024 + (maximumWorkers >= 3 ? 6 : 4) * 1024 * 1024,
     hardwareConcurrency: maximumWorkers === 1 ? 2 : 4,
     deviceMemory: maximumWorkers === 1 ? 1 : 2,
   });
@@ -1044,6 +1082,43 @@ async function openConcurrent(store: VerifiedSparsePcmStore, resolver: ReturnTyp
     onProgress: (event) => events.push({ ...event }),
   });
 }
+async function runThreeWarmScenario(resources, primeResolver) {
+  const sources = fixture.threeWarmSources;
+  // The first two descriptors are already committed by the preceding
+  // two-source proof. Commit only the third source, then exercise the native
+  // warm pool against the same OPFS generation. Each open owns three
+  // physical verification Worker URLs.
+  startPhase();
+  const third = sources[2];
+  if (third === undefined) throw new Error("three-lane fixture omitted its third source");
+  const lease = await openCold(resources.store, primeResolver, third, "three-prime-" + third.name, []);
+  await lease.close();
+    const firstEvents: Record<string, unknown>[] = [];
+    const firstBefore = startPhase();
+    const firstLease = await openConcurrent(resources.store, resolverFor(3), sources, firstEvents);
+    const firstProofs = [];
+    for (const source of sources) firstProofs.push(await proveDescriptor(await firstLease.read(source.expected.identity), source));
+    const firstProgress = assertProgress(firstEvents, sources, ["verifying", "source-ready", "ready"]);
+    await firstLease.close();
+    const first = { ...delta(firstBefore), progress: firstProgress, proofs: firstProofs,
+      sparseWorkers: workerRecords.slice(firstBefore.workerCount).filter((worker) => worker.label.includes("sparse-verify-worker")).map((worker) => ({ id: worker.id, label: worker.label, terminated: worker.terminated })) };
+    if (first.sparseVerifyWorkers !== 3 || first.sparseVerifyCompletions !== 3 || first.sparseWorkers.length !== 3 || !first.sparseWorkers.every((worker) => worker.terminated)) {
+      throw new Error("three-lane warm open did not construct and tear down three native verification Workers: " + JSON.stringify(first));
+    }
+    const reopenEvents: Record<string, unknown>[] = [];
+    const reopenBefore = startPhase();
+    const reopenLease = await openConcurrent(resources.store, resolverFor(3), sources, reopenEvents);
+    const reopenProofs = [];
+    for (const source of sources) reopenProofs.push(await proveDescriptor(await reopenLease.read(source.expected.identity), source));
+    const reopenProgress = assertProgress(reopenEvents, sources, ["verifying", "source-ready", "ready"]);
+    await reopenLease.close();
+    const reopen = { ...delta(reopenBefore), progress: reopenProgress, proofs: reopenProofs,
+      sparseWorkers: workerRecords.slice(reopenBefore.workerCount).filter((worker) => worker.label.includes("sparse-verify-worker")).map((worker) => ({ id: worker.id, label: worker.label, terminated: worker.terminated })) };
+    if (reopen.sparseVerifyWorkers !== 3 || reopen.sparseVerifyCompletions !== 3 || reopen.sparseWorkers.length !== 3 || !reopen.sparseWorkers.every((worker) => worker.terminated)) {
+      throw new Error("three-lane warm reopen did not construct and tear down three native verification Workers: " + JSON.stringify(reopen));
+    }
+  return { sourceIdentities: sources.map((source) => source.expected.identity), first, reopen };
+}
 async function proveDescriptor(descriptor: any, source: SourceProfile) {
   if (descriptor.kind !== "sparse-pcm" || descriptor.data.size !== source.activeBytes) throw new Error("indexed descriptor payload size changed for " + source.name);
   if (descriptor.index.identity !== source.expected.identity || descriptor.index.canonicalBytes !== source.expected.canonicalBytes || descriptor.index.activeBytes !== source.activeBytes) throw new Error("indexed descriptor shape changed for " + source.name);
@@ -1150,9 +1225,10 @@ try {
   for (const source of [first, second]) warmProofs.push(await proveDescriptor(await warmLease.read(source.expected.identity), source));
   const warmProgress = assertProgress(warmEvents, [first, second], ["verifying", "source-ready", "ready"]);
   await warmLease.close();
+  const warm = { ...delta(warmBefore), maximumWorkers: 2, workersAtOpen: [], progress: warmProgress, proofs: warmProofs };
+  const threeWarm = await runThreeWarmScenario(coldResources, coldPrimeResolver);
   await coldResources.store.close();
   coldResources.backend.close();
-  const warm = { ...delta(warmBefore), maximumWorkers: 2, workersAtOpen: [], progress: warmProgress, proofs: warmProofs };
   const tail = await runTailDisposalProof();
 
   const serialEvents: Record<string, unknown>[] = [];
@@ -1204,7 +1280,7 @@ try {
 
   // Let reset/completion and terminate tasks publish their final browser events before reporting evidence.
   await new Promise((resolve) => setTimeout(resolve, 0));
-  result = { cold, warm, tail, serial, concurrent, silent, workers: {
+  result = { cold, warm, tail, threeWarm, serial, concurrent, silent, workers: {
     allTerminated: workerRecords.filter((worker) => worker.label.includes("flac-worker")).every((worker) => worker.terminated),
     sparseAllTerminated: workerRecords.filter((worker) => worker.label.includes("sparse-verify-worker")).every((worker) => worker.terminated),
     records: workerRecords.filter((worker) => worker.label.includes("flac-worker")).map((worker) => ({ id: worker.id, jobs: worker.jobs.length, completions: worker.completions, resetCount: worker.resetCount, terminated: worker.terminated })),
