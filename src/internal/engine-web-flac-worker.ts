@@ -191,8 +191,15 @@ function decodeJob(options: {
       const hashStart = performance.now();
       hash?.update(event.bytes);
       hashMs += Math.max(0, performance.now() - hashStart);
-      const output = event.bytes.byteOffset === 0 && event.bytes.byteLength === event.bytes.buffer.byteLength
-        ? event.bytes.buffer as ArrayBuffer : event.bytes.slice().buffer;
+      // The public decoder returns a fresh, caller-owned Uint8Array for each
+      // bounded PCM event. Transfer that allocation directly; copying it here
+      // would create a second retained 384 KiB output buffer. Keep the shape
+      // check as a typed boundary in case a future codec violates that API.
+      if (event.bytes.byteOffset !== 0 || event.bytes.byteLength !== event.bytes.buffer.byteLength ||
+          !(event.bytes.buffer instanceof ArrayBuffer)) {
+        return yield* Effect.fail(new EngineWebAdapterError("stem.decode.output", "Codec returned a non-owned PCM buffer", { phase: "frame" }));
+      }
+      const output = event.bytes.buffer;
       decodedBytes += event.bytes.byteLength;
       decodedFrames += event.frames;
       blocks += 1;

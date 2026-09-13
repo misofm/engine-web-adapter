@@ -10,7 +10,7 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.3.8 @misofm/engine@0.2.3
+npm install @misofm/engine-web-adapter@0.4.0 @misofm/engine@0.2.3
 ```
 
 The package is ESM-only and remains pinned to exactly Engine `0.2.3` and
@@ -261,12 +261,13 @@ verification and trailing writes after a decode Worker finishes.
 
 `reservation` reports fixed `components`, their `fixedBufferBytes` sum,
 `slotBytes`, `headroomBytes`, and selected `limit`. Each 8,388,608-byte slot
-  includes 4,460,560 named bytes: the exact range, input SAB, one reusable
-  262,144-byte public-codec input bridge, fixed 2,097,152-byte codec memory,
-  two output credits, one 393,216-byte in-flight store write,
-one 393,216-byte OPFS write-clone allowance, and metadata/control. The remaining
-3,928,048 bytes are headroom. This reservation is a policy envelope, not a
-measurement of total browser/process memory.
+includes 4,853,776 named bytes: the exact range, input SAB, one reusable
+262,144-byte public-codec input bridge, fixed 2,097,152-byte codec memory,
+two output credits, one 393,216-byte codec-owned pending PCM event, one
+393,216-byte in-flight store write, one 393,216-byte OPFS write-clone
+allowance, and metadata/control. The remaining 3,534,832 bytes are headroom.
+This reservation is a policy envelope, not a measurement of total
+browser/process memory.
 
 `processing` is also `null` before initialization or for an unknown producer.
 It reports `downloadLimit`, `workerLimit`, and `verificationLimit`, plus numeric

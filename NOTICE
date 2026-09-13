@@ -19,6 +19,7 @@ misofm/app commit 7485693e9bbcf2f65a91a4e5950e22d678d99062; their retained
 attribution is shipped with the SDK that now owns these implementations.
 
 This product redistributes the pinned libFLAC 1.5.0 WebAssembly decoder owned
-and published by `@misofm/codec@0.1.0`. Its Apache-2.0 package includes the
-required third-party notices and licenses for the bundled codec asset.
-They are included in `dist/codec-licenses/` in the packed adapter.
+and published by `@misofm/codec@0.1.0`. The packed adapter also bundles the
+public codec's Effect-powered worker implementation. The complete codec and
+Effect license texts, together with the codec's third-party notices and
+licenses for the bundled Wasm asset, are included in `dist/codec-licenses/`.

@@ -43,7 +43,7 @@ Fresh Astra medium adversarially reviews frozen candidate and reruns discriminat
 
 Astra also inspected misofm/transcoder main `0f9f2eaf7a5f286e6d0b0b6e961dc8c4fe631549` (0.2.0). It uses FFmpeg/FFprobe for AAC fMP4 HLS and has no private FLAC backend to replace. Codec 0.1.0 cannot provide that AAC/HLS path, so this migration leaves transcoder unchanged. A future FLAC-specific feature requires its own justified spec and runtime compatibility decision.
 
-## Implementation candidate evidence
+## Historical first-candidate evidence (0.3.8; preserved)
 
 The candidate remains based on `b13f06e2fa5d72a76957593cc0b7db13d4ea993e` in
 `/home/bl/misofm/engine-web-adapter-codec` on `feat/80-codec-decoding`. It uses
@@ -133,3 +133,85 @@ both public decode and finalizer-failure cases. Publication readiness is not
 claimed until the fresh Astra adversarial review, the normal archive consumer
 receipt is retained by root, and macOS WebKit supplies the required OPFS
 qualification evidence.
+
+## Repair candidate evidence (0.4.0)
+
+The repair is being implemented in the same isolated worktree and branch after
+the first-candidate review of `fccf428f91648fdcf3a2bde25701f490c3c8429c`.
+Root owns the eventual repair commit and publication; this section records the
+uncommitted qualification state and does not claim a frozen SHA, merge, or
+publication. The candidate package identity is `0.4.0`, with the exact pinned
+runtime declarations Node `>=22.23.2 <23` and Bun `>=1.4.2 <1.5`. Release and
+OPFS workflows select Node `22.23.2`; the publish workflow identity selects
+`0.4.0`. The existing `0.3.8` entry above is retained as historical evidence.
+
+The repaired asset reader allocates one 256 KiB destination, copies each
+non-empty response view immediately, skips empty views, and cancels the body
+on oversize/read failure. Foundation tests feed 20,000 distinct empty views
+and one-byte views with oversized backing allocations, then assert successful
+public Wasm compilation; a second test asserts underlying body cancellation on
+an oversized chunk. Worker output transfers the public codec's fresh,
+caller-owned PCM allocation directly and rejects a non-owned view at the typed
+boundary. Admission now names the codec-owned pending PCM event explicitly:
+`4,853,776` accounted bytes and `3,534,832` reservation headroom.
+
+Permanent actual-worker coverage is separated from the other test evidence:
+
+* `tests/native-flac-foundation.test.ts` covers public codec behavior,
+  metadata scanner policy, bounded asset loading, and fixed admission values.
+* `tests/flac-worker-reuse.test.ts` covers pool lifecycle and module-loader
+  behavior with controlled Worker doubles.
+* `tests/codec-worker-integration.test.ts` drives actual worker realms through
+  exact stereo-24 PCM/digest, unknown totals, variable blocks, delayed
+  one-byte refills, sequential reuse, output-stall cancellation after exactly
+  two PCM blocks, and fresh-worker truncation, CRC, MD5, and trailing-byte
+  failures. Each worker promise has a bounded timeout.
+* `tests/codec-worker-finalizer.test.ts` uses a real public codec decode with a
+  trapped public delete export, asserts all `432,000` PCM bytes and `72,000`
+  frames were emitted before cleanup failure, and proves no Complete/reset and
+  physical realm disposal.
+
+The packed artifact now includes the complete installed
+`@misofm/codec/LICENSE` and `effect/LICENSE` texts at
+`dist/codec-licenses/codec-LICENSE` and `dist/codec-licenses/effect-LICENSE`.
+`check-package` requires both files and compares each byte-for-byte to its
+installed dependency source, alongside the existing codec third-party notices
+and component licenses. `NOTICE` documents both redistributed license texts.
+
+Repair validation so far:
+
+* `npm run check` passed as a serialized final command, independently rerun
+  by root after implementation stopped: format, lint, decoder audit, `326/326`
+  tests, and package policy with 204 packed files. Root log:
+  `/tmp/codec-adapter-repair-root-check.log`.
+* Packed ordinary Chromium and `--indexed-sparse` Chromium both pass with
+  Chromium `153.0.8010.12`; cold/warm delivery, canonical PCM, playback/seek,
+  all-silent sparse paths, one/two-worker reuse and overlap, asset MIME and
+  compile counts, resets, and physical cleanup are green. The harness copies
+  the exact locked registry codec into its temporary archive consumer because
+  it intentionally does not perform a second install.
+* `CHROME_EXECUTABLE=... npm run test:browser:opfs` passes the Chromium OPFS
+  write/reopen/sparse cleanup gate on Chromium `153.0.8010.12` (`coldBytes`
+  `65536`). The same local command reaches the existing Linux WebKit `26.5`
+  platform limitation (`FileSystemFileHandle` is undefined); macOS OPFS
+  Chromium/WebKit qualification is intentionally deferred until root pushes
+  the frozen repair candidate.
+* A clean consumer at `/tmp/codec-adapter-clean-consumer-0.4.0` installed the
+  archive with ordinary npm metadata, resolved registry
+  `@misofm/codec@0.1.0` at the recorded lock integrity, and passed strict
+  TypeScript plus Vite `8.2.2` production build. The archive is
+  `/tmp/codec-adapter-archive-0.4.0/misofm-engine-web-adapter-0.4.0.tgz` with
+  SHA-256
+  `4989e00b8cb80989cc58a21ac15e74693be9f3c508d6499f63a6d2c4b5431119`.
+  The installed consumer lock records the codec registry URL and integrity;
+  no dependency tree was copied into that consumer.
+* Root's read-only actionlint command passed both repaired workflow files:
+  `/tmp/actionlint.9izgHF/actionlint .github/workflows/npm-publish.yml
+  .github/workflows/opfs-qualification.yml`.
+
+The prior macOS Chromium/WebKit OPFS result belongs to the first candidate and
+must be rerun against the frozen 0.4.0 repair after root pushes it. Linux
+Chromium OPFS and both packed browser profiles are green; Linux WebKit remains
+the known `FileSystemFileHandle` platform limitation. Fresh Astra medium
+review of the repair remains outstanding. No merge, publication, or issue
+synchronization is claimed here.

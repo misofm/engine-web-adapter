@@ -28,7 +28,12 @@ function cancelled(signal: AbortSignal, message: string): EngineWebAdapterError 
 async function readDecoderAsset(response: Response): Promise<Uint8Array> {
   if (response.body === null) throw new Error("FLAC decoder asset has no body");
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  // Keep response ownership bounded independently of the stream's chunking.
+  // A response may yield many empty views or tiny views backed by large
+  // buffers; retaining those views would make byteLength an insufficient
+  // memory bound. Copy each non-empty chunk into one fixed destination and
+  // return only the populated prefix.
+  const destination = new Uint8Array(256 * 1024);
   let total = 0;
   let completed = false;
   try {
@@ -36,22 +41,19 @@ async function readDecoderAsset(response: Response): Promise<Uint8Array> {
       const next = await reader.read();
       if (next.done) break;
       const chunk = next.value;
+      if (chunk.byteLength === 0) continue;
+      if (chunk.byteLength > destination.byteLength - total) {
+        throw new Error("FLAC decoder asset exceeds the codec asset bound");
+      }
+      destination.set(chunk, total);
       total += chunk.byteLength;
-      if (total > 256 * 1024) throw new Error("FLAC decoder asset exceeds the codec asset bound");
-      chunks.push(chunk);
     }
     completed = true;
   } finally {
     if (!completed) await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
+  return destination.subarray(0, total);
 }
 
 /**

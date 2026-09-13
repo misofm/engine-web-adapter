@@ -22,6 +22,7 @@ import {
   NativeFlacMetadataScanner,
   parseNativeFlacStreamInfo,
 } from "../src/stems/native-flac-metadata.js";
+import { loadFlacDecoderModule } from "../src/stems/native-flac-decoder.js";
 import {
   BoundedStemAdmission,
   DEFAULT_FLAC_MEMORY_BUDGET_BYTES,
@@ -162,6 +163,64 @@ test("public codec rejects a wrong or corrupt decoder asset through its typed bo
   if (Exit.isFailure(exit)) assert.equal((exit.cause.reasons[0] as { readonly error?: unknown }).error instanceof FlacDecodeError, true);
 });
 
+test("decoder asset loading copies empty and tiny response chunks into one bounded destination", async () => {
+  const wasm = new Uint8Array(await readFile("node_modules/@misofm/codec/wasm/flac-decoder.wasm"));
+  let pulls = 0;
+  const emptyChunks = 20_000;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulls < emptyChunks) {
+        pulls += 1;
+        // Each view has a distinct backing allocation. The loader must not
+        // retain these objects merely because the stream yielded them.
+        controller.enqueue(new Uint8Array(new ArrayBuffer(4096), 0, 0));
+        return;
+      }
+      if (pulls < emptyChunks + wasm.byteLength) {
+        const offset = pulls - emptyChunks;
+        pulls += 1;
+        const backing = new Uint8Array(4096);
+        backing[0] = wasm[offset]!;
+        controller.enqueue(backing.subarray(0, 1));
+        return;
+      }
+      controller.close();
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(body, { headers: { "Content-Type": "application/wasm" } });
+  try {
+    const module = await loadFlacDecoderModule({ url: "https://asset.invalid/codec.wasm" });
+    assert.ok(module instanceof WebAssembly.Module);
+    assert.equal(pulls, emptyChunks + wasm.byteLength);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("oversized decoder asset reads cancel the response body", async () => {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new Uint8Array(256 * 1024 + 1));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(body, { headers: { "Content-Type": "application/wasm" } });
+  try {
+    await assert.rejects(
+      loadFlacDecoderModule({ url: "https://asset.invalid/codec.wasm" }),
+      (error: unknown) => error instanceof Error && (error as Error & { readonly code?: unknown }).code === "stem.decode.asset",
+    );
+    assert.equal(cancelled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("codec limits retain fixed 2 MiB decoder memory, 256 KiB input, and 384 KiB output", () => {
   assert.equal(FLAC_DECODER_LIMITS.wasmMemoryBytes, 2 * 1024 * 1024);
   assert.equal(FLAC_DECODER_LIMITS.maxInputChunkBytes, 256 * 1024);
@@ -184,13 +243,14 @@ test("native FLAC package buffers are fixed and leave reservation headroom", () 
     codecInputCopy: 256 * 1024,
     decoderLinearMemory: 2 * 1024 * 1024,
     decodedOutputCredits: 2 * 384 * 1024,
+    codecPendingOutput: 384 * 1024,
     decodedInFlightWrite: 384 * 1024,
     opfsWriteClone: 384 * 1024,
     metadataAndControl: 4 * 1024 + 16,
   });
   assert.equal(FLAC_ACCOUNTED_FIXED_BUFFER_BYTES + FLAC_ACCOUNTING_HEADROOM_BYTES, FLAC_WORKER_RESERVATION_BYTES);
-  assert.equal(FLAC_ACCOUNTED_FIXED_BUFFER_BYTES, 4_460_560);
-  assert.equal(FLAC_ACCOUNTING_HEADROOM_BYTES, 3_928_048);
+  assert.equal(FLAC_ACCOUNTED_FIXED_BUFFER_BYTES, 4_853_776);
+  assert.equal(FLAC_ACCOUNTING_HEADROOM_BYTES, 3_534_832);
 });
 
 test("native FLAC admission is FIFO and removes queued cancellation", async () => {
