@@ -77,6 +77,13 @@ interface PayloadReadObservation {
 }
 type PayloadReadFault = (bytes: Uint8Array, start: number, end: number, readCount: number) => Uint8Array | Promise<Uint8Array>;
 
+interface ListenerWorker {
+  postMessage(message: unknown, transfer?: Transferable[]): void;
+  terminate(): void;
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void;
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void;
+}
+
 class RecordingPayloadBlob extends Blob {
   constructor(
     source: Blob,
@@ -111,13 +118,18 @@ class RecordingPayloadBlob extends Blob {
 
 class RecordingPayloadBackend extends MemoryStemStorageBackend {
   readonly payloadReads: PayloadReadObservation[] = [];
+  dataGets = 0;
+  lastPayload: Blob | undefined;
   recording = false;
   fault: PayloadReadFault | undefined;
 
   override async read(name: string): Promise<Blob> {
     const blob = await super.read(name);
     if (!this.recording || !name.startsWith("sparse-pcm-v1-data-")) return blob;
-    return new RecordingPayloadBlob(blob, this.payloadReads, this.fault);
+    this.dataGets += 1;
+    const wrapped = new RecordingPayloadBlob(blob, this.payloadReads, this.fault);
+    this.lastPayload = wrapped;
+    return wrapped;
   }
 }
 
@@ -171,6 +183,200 @@ class ProbeWarmMessageChannel {
     this.port1.peer = this.port2;
     this.port2.peer = this.port1;
   }
+}
+
+class NativeWarmWorker {
+  readonly listeners = new Set<(event: { readonly data: any }) => void>();
+  starts = 0;
+  terminated = false;
+
+  postMessage(message: any): void {
+    if (message.type === "ack") return;
+    if (message.type !== "start") return;
+    this.starts += 1;
+    queueMicrotask(() => this.emit({ type: "progress", version: 1, jobId: message.jobId, generation: message.generation, bytes: message.canonicalBytes }));
+    queueMicrotask(() => this.emit({
+      type: "complete", version: 1, jobId: message.jobId, generation: message.generation,
+      identity: message.identity, digest: message.identity.slice(7), progressBytes: message.canonicalBytes,
+      canonicalBytes: message.canonicalBytes, readCalls: 1, readBytes: message.activeBytes,
+      hashedBytes: message.canonicalBytes, hashUpdates: 1, zeroUpdates: 0,
+      elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+    }));
+  }
+
+  terminate(): void { this.terminated = true; }
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.listeners.add(listener); }
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.listeners.delete(listener); }
+  private emit(message: any): void { for (const listener of this.listeners) listener({ data: message }); }
+}
+
+type ThreeLaneLifecycleMode = "cancel" | "failure" | "success";
+
+/** Small three-slot lifecycle seam: held reads stay stale after physical close. */
+class ThreeLaneLifecycleWorker {
+  static mode: ThreeLaneLifecycleMode = "success";
+  static starts = 0;
+  static completions = 0;
+  static failures = 0;
+  static readonly workers: ThreeLaneLifecycleWorker[] = [];
+  static readonly heldMessages: any[] = [];
+  readonly listeners = new Set<(event: { readonly data: any }) => void>();
+  readonly startMessages: any[] = [];
+  terminated = false;
+
+  constructor() { ThreeLaneLifecycleWorker.workers.push(this); }
+
+  postMessage(message: any): void {
+    if (message.type === "ack" || message.type !== "start") return;
+    ThreeLaneLifecycleWorker.starts += 1;
+    this.startMessages.push(message);
+    if (ThreeLaneLifecycleWorker.mode === "cancel" || ThreeLaneLifecycleWorker.mode === "failure" && ThreeLaneLifecycleWorker.starts === 2 || ThreeLaneLifecycleWorker.mode === "failure" && ThreeLaneLifecycleWorker.starts === 3) {
+      ThreeLaneLifecycleWorker.heldMessages.push(message);
+      return;
+    }
+    queueMicrotask(() => {
+      if (ThreeLaneLifecycleWorker.mode === "failure" && ThreeLaneLifecycleWorker.starts === 4 && message === this.startMessages.at(-1)) {
+        ThreeLaneLifecycleWorker.failures += 1;
+        this.emit({ type: "failure", version: 1, jobId: message.jobId, generation: message.generation, kind: "io", message: "three-lane fixture failure" });
+        return;
+      }
+      ThreeLaneLifecycleWorker.completions += 1;
+      this.emit({
+        type: "complete", version: 1, jobId: message.jobId, generation: message.generation,
+        identity: message.identity, digest: message.identity.slice(7), progressBytes: message.canonicalBytes,
+        canonicalBytes: message.canonicalBytes, readCalls: 1, readBytes: message.activeBytes,
+        hashedBytes: message.canonicalBytes, hashUpdates: 1, zeroUpdates: 0,
+        elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+      });
+    });
+  }
+
+  terminate(): void { this.terminated = true; }
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.listeners.add(listener); }
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.listeners.delete(listener); }
+  emit(message: any): void { for (const listener of this.listeners) listener({ data: message }); }
+
+  static reset(mode: ThreeLaneLifecycleMode): void {
+    ThreeLaneLifecycleWorker.mode = mode;
+    ThreeLaneLifecycleWorker.starts = 0;
+    ThreeLaneLifecycleWorker.completions = 0;
+    ThreeLaneLifecycleWorker.failures = 0;
+    ThreeLaneLifecycleWorker.workers.length = 0;
+    ThreeLaneLifecycleWorker.heldMessages.length = 0;
+  }
+
+  static deliverStale(): void {
+    for (const message of ThreeLaneLifecycleWorker.heldMessages.splice(0)) {
+      const worker = ThreeLaneLifecycleWorker.workers.find((candidate) => candidate.startMessages.includes(message));
+      worker?.emit({
+        type: "complete", version: 1, jobId: message.jobId, generation: message.generation,
+        identity: message.identity, digest: message.identity.slice(7), progressBytes: message.canonicalBytes,
+        canonicalBytes: message.canonicalBytes, readCalls: 1, readBytes: message.activeBytes,
+        hashedBytes: message.canonicalBytes, hashUpdates: 1, zeroUpdates: 0,
+        elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+      });
+    }
+  }
+}
+
+class ThrowingNativeWarmWorker extends NativeWarmWorker {
+  override terminate(): void { throw new Error("native warm Worker termination failed"); }
+}
+
+class HashingNativeWarmWorker extends NativeWarmWorker {
+  static readonly starts: HashingNativeWarmWorker[] = [];
+  seenData: Blob | undefined;
+  seenIntervals: readonly number[] | undefined;
+
+  override postMessage(message: any): void {
+    if (message.type !== "start") return super.postMessage(message);
+    this.seenData = message.data;
+    this.seenIntervals = [...new Float64Array(message.intervals)];
+    void this.verify(message);
+  }
+
+  private async verify(message: any): Promise<void> {
+    try {
+      const payload = new Uint8Array(await message.data.arrayBuffer());
+      const canonical = new Uint8Array(message.canonicalBytes);
+      const intervals = new Float64Array(message.intervals);
+      let payloadCursor = 0;
+      let readCalls = 0;
+      let zeroUpdates = 0;
+      let frameCursor = 0;
+      const zeroBytes = 64 * 1024;
+      const readBytes = 512 * 1024;
+      for (let index = 0; index < message.intervalCount; index += 1) {
+        const offset = index * 3;
+        const startFrame = intervals[offset]!;
+        const frames = intervals[offset + 1]!;
+        const bytes = frames * message.frameBytes;
+        zeroUpdates += Math.ceil(((startFrame - frameCursor) * message.frameBytes) / zeroBytes);
+        readCalls += Math.ceil(bytes / readBytes);
+        canonical.set(payload.subarray(payloadCursor, payloadCursor + bytes), startFrame * message.frameBytes);
+        payloadCursor += bytes;
+        frameCursor = startFrame + frames;
+      }
+      zeroUpdates += Math.ceil(((message.frames - frameCursor) * message.frameBytes) / zeroBytes);
+      const hasher = await createBLAKE3(256);
+      const digest = hasher.init().update(canonical).digest("hex");
+      this.emitForTest({ type: "progress", version: 1, jobId: message.jobId, generation: message.generation, bytes: message.canonicalBytes });
+      this.emitForTest({
+        type: "complete", version: 1, jobId: message.jobId, generation: message.generation,
+        identity: message.identity, digest, progressBytes: message.canonicalBytes,
+        canonicalBytes: canonical.byteLength, readCalls, readBytes: payload.byteLength,
+        hashedBytes: canonical.byteLength, hashUpdates: readCalls + zeroUpdates, zeroUpdates,
+        elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+      });
+    } catch (error) {
+      this.emitForTest({ type: "failure", version: 1, jobId: message.jobId, generation: message.generation, kind: "io", message: String(error) });
+    }
+  }
+
+  emitForTest(message: any): void {
+    for (const listener of this.listeners) listener({ data: message });
+  }
+}
+
+type NativeBoundaryMode = "malformed" | "identity" | "digest" | "counts" | "silent" | "post" | "error" | "messageerror" | "construction";
+
+class BoundaryNativeWorker implements ListenerWorker {
+  readonly listeners = new Map<string, Set<(event: any) => void>>();
+  terminated = false;
+
+  constructor(readonly mode: NativeBoundaryMode, private readonly identity = `blake3:${"b".repeat(64)}` as `blake3:${string}`) {
+    if (mode === "construction") throw new Error("native warm Worker construction failed");
+  }
+
+  postMessage(message: any): void {
+    if (message.type === "ack") return;
+    if (message.type !== "start") return;
+    if (this.mode === "post") throw new Error("native warm Worker post failed");
+    if (this.mode === "silent") return;
+    queueMicrotask(() => {
+      if (this.mode === "error") { this.emitType("error", { error: new Error("native warm Worker error") }); return; }
+      if (this.mode === "messageerror") { this.emitType("messageerror", { data: "unreadable" }); return; }
+      if (this.mode === "malformed") { this.emitType("message", { data: { type: "complete", version: 1, jobId: message.jobId, generation: message.generation } }); return; }
+      this.emitType("message", { data: {
+        type: "complete", version: 1, jobId: message.jobId, generation: message.generation,
+        identity: this.mode === "identity" ? `blake3:${"0".repeat(64)}` : message.identity,
+        digest: this.mode === "digest" ? "f".repeat(64) : message.identity.slice(7),
+        progressBytes: message.canonicalBytes, canonicalBytes: message.canonicalBytes,
+        readCalls: this.mode === "counts" ? 2 : 1, readBytes: message.activeBytes,
+        hashedBytes: message.canonicalBytes, hashUpdates: 1, zeroUpdates: 0,
+        elapsedMs: 1, readWaitMs: 1, hashMs: 1,
+      } });
+    });
+  }
+
+  terminate(): void { this.terminated = true; }
+  addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void {
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+  removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { this.listeners.get(type)?.delete(listener); }
+  private emitType(type: string, event: any): void { for (const listener of this.listeners.get(type) ?? []) listener(event); }
 }
 
 function warmYieldFixture(): { readonly canonical: Uint8Array; readonly expected: SparsePcmExpectation; readonly spans: readonly { readonly startFrame: number; readonly bytes: Uint8Array }[] } {
@@ -1213,6 +1419,433 @@ describe("VerifiedSparsePcmStore", () => {
     await left.close();
     await right.close();
     await store.close();
+  });
+
+  it("uses the native resolver's funded width for two admitted warm sources and tears down both workers before ready", async () => {
+    const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+    const workers: NativeWarmWorker[] = [];
+    (globalThis as unknown as { Worker: new () => NativeWarmWorker }).Worker = class extends NativeWarmWorker {
+      constructor() { super(); workers.push(this); }
+    };
+    try {
+      const firstBytes = new Uint8Array([1, 2]);
+      const secondBytes = new Uint8Array([3, 4]);
+      const first = expectation(firstBytes, 1);
+      const second = expectation(secondBytes, 1);
+      const backend = new MemoryStemStorageBackend();
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: "native-warm-width" });
+      await store.installSource(first, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: firstBytes }) }) });
+      await store.installSource(second, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: secondBytes }) }) });
+      const nativeResolver = createSparseStemResolver({
+        locate: () => "https://fixture.invalid/native-warm-unused",
+        hardwareConcurrency: 4,
+        maximumWorkers: 2,
+        memoryBudgetBytes: 20 * 1024 * 1024,
+      });
+      const lease = await store.openSession({
+        leaseId: "native-warm-width",
+        sources: [{ ...first, sourceId: "first" }, { ...second, sourceId: "second" }],
+        resolve: nativeResolver,
+      });
+      assert.equal(workers.length, 2, "funded K=2 creates at most two warm Workers");
+      assert.deepEqual(workers.map((worker) => worker.starts), [1, 1]);
+      assert.equal(workers.every((worker) => worker.terminated), true, "preparation closes warm Workers before aggregate ready");
+      assert.equal((await lease.read(first.identity)).data.size, firstBytes.byteLength, "descriptor remains readable after pool teardown");
+      await lease.close();
+      await store.close();
+    } finally {
+      (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    }
+  });
+
+  it("binds the native Worker to one admitted Blob and index, and rejects tampered native warm bytes", async () => {
+    const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+    const workers: HashingNativeWarmWorker[] = [];
+    (globalThis as unknown as { Worker: new () => NativeWarmWorker }).Worker = class extends HashingNativeWarmWorker {
+      constructor() { super(); workers.push(this); }
+    };
+    try {
+      const backend = new RecordingPayloadBackend();
+      const fixture = await primeLargeWarmStore(backend, "native-blob-binding");
+      const resolver = createSparseStemResolver({
+        locate: () => "https://fixture.invalid/native-blob-binding",
+        hardwareConcurrency: 4,
+        maximumWorkers: 2,
+        memoryBudgetBytes: 20 * 1024 * 1024,
+      });
+      const events: import("../src/stems/types.js").StemProgress[] = [];
+      const lease = await fixture.store.openSession({
+        leaseId: "native-blob-binding",
+        sources: [{ ...fixture.expected, sourceId: "source" }],
+        resolve: resolver,
+        onProgress: (event) => events.push(event),
+      });
+      const descriptor = await lease.read(fixture.expected.identity);
+      assert.equal(backend.dataGets, 1, "native warm admission reads the committed payload once");
+      assert.equal(workers.length, 1);
+      assert.equal(workers[0]!.seenData, backend.lastPayload);
+      assert.equal(workers[0]!.seenData, descriptor.data, "the Worker receives the same Blob returned by metadata admission");
+      assert.ok(workers[0]!.seenIntervals);
+      assert.deepEqual(
+        Array.from({ length: descriptor.index.intervals.length }, (_, index) => [
+          workers[0]!.seenIntervals![index * 3],
+          workers[0]!.seenIntervals![index * 3 + 1],
+          workers[0]!.seenIntervals![index * 3 + 2],
+        ]),
+        descriptor.index.intervals.map((interval) => [interval.startFrame, interval.frames, interval.byteOffset]),
+      );
+      assert.equal(events.filter((event) => event.stage === "source-ready").length, 1);
+      assert.equal(events.filter((event) => event.stage === "ready").length, 1);
+      await lease.close();
+      await fixture.store.close();
+
+      const tamperedBackend = new RecordingPayloadBackend();
+      const tampered = await primeLargeWarmStore(tamperedBackend, "native-blob-tampered");
+      tamperedBackend.fault = (bytes, _start, _end, readCount) => {
+        if (readCount === 0) bytes[0] = (bytes[0] ?? 0) ^ 1;
+        return bytes;
+      };
+      const tamperedEvents: import("../src/stems/types.js").StemProgress[] = [];
+      await assert.rejects(tampered.store.openSession({
+        leaseId: "native-blob-tampered",
+        sources: [{ ...tampered.expected, sourceId: "tampered" }],
+        resolve: resolver,
+        onProgress: (event) => tamperedEvents.push(event),
+      }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+      assert.equal(tamperedBackend.dataGets, 1);
+      assert.equal(tamperedEvents.some((event) => event.stage === "source-ready" || event.stage === "ready"), false);
+      await tampered.store.close();
+    } finally {
+      (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    }
+  });
+
+  it("uses local verification for an oversized but valid admitted index", async () => {
+    const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+    const workers: NativeWarmWorker[] = [];
+    (globalThis as unknown as { Worker: new () => NativeWarmWorker }).Worker = class extends NativeWarmWorker {
+      constructor() { super(); workers.push(this); }
+    };
+    let store: VerifiedSparsePcmStore | undefined;
+    let lease: import("../src/stems/sparse-store.js").SparsePcmSessionLease | undefined;
+    try {
+      const intervalCount = 10_923;
+      const frames = intervalCount * 2;
+      const canonical = new Uint8Array(frames * 2);
+      const pieces = Array.from({ length: intervalCount }, (_, index) => {
+        const bytes = new Uint8Array([index & 0xff, (index * 3) & 0xff]);
+        canonical.set(bytes, index * 4);
+        return { startFrame: index * 2, bytes };
+      });
+      const expected = expectation(canonical, frames);
+      const backend = new MemoryStemStorageBackend();
+      store = new VerifiedSparsePcmStore({ backend, instanceId: "oversized-valid-index" });
+      await store.installSource(expected, { resolve: async () => ({ spans: spans(...pieces) }) });
+      const resolver = createSparseStemResolver({ locate: () => "https://fixture.invalid/oversized-valid-index", hardwareConcurrency: 4, maximumWorkers: 2, memoryBudgetBytes: 20 * 1024 * 1024 });
+      const events: import("../src/stems/types.js").StemProgress[] = [];
+      lease = await store.openSession({ leaseId: "oversized-valid-index", sources: [{ ...expected, sourceId: "source" }], resolve: resolver, onProgress: (event) => events.push(event) });
+      assert.equal(workers.length, 0, "an admitted index beyond the worker metadata bound takes the local verifier");
+      assert.equal((await lease.read(expected.identity)).index.intervals.length, intervalCount);
+      assert.ok(events.some((event) => event.verificationTiming !== undefined));
+      assert.equal(events.filter((event) => event.stage === "ready").length, 1);
+    } finally {
+      await lease?.close().catch(() => undefined);
+      await store?.close().catch(() => undefined);
+      (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    }
+  });
+
+  it("maps native-selected malformed, transport, watchdog, and accounting failures without readiness", async () => {
+    const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+    let mode: NativeBoundaryMode = "malformed";
+    try {
+      for (const nextMode of ["malformed", "identity", "digest", "counts", "silent", "post", "error", "messageerror", "construction"] as const) {
+        mode = nextMode;
+        (globalThis as unknown as { Worker: new () => ListenerWorker }).Worker = class extends BoundaryNativeWorker {
+          constructor() { super(mode); }
+        };
+        const bytes = new Uint8Array([9, 8, 7, 6]);
+        const expected = expectation(bytes, 2);
+        const store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: `native-boundary-${nextMode}`, readDeadlineMs: 15 });
+        await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+        const resolver = createSparseStemResolver({ locate: () => `https://fixture.invalid/native-boundary-${nextMode}`, hardwareConcurrency: 4, maximumWorkers: 2, memoryBudgetBytes: 20 * 1024 * 1024 });
+        const events: import("../src/stems/types.js").StemProgress[] = [];
+        const opening = store.openSession({ leaseId: `native-boundary-${nextMode}`, sources: [{ ...expected, sourceId: "source" }], resolve: resolver, onProgress: (event) => events.push(event) });
+        const outcome = await Promise.race([
+          opening.then(() => "success" as const, (error: unknown) => error),
+          new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 500)),
+        ]);
+        assert.notEqual(outcome, "timeout", `${nextMode} must settle within its boundary`);
+        assert.equal(outcome === "success", false, `${nextMode} must fail closed`);
+        const error = outcome as unknown;
+        assert.equal(error instanceof EngineWebAdapterError && error.code, nextMode === "silent" ? "stem.read_deadline" : "stem.corrupt", nextMode);
+        assert.equal(events.some((event) => event.stage === "source-ready" || event.stage === "ready"), false, `${nextMode} cannot publish readiness`);
+        await store.close();
+      }
+    } finally {
+      (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    }
+  });
+
+  it("lets a native terminal observer abort before publication while isolating observer throws", async () => {
+    const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+    (globalThis as unknown as { Worker: new () => NativeWarmWorker }).Worker = NativeWarmWorker;
+    let abortStore: VerifiedSparsePcmStore | undefined;
+    let throwStore: VerifiedSparsePcmStore | undefined;
+    try {
+      const bytes = new Uint8Array([1, 2]);
+      const expected = expectation(bytes, 1);
+      abortStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "native-observer-abort" });
+      await abortStore.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+      const controller = new AbortController();
+      const abortEvents: import("../src/stems/types.js").StemProgress[] = [];
+      let abortTerminalEvents = 0;
+      await assert.rejects(abortStore.openSession({
+        leaseId: "native-observer-abort",
+        sources: [{ ...expected, sourceId: "source" }],
+        resolve: createSparseStemResolver({ locate: () => "https://fixture.invalid/native-observer-abort", hardwareConcurrency: 4, maximumWorkers: 2, memoryBudgetBytes: 20 * 1024 * 1024 }),
+        signal: controller.signal,
+        onProgress: (event) => {
+          abortEvents.push(event);
+          if (event.stage === "verifying" && event.verificationTiming !== undefined) {
+            abortTerminalEvents += 1;
+            controller.abort(new DOMException("terminal observer abort", "AbortError"));
+          }
+        },
+      }), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+      assert.equal(abortTerminalEvents, 1, "abort is triggered by the verified terminal observation");
+      assert.equal(abortEvents.some((event) => event.stage === "source-ready" || event.stage === "ready"), false);
+
+      throwStore = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "native-observer-throw" });
+      await throwStore.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+      let throwTerminalEvents = 0;
+      const lease = await throwStore.openSession({
+        leaseId: "native-observer-throw",
+        sources: [{ ...expected, sourceId: "source" }],
+        resolve: createSparseStemResolver({ locate: () => "https://fixture.invalid/native-observer-throw", hardwareConcurrency: 4, maximumWorkers: 2, memoryBudgetBytes: 20 * 1024 * 1024 }),
+        onProgress: (event) => {
+          if (event.stage === "verifying" && event.verificationTiming !== undefined) {
+            throwTerminalEvents += 1;
+            throw new Error("terminal observer failed");
+          }
+        },
+      });
+      assert.equal(throwTerminalEvents, 1, "throwing observer sees exactly one verified terminal observation");
+      await lease.close();
+    } finally {
+      await abortStore?.close().catch(() => undefined);
+      await throwStore?.close().catch(() => undefined);
+      (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    }
+  });
+
+  it("retains a native warm claim after termination failure and falls back on the next preparation", async () => {
+    const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+    const workers: ThrowingNativeWarmWorker[] = [];
+    (globalThis as unknown as { Worker: new () => NativeWarmWorker }).Worker = class extends ThrowingNativeWarmWorker {
+      constructor() { super(); workers.push(this); }
+    };
+    let store: VerifiedSparsePcmStore | undefined;
+    try {
+      const bytes = new Uint8Array([9, 10]);
+      const expected = expectation(bytes, 1);
+      const backend = new MemoryStemStorageBackend();
+      store = new VerifiedSparsePcmStore({ backend, instanceId: "native-warm-claim-poison" });
+      await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
+      const resolver = createSparseStemResolver({ locate: () => "https://fixture.invalid/native-warm-claim-poison", hardwareConcurrency: 4, maximumWorkers: 2, memoryBudgetBytes: 20 * 1024 * 1024 });
+      await assert.rejects(store.openSession({
+        leaseId: "native-warm-claim-poison-first",
+        sources: [{ ...expected, sourceId: "first" }],
+        resolve: resolver,
+      }), (error: unknown) => inspect(error).includes("native warm Worker termination failed"));
+      assert.equal(workers.length, 1);
+      const fallback = await store.openSession({
+        leaseId: "native-warm-claim-poison-second",
+        sources: [{ ...expected, sourceId: "second" }],
+        resolve: resolver,
+      });
+      assert.equal(workers.length, 1, "a poisoned claim selects the main-realm verifier");
+      await fallback.close();
+    } finally {
+      if (store !== undefined) await store.close().catch(() => undefined);
+      (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    }
+  });
+
+  it("awaits warm-worker cleanup before source-lock release on sibling failure, caller abort, and store close", async () => {
+    const runHeld = async (mode: "sibling" | "abort" | "close"): Promise<void> => {
+      const firstBytes = new Uint8Array([5, 6]);
+      const secondBytes = new Uint8Array([7, 8]);
+      const first = expectation(firstBytes, 1);
+      const second = expectation(secondBytes, 1);
+      const events: string[] = [];
+      let startedResolve!: () => void;
+      const started = new Promise<void>((resolve) => { startedResolve = resolve; });
+      const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+      class HeldWorker {
+        readonly listeners = new Set<(event: { readonly data: any }) => void>();
+        terminated = false;
+        postMessage(message: any): void {
+          if (message.type !== "start") return;
+          startedResolve();
+          if (mode === "sibling" && message.identity === second.identity) {
+            queueMicrotask(() => this.emit({ type: "failure", version: 1, jobId: message.jobId, generation: message.generation, kind: "corrupt", message: "fixture sibling failure" }));
+          }
+        }
+        terminate(): void { this.terminated = true; events.push("terminate"); }
+        addEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.listeners.add(listener); }
+        removeEventListener(type: "message" | "error" | "messageerror", listener: (event: any) => void): void { if (type === "message") this.listeners.delete(listener); }
+        private emit(message: any): void { for (const listener of this.listeners) listener({ data: message }); }
+      }
+      (globalThis as unknown as { Worker: new () => HeldWorker }).Worker = HeldWorker;
+      let store: VerifiedSparsePcmStore | undefined;
+      try {
+        const locks = {
+          request: async <T>(name: string, _options: { readonly mode: "exclusive"; readonly signal?: AbortSignal }, callback: () => Promise<T>): Promise<T> => {
+            events.push(`acquire:${name}`);
+            try { return await callback(); }
+            finally { events.push(`release:${name}`); }
+          },
+        };
+        store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), locks, instanceId: `warm-cleanup-${mode}` });
+        await store.installSource(first, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: firstBytes }) }) });
+        await store.installSource(second, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: secondBytes }) }) });
+        const nativeResolver = createSparseStemResolver({ locate: () => "https://fixture.invalid/warm-cleanup", hardwareConcurrency: 4, maximumWorkers: 2, memoryBudgetBytes: 20 * 1024 * 1024 });
+        const controller = new AbortController();
+        const openingStart = events.length;
+        const opening = store.openSession({
+          leaseId: `warm-cleanup-${mode}`,
+          sources: mode === "sibling" ? [{ ...first, sourceId: "first" }, { ...second, sourceId: "second" }] : [{ ...first, sourceId: "first" }],
+          resolve: nativeResolver,
+          ...(mode === "abort" ? { signal: controller.signal } : {}),
+        });
+        let startupTimer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          started,
+          new Promise<void>((_, reject) => { startupTimer = setTimeout(() => reject(new Error(`${mode} warm Worker did not start`)), 1_000); }),
+        ]).finally(() => { if (startupTimer !== undefined) clearTimeout(startupTimer); });
+        if (mode === "abort") controller.abort(new DOMException("fixture abort", "AbortError"));
+        if (mode === "close") await store.close();
+        await assert.rejects(opening);
+        const firstRelease = events.findIndex((event, index) => index >= openingStart && event.startsWith("release:", 0));
+        const lastTermination = events.reduce((last, event, index) => event === "terminate" ? index : last, -1);
+        assert.ok(lastTermination >= 0, `${mode} terminates its held Worker`);
+        assert.ok(firstRelease > lastTermination, `${mode} releases identity locks after Worker cleanup`);
+      } finally {
+        if (store !== undefined) await store.close().catch(() => undefined);
+        (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+      }
+    };
+    await runHeld("sibling");
+    await runHeld("abort");
+    await runHeld("close");
+  });
+
+  it("closes three warm lanes on cancellation and slot reuse failure before a clean retry", async () => {
+    const previousWorker = (globalThis as unknown as { Worker?: unknown }).Worker;
+    class LifecycleWorkerBoundary extends ThreeLaneLifecycleWorker {
+      constructor(_url: string | URL) { super(); }
+    }
+    (globalThis as unknown as { Worker: typeof LifecycleWorkerBoundary }).Worker = LifecycleWorkerBoundary;
+    const bytes = [
+      new Uint8Array([11, 12]),
+      new Uint8Array([21, 22]),
+      new Uint8Array([31, 32]),
+      new Uint8Array([41, 42]),
+    ];
+    const sources = bytes.map((value, index) => ({ ...expectation(value, 1), sourceId: `source-${index}` }));
+    const waitUntil = async (predicate: () => boolean, label: string): Promise<void> => {
+      for (let count = 0; count < 200; count += 1) {
+        if (predicate()) return;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      throw new Error(`${label} did not settle`);
+    };
+    let store: VerifiedSparsePcmStore | undefined;
+    try {
+      store = new VerifiedSparsePcmStore({ backend: new MemoryStemStorageBackend(), instanceId: "three-lane-lifecycle" });
+      for (const [index, source] of sources.entries()) {
+        const { sourceId: _sourceId, ...expected } = source;
+        await store.installSource(expected, { resolve: async () => ({ spans: spans({ startFrame: 0, bytes: bytes[index]! }) }) });
+      }
+      const resolver = createSparseStemResolver({
+        locate: () => "https://fixture.invalid/three-lane-lifecycle",
+        hardwareConcurrency: 4,
+        maximumWorkers: 3,
+        memoryBudgetBytes: 30 * 1024 * 1024,
+      });
+
+      const runInterrupted = async (mode: "cancel" | "failure"): Promise<void> => {
+        ThreeLaneLifecycleWorker.reset(mode);
+        const events: import("../src/stems/types.js").StemProgress[] = [];
+        const controller = new AbortController();
+        const opening = store!.openSession({
+          leaseId: `three-lane-${mode}`,
+          sources,
+          resolve: resolver,
+          ...(mode === "cancel" ? { signal: controller.signal } : {}),
+          onProgress: (event) => events.push(event),
+        });
+        const settled = opening.then(
+          () => ({ ok: true as const }),
+          (error: unknown) => ({ ok: false as const, error }),
+        );
+        if (mode === "cancel") {
+          await waitUntil(() => ThreeLaneLifecycleWorker.starts === 3, "three warm cancellation starts");
+          assert.equal(ThreeLaneLifecycleWorker.heldMessages.length, 3);
+          controller.abort(new DOMException("three-lane fixture abort", "AbortError"));
+        } else {
+          await waitUntil(() => ThreeLaneLifecycleWorker.starts === 4 && ThreeLaneLifecycleWorker.failures === 1, "three warm slot reuse failure");
+        }
+        const outcome = await settled;
+        assert.equal(outcome.ok, false, `${mode} must fail closed`);
+        if (outcome.ok) return;
+        assert.equal(mode === "cancel"
+          ? outcome.error instanceof EngineWebAdapterError && outcome.error.code === "stem.cancelled"
+          : outcome.error instanceof EngineWebAdapterError && outcome.error.code === "stem.corrupt", true);
+        const sourceReady = events.filter((event) => event.stage === "source-ready");
+        assert.equal(events.filter((event) => event.stage === "ready").length, 0, `${mode} cannot publish aggregate readiness`);
+        if (mode === "cancel") {
+          assert.equal(sourceReady.length, 0, "cancellation cannot publish a source-ready fact");
+          assert.equal(ThreeLaneLifecycleWorker.starts, 3, "cancellation leaves the fourth source queued");
+        } else {
+          assert.equal(sourceReady.length, 1, "failure preserves only the earlier completed sibling");
+          assert.equal(sourceReady[0]?.identity, sources[0]!.identity, "failure preserves the first completed sibling only");
+          assert.equal(sources.slice(1).some((source) => source.identity === sourceReady[0]?.identity), false, "failed and held identities stay unpublished");
+          assert.equal(ThreeLaneLifecycleWorker.heldMessages.length, 2, "failure leaves the two held lanes stale");
+          const reused = ThreeLaneLifecycleWorker.workers.filter((worker) => worker.startMessages.length === 2);
+          assert.equal(reused.length, 1, "failure reuses exactly one completed slot");
+          assert.deepEqual(reused[0]!.startMessages.map((message) => message.generation), [1, 2], "slot reuse advances its generation");
+        }
+        assert.equal(ThreeLaneLifecycleWorker.workers.length, 3, `${mode} starts exactly three physical warm workers`);
+        assert.equal(ThreeLaneLifecycleWorker.workers.every((worker) => worker.terminated), true, `${mode} terminates every physical warm worker`);
+        assert.equal(ThreeLaneLifecycleWorker.workers.every((worker) => worker.listeners.size === 0), true, `${mode} removes every worker listener`);
+        ThreeLaneLifecycleWorker.deliverStale();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(events.filter((event) => event.stage === "ready").length, 0, `${mode} ignores stale completion after close`);
+      };
+
+      await runInterrupted("cancel");
+      await runInterrupted("failure");
+
+      ThreeLaneLifecycleWorker.reset("success");
+      const retryEvents: import("../src/stems/types.js").StemProgress[] = [];
+      const retry = await store.openSession({
+        leaseId: "three-lane-retry",
+        sources,
+        resolve: resolver,
+        onProgress: (event) => retryEvents.push(event),
+      });
+      assert.equal(ThreeLaneLifecycleWorker.starts, 4, "retry admits every queued source after claim release");
+      assert.equal(ThreeLaneLifecycleWorker.completions, 4);
+      assert.equal(retryEvents.filter((event) => event.stage === "source-ready").length, sources.length);
+      assert.equal(retryEvents.filter((event) => event.stage === "ready").length, 1);
+      assert.equal(ThreeLaneLifecycleWorker.workers.every((worker) => worker.terminated), true, "retry terminates every warm worker before ready");
+      await retry.close();
+    } finally {
+      await store?.close().catch(() => undefined);
+      (globalThis as unknown as { Worker?: unknown }).Worker = previousWorker;
+    }
   });
 
   it("charges one captured boundary snapshot despite accessor substitutions", async () => {

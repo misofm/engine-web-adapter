@@ -61,7 +61,10 @@ export function flacAdmissionWidth(options: {
   );
 }
 
-/** Opt-in decode and canonical-hash policy; each worker reserves 8 MiB. */
+/** Opt-in decode and canonical-hash policy; each worker reserves 8 MiB.
+ * Unused explicit/default budget may fund native sparse warm verification while
+ * the configured cold width remains unchanged.
+ */
 export interface FlacProcessingOptions {
   readonly maximumWorkers?: number;
   readonly memoryBudgetBytes?: number;

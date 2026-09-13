@@ -9,9 +9,17 @@ export interface SparseResolverPool {
   retain(): { readonly release: () => Promise<void> };
 }
 
+/** Private preparation reservation for native warm verification workers. */
+export interface SparseWarmPreparationClaim {
+  readonly width: number;
+  /** Idempotent; the owner calls this only after its warm pool has closed. */
+  readonly release: () => Promise<void>;
+}
+
 export interface SparseResolverScheduling {
   readonly concurrency: number;
   readonly pool: SparseResolverPool;
+  readonly tryClaimWarmPreparation?: () => SparseWarmPreparationClaim | undefined;
 }
 
 const registrations = new WeakMap<object, SparseResolverScheduling>();

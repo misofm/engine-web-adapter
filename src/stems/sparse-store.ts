@@ -4,6 +4,8 @@ import { EngineWebAdapterError } from "../errors.js";
 import { createIncrementalBlake3, type IncrementalBlake3 } from "./blake3.js";
 import { registerForcedProgressObserver, sparseProgressReporter, type ProgressObserver } from "./progress.js";
 import { sparseResolverScheduling } from "./sparse-scheduling.js";
+import { SparseVerifyWorkerError, SparseVerifyWorkerPool } from "./sparse-verify-worker-pool.js";
+import { sparseVerifyExpectedCounts } from "./sparse-verify-worker-protocol.js";
 import { assertStemIdentity } from "./identity.js";
 import { canonicalJsonBytes } from "./canonical-json.js";
 import { OpfsStorageBackend, ownsOpfsWriteDeadlines } from "./storage.js";
@@ -326,9 +328,14 @@ interface PreparedSparsePcmSession {
   readonly handoff: () => void;
 }
 
+/** Private per-preparation verification transport; never part of options/schema. */
+interface WarmVerificationContext {
+  readonly pool: SparseVerifyWorkerPool;
+}
+
 class SparseProgram extends Context.Service<SparseProgram, {
   readonly openSource: (expected: unknown, options?: { readonly signal?: AbortSignal; readonly onProgress?: ProgressObserver }) => Effect.Effect<SparsePcmDescriptor | undefined, SparseFailure, ScopeRequirement>;
-  readonly installSource: (expected: unknown, options: SparsePcmInstallOptions) => Effect.Effect<SparsePcmDescriptor, SparseFailure, ScopeRequirement>;
+  readonly installSource: (expected: unknown, options: SparsePcmInstallOptions, warm?: WarmVerificationContext) => Effect.Effect<SparsePcmDescriptor, SparseFailure, ScopeRequirement>;
   readonly openSession: (options: unknown) => Effect.Effect<PreparedSparsePcmSession, SparseFailure, ScopeRequirement>;
   readonly inspectSourcePresence: (expected: unknown, callerSignal?: AbortSignal) => Effect.Effect<SparsePcmPresence, SparseFailure, ScopeRequirement>;
 }>()("engine-web/SparseProgram") {
@@ -361,17 +368,32 @@ class SparseProgram extends Context.Service<SparseProgram, {
       operation.dispose();
       return descriptor;
     });
-    const installSource = Effect.fn("SparseProgram.installSource")(function*(input: unknown, options: SparsePcmInstallOptions) {
+    const installSource = Effect.fn("SparseProgram.installSource")(function*(input: unknown, options: SparsePcmInstallOptions, warm?: WarmVerificationContext) {
       const expected = yield* decodeExpected(input);
       const checkedOptions = yield* decodeInstallOptions(options);
       const progress = sparseProgressReporter(checkedOptions.onProgress, expected.identity);
       yield* Effect.addFinalizer(() => Effect.sync(progress.close));
       const operation = yield* makeOperation(lifecycle.signal, checkedOptions.signal);
-      const lease = yield* Effect.acquireRelease(coordination.acquire(expected.identity, operation.signal), (held) => Effect.promise(() => held.release()), { interruptible: true });
+      const lease = yield* Effect.acquireRelease(coordination.acquire(expected.identity, operation.signal), (held, exit) => Effect.promise(async () => {
+        // A failed warm verification may still have sibling Workers reading
+        // another source. Close that shared pool before releasing this source
+        // lock so a cancelled sibling cannot outlive its identity lease.
+        // Always release the lock after the cleanup attempt; a failed close
+        // remains observable through the owning preparation claim.
+        let cleanupFailure: unknown;
+        if (warm !== undefined && Exit.isFailure(exit)) {
+          try { await warm.pool.close(); }
+          catch (cause) { cleanupFailure = cause; }
+        }
+        try { await held.release(); }
+        finally {
+          if (cleanupFailure !== undefined) throw cleanupFailure;
+        }
+      }), { interruptible: true });
       yield* backend.open;
       const marker = markerName(expected.identity);
       if (yield* backend.exists(marker)) {
-        const descriptor = yield* verifyMarker(backend, yield* readMarker(backend, marker, operation.signal), expected, operation.signal, progress.emit);
+        const descriptor = yield* verifyMarker(backend, yield* readMarker(backend, marker, operation.signal), expected, operation.signal, progress.emit, warm);
         yield* checkSignal(operation.signal);
         progress.flush();
         yield* checkSignal(operation.signal);
@@ -444,6 +466,7 @@ class SparseProgram extends Context.Service<SparseProgram, {
       const metadataBytes = yield* Ref.make(checked.declarationMetadataBytes);
       const scheduling = checked.resolve === undefined ? undefined : sparseResolverScheduling(checked.resolve);
       const concurrency = scheduling?.concurrency ?? 1;
+      let warmPool: SparseVerifyWorkerPool | undefined;
       const prepareUnique = (unique: SparsePcmExpectation) => Effect.scoped(Effect.gen(function*() {
         yield* checkSignal(operation.signal);
         const sourceId = checked.sources.find((source) => source.identity === unique.identity)?.sourceId;
@@ -463,7 +486,7 @@ class SparseProgram extends Context.Service<SparseProgram, {
             resolve: (signal) => checked.resolve!(unique, signal, { onProgress: reportSourceProgress }),
             signal: operation.signal,
             onProgress: reportSourceProgress,
-          }));
+          }, warmPool === undefined ? undefined : { pool: warmPool }));
         if (descriptor === undefined) return yield* new SparseNotFoundError({ message: `Sparse PCM source is not committed: ${unique.identity}` });
         yield* checkSignal(operation.signal);
         sourceProgress.flush();
@@ -489,6 +512,24 @@ class SparseProgram extends Context.Service<SparseProgram, {
       // A physical release failure must prevent `ready` while preserving any
       // source-ready facts already committed by completed tasks.
       yield* Effect.scoped(Effect.gen(function*() {
+        const warm = scheduling?.tryClaimWarmPreparation === undefined
+          ? undefined
+          : yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              const claim = scheduling.tryClaimWarmPreparation!();
+              if (claim === undefined) return undefined;
+              try { return { claim, pool: new SparseVerifyWorkerPool({ width: claim.width }) }; }
+              catch (cause) { void claim.release().catch(() => undefined); throw cause; }
+            }),
+            (owned) => owned === undefined ? Effect.void : Effect.promise(async () => {
+              // The claim is deliberately released only after every physical
+              // Worker termination succeeds. A failed close poisons the
+              // resolver-local reservation for the remainder of its lifetime.
+              await owned.pool.close();
+              await owned.claim.release();
+            }),
+          );
+        warmPool = warm?.pool;
         if (scheduling?.pool.canRetain) {
           yield* Effect.acquireRelease(
             Effect.sync(() => scheduling.pool.retain()),
@@ -1441,17 +1482,60 @@ function verifyMarker(
   expected: SparsePcmExpectation,
   signal: AbortSignal,
   onProgress?: (progress: StemProgress) => void,
+  warm?: WarmVerificationContext,
 ): Effect.Effect<SparsePcmDescriptor, SparseFailure> {
   return Effect.fn("SparseProgram.verifyMarker")(function*() {
     return yield* Effect.scoped(Effect.gen(function*() {
+    const started = performance.now();
+    const admitted = yield* admitMarkerMetadata(backend, marker, expected, signal);
+    const metadataMs = performance.now() - started;
+    if (warm !== undefined && warm.pool.canRun(admitted.marker.index)) {
+      const result = yield* warm.pool.runEffect({
+          identity: expected.identity,
+          frames: expected.frames,
+          channels: expected.channels,
+          bitDepth: expected.bitDepth,
+          canonicalBytes: expected.canonicalBytes,
+          index: admitted.marker.index,
+          data: admitted.data,
+          readDeadlineMs: backend.readDeadlineMs,
+          signal,
+          onProgress: (bytes) => onProgress?.({
+            stage: "verifying", identity: expected.identity, bytes,
+            totalBytes: expected.canonicalBytes, byteKind: "pcm",
+          }),
+        }).pipe(Effect.mapError(mapWarmWorkerFailure));
+      const expectedCounts = yield* Effect.try({
+        try: () => sparseVerifyExpectedCounts(admitted.marker.index, expected.frames, expected.channels * (expected.bitDepth / 8)),
+        catch: (cause) => new SparseCorruptError({ message: "Sparse Worker count expectation could not be derived", cause }),
+      });
+      if (result.identity !== expected.identity || result.canonicalBytes !== expected.canonicalBytes || result.readBytes !== admitted.marker.activeBytes ||
+        result.readCalls !== expectedCounts.readCalls || result.hashUpdates !== expectedCounts.hashUpdates || result.zeroUpdates !== expectedCounts.zeroUpdates ||
+        result.hashedBytes !== expected.canonicalBytes || result.digest !== identityHex(expected.identity)) {
+        return yield* new SparseCorruptError({ message: "Sparse payload failed canonical Worker verification" });
+      }
+      yield* checkSignal(signal);
+      onProgress?.({
+        stage: "verifying", identity: expected.identity, bytes: expected.canonicalBytes,
+        totalBytes: expected.canonicalBytes, byteKind: "pcm",
+        verificationTiming: Object.freeze({
+          elapsedMs: performance.now() - started,
+          metadataMs,
+          readWaitMs: result.readWaitMs,
+          hashMs: result.hashMs,
+          readCalls: result.readCalls,
+          readBytes: result.readBytes,
+          hashedBytes: result.hashedBytes,
+        }),
+      });
+      yield* checkSignal(signal);
+      return Object.freeze({ kind: "sparse-pcm" as const, data: admitted.data, index: admitted.marker.index });
+    }
     const warmTaskYield = yield* Effect.acquireRelease(
       Effect.sync(() => makeWarmTaskYieldResource(signal)),
       (resource) => Effect.sync(resource.close),
       { interruptible: true },
     );
-    const started = performance.now();
-    const admitted = yield* admitMarkerMetadata(backend, marker, expected, signal);
-    const metadataMs = performance.now() - started;
     let readWaitMs = 0;
     let hashMs = 0;
     let readCalls = 0;
@@ -1511,6 +1595,17 @@ function verifyMarker(
     return Object.freeze({ kind: "sparse-pcm", data, index: marker.index });
     }));
   })();
+}
+
+function mapWarmWorkerFailure(cause: unknown): SparseFailure {
+  if (!(cause instanceof SparseVerifyWorkerError)) return new SparseIoError({ message: "Sparse verification Worker failed", cause });
+  switch (cause.kind) {
+    case "cancelled": return new SparseCancelledError({ message: cause.message, cause });
+    case "deadline": return new SparseDeadlineError({ message: cause.message, cause });
+    case "boundary": return new SparseBoundaryError({ message: cause.message, cause });
+    case "corrupt": return new SparseCorruptError({ message: cause.message, cause });
+    case "io": return new SparseIoError({ message: cause.message, cause });
+  }
 }
 
 function readBlobBytes(backend: BackendShape, blob: Blob, start: number, end: number, signal: AbortSignal, operation: string): Effect.Effect<ArrayBuffer, SparseFailure> {

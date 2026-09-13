@@ -6,6 +6,7 @@ on:
     paths:
       - "src/**"
       - "scripts/browser-opfs.mjs"
+      - "scripts/browser-packed.mjs"
       - "scripts/copy-assets.mjs"
       - "package.json"
       - "package-lock.json"
@@ -53,6 +54,7 @@ jobs:
           }, null, 2));
           NODE
       - name: Install locked tools and browsers
+        id: install
         run: |
           set -euo pipefail
           npm ci --ignore-scripts
@@ -72,6 +74,19 @@ jobs:
           set -euo pipefail
           export CHROME_EXECUTABLE="$(node --input-type=module -e 'import { chromium } from "playwright-core"; console.log(chromium.executablePath())')"
           npm run test:browser:opfs 2>&1 | tee opfs-evidence/browser-opfs.log
+      - name: Qualify three warm workers in Chromium
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          export CHROME_EXECUTABLE="$(node --input-type=module -e 'import { chromium } from "playwright-core"; console.log(chromium.executablePath())')"
+          npm run build
+          node scripts/browser-packed.mjs --indexed-sparse 2>&1 | tee opfs-evidence/indexed-sparse-chromium.log
+      - name: Qualify three warm workers in WebKit
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          npm run build
+          node scripts/browser-packed.mjs --indexed-sparse --webkit 2>&1 | tee opfs-evidence/indexed-sparse-webkit.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
