@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { blake3 } from "hash-wasm";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rename, writeFile, cp } from "node:fs/promises";
@@ -14,7 +15,7 @@ const indexedSparse = process.argv.includes("--indexed-sparse");
 const profile = live ? {
   name: "live",
   url: "https://stems.miso.fm/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.flac",
-  identity: "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+  identity: "blake3:63205b19c19952f986938d4b9d303e82ec8b404e268185b67387f6b40e106f0c",
   sampleRateHz: 44_100,
   channels: 2,
   bitDepth: 24,
@@ -25,7 +26,7 @@ const profile = live ? {
 } : {
   name: "fixture",
   url: "/native-silence.flac",
-  identity: "sha256:ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
+  identity: "blake3:b6fb73fc46938c981e2b0b4b1ef282adcfc89854d01bfe3972fdc4785b41b2c7",
   sampleRateHz: 48_000,
   channels: 1,
   bitDepth: 16,
@@ -47,6 +48,7 @@ await rename(join(consumer, "node_modules", "@misofm", "package"), join(consumer
 await cp(join(process.cwd(), "node_modules", "@misofm", "engine"), join(consumer, "node_modules", "@misofm", "engine"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "@misofm", "codec"), join(consumer, "node_modules", "@misofm", "codec"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "effect"), join(consumer, "node_modules", "effect"), { recursive: true });
+await cp(join(process.cwd(), "node_modules", "hash-wasm"), join(consumer, "node_modules", "hash-wasm"), { recursive: true });
 for (const dependency of ["fast-check", "pure-rand", "msgpackr", "msgpackr-extract"]) {
   await cp(join(process.cwd(), "node_modules", dependency), join(consumer, "node_modules", dependency), { recursive: true });
 }
@@ -364,7 +366,7 @@ async function prepareIndexedFixture() {
       if (chunk === undefined) throw new Error("indexed source has an unsupported chunk count");
       canonical.set(chunk.pcm, interval.startFrame * frameBytes);
     }
-    const identity = `sha256:${sha256Hex(canonical)}`;
+    const identity = `blake3:${await blake3(canonical, 256)}`;
     const manifest = {
       format: "miso_sparse_stem_v1",
       identity,
@@ -406,7 +408,7 @@ async function prepareIndexedFixture() {
         expected: { identity, sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: shape.frames, canonicalBytes: canonical.byteLength },
         containerBytes: body.byteLength,
         activeBytes,
-        canonicalPcmSha256: identity.slice(7),
+        canonicalPcmBlake3: identity.slice(7),
         intervals,
         chunks: manifest.chunks.map((chunk) => ({ frames: chunk.frames, bytes: chunk.bytes, packedStartFrame: chunk.packedStartFrame })),
         windowProofs: windowStarts.map(([startFrame, frames]) => ({ startFrame, frames, sha256: sha256Hex(canonical.subarray(startFrame * frameBytes, (startFrame + frames) * frameBytes)) })),
@@ -417,7 +419,7 @@ async function prepareIndexedFixture() {
   for (const shape of sourceShapes) sources.push(await makeDelivery(shape));
   const silentFrames = 131_072;
   const silentCanonical = new Uint8Array(silentFrames * frameBytes);
-  const silentIdentity = `sha256:${sha256Hex(silentCanonical)}`;
+  const silentIdentity = `blake3:${await blake3(silentCanonical, 256)}`;
   const silentManifest = {
     format: "miso_sparse_stem_v1",
     identity: silentIdentity,
@@ -443,7 +445,7 @@ async function prepareIndexedFixture() {
       expected: { identity: silentIdentity, sampleRateHz: 48_000, channels: 2, bitDepth: 24, frames: silentFrames, canonicalBytes: silentCanonical.byteLength },
       containerBytes: silentBody.byteLength,
       activeBytes: 0,
-      canonicalPcmSha256: silentIdentity.slice(7),
+      canonicalPcmBlake3: silentIdentity.slice(7),
       intervals: [],
       chunks: [],
       windowProofs: [[0, 1024], [65_000, 1024], [130_000, 1024]].map(([startFrame, frames]) => ({ startFrame, frames, sha256: sha256Hex(silentCanonical.subarray(startFrame * frameBytes, (startFrame + frames) * frameBytes)) })),
@@ -642,7 +644,9 @@ const observedFetch: typeof fetch = async (input, init) => {
 globalThis.fetch = observedFetch;
 try {
   WebAssembly.compile = ((source: BufferSource) => {
-    decoderCompileCalls += 1;
+    // hash-wasm also compiles its BLAKE3 module through this API. Count only
+    // the pinned public FLAC decoder asset for decoder reuse assertions.
+    if (source.byteLength === 75_923) decoderCompileCalls += 1;
     return nativeCompile(source);
   }) as typeof WebAssembly.compile;
 } catch (error) {
@@ -1006,6 +1010,7 @@ import { session } from "@misofm/engine";
 import { createIngestDiagnostics, openEngineWebSession, openSparseEngineWebSession } from "@misofm/engine-web-adapter";
 import { MSB1_CONTROL, PcmPumpWorkerClient } from "@misofm/engine-web-adapter/stems";
 import { ADAPTER_ASSETS } from "@misofm/engine-web-adapter/assets";
+import { blake3 } from "hash-wasm";
 
 declare global { var __result: unknown; var __error: unknown; var __seekStage: unknown }
 const profile = ${JSON.stringify(profile)} as const;
@@ -1095,9 +1100,9 @@ async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
     view.setInt16(frame * 4, ((frame % 1024) - 512) * 32, true);
     view.setInt16(frame * 4 + 2, ((frame % 1024) - 512) * -16, true);
   }
-  const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", pcm))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const digest = await blake3(pcm, 256);
   const model = session({ id: "seek-proof", sampleRateHz: 48_000, quantumFrames: 128 })
-    .source("seek-source", { channels: 2, bitDepth: 16, frames, content: ("sha256:" + digest) as any })
+    .source("seek-source", { channels: 2, bitDepth: 16, frames, content: ("blake3:" + digest) as any })
     .track("seek-track", { source: { id: "seek-source", left: 0, right: 1 } })
     .output("seek-output")
     .route({ id: "seek-route", source: { kind: "track", trackId: "seek-track", tap: "post_matrix" },
@@ -1218,9 +1223,9 @@ async function exercisePausedSeek(mode: "initial" | "resumed" | "running") {
 async function exerciseTerminalPumpFailure(mode: "reject" | "stall" | "crash") {
   const frames = 48_000 * 2;
   const pcm = new Uint8Array(frames * 2);
-  const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", pcm))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const digest = await blake3(pcm, 256);
   const model = session({ id: "terminal-pump-" + mode, sampleRateHz: 48_000, quantumFrames: 128 })
-    .source("terminal-source", { channels: 1, bitDepth: 16, frames, content: ("sha256:" + digest) as any })
+    .source("terminal-source", { channels: 1, bitDepth: 16, frames, content: ("blake3:" + digest) as any })
     .track("terminal-track", { source: { id: "terminal-source", left: 0, right: 0 } })
     .output("terminal-output")
     .route({ id: "terminal-route", source: { kind: "track", trackId: "terminal-track", tap: "post_matrix" },
@@ -1269,7 +1274,7 @@ async function exerciseSparseWorker(ring: SharedArrayBuffer) {
     if (profile.bitDepth === 16) view.setInt16(offset, sample, true);
     else { view.setUint8(offset, sample & 0xff); view.setUint8(offset + 1, (sample >> 8) & 0xff); view.setUint8(offset + 2, (sample >> 16) & 0xff); }
   }
-  const identity = ("sha256:" + "3".repeat(64)) as any;
+  const identity = ("blake3:" + "3".repeat(64)) as any;
   const descriptor = { kind: "sparse-pcm" as const, data: new Blob([packed]), index: {
     format: "miso_sparse_pcm_v1" as const, identity, sampleRateHz: profile.sampleRateHz,
     channels: profile.channels, bitDepth: profile.bitDepth, frames, intervals,
@@ -1311,7 +1316,7 @@ async function exerciseSparseWorker(ring: SharedArrayBuffer) {
 }
 async function exerciseSparseSession() {
   const sparseFrames = 256;
-  const sparseIdentity = ("sha256:" + "4".repeat(64)) as any;
+  const sparseIdentity = ("blake3:" + "4".repeat(64)) as any;
   const sparseSource = { id: "sparse-source-000", spec: {
     channels: profile.channels, bitDepth: profile.bitDepth, frames: sparseFrames, content: sparseIdentity,
   } };

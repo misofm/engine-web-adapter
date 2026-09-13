@@ -6,6 +6,7 @@ import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Effect } from "effect";
+import { createBLAKE3 } from "hash-wasm";
 
 import { ADAPTER_ASSETS, createFlacWorker } from "../src/assets.js";
 import { EngineWebAdapterError } from "../src/errors.js";
@@ -19,7 +20,9 @@ import type {
   FlacWorkerResponse,
 } from "../src/stems/flac-worker-protocol.js";
 
-const IDENTITY = `sha256:${"b".repeat(64)}` as const;
+const IDENTITY = `blake3:${"b".repeat(64)}` as const;
+const identityHasher = await createBLAKE3(256);
+const identityFor = (bytes: Uint8Array) => `blake3:${identityHasher.init().update(bytes).digest("hex")}` as const;
 
 /** A `fetch` stub shaped like the normalized request the package actually sends. */
 function responseFetch(
@@ -1082,7 +1085,7 @@ test("mid-body retry resumes at Worker credit without duplicated accepted bytes"
     }),
   });
   const pcm = new Uint8Array([9, 8, 7, 6]);
-  const identity = `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const;
+  const identity = identityFor(pcm);
   const diagnostics = createIngestDiagnostics();
   const lease = await new VerifiedStemStore({ backend: new MemoryStemStorageBackend() }).openSession({
     leaseId: "retry", stems: [{ sourceId: "source", identity, bytes: pcm.length }],
@@ -1217,7 +1220,7 @@ test("zero-high-water stream returns credit only after consuming one of exactly 
     const diagnostics = createIngestDiagnostics();
     const admission = new BoundedStemAdmission(1);
     const pcm = new Uint8Array([1, 2, 3]);
-    const identity = `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const;
+    const identity = identityFor(pcm);
     const packageResolver = createFlacStemResolver({
       admission, createWorker: () => physical, locate: () => "https://caller.invalid/stem",
       fetch: responseFetch(request => {
@@ -1472,7 +1475,7 @@ test("synchronous probe-completion cancellation releases the range before any re
   assert.equal(ready, false);
   assert.equal(worker.terminated, true);
   assert.equal(worker.posted.some(message => message.type === "initialize"), false);
-  assert.equal([...backend.files.keys()].some(name => name.startsWith("staging-") || name.startsWith("sha256-")), false);
+  assert.equal([...backend.files.keys()].some(name => name.startsWith("staging-") || name.startsWith("blake3-")), false);
 });
 
 test("eight processing slots make progress beyond the store deadline while queued behind two downloads", async () => {
@@ -1480,7 +1483,7 @@ test("eight processing slots make progress beyond the store deadline while queue
   putU64(source, 18, (44_100n << 44n) | (1n << 41n) | (15n << 36n) | 1n);
   const pcms = Array.from({ length: 12 }, (_, index) => new Uint8Array([9, 8, 7, index]));
   const stems = pcms.map((pcm, index) => ({ sourceId: String(index), bytes: 4,
-    identity: `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const }));
+    identity: identityFor(pcm) }));
   const lookup = new Map(stems.map((stem, index) => [stem.identity, pcms[index]!]));
   class DistinctWorker extends FakeWorker {
     identity = IDENTITY as string;
@@ -1538,7 +1541,7 @@ test("custom Worker digest claims cannot bypass canonical store hashing and comp
   const source = singleFrameFlac();
   putU64(source, 18, (44_100n << 44n) | (1n << 41n) | (15n << 36n) | 1n);
   const pcm = new Uint8Array([9, 8, 7, 6]);
-  const identity = `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const;
+  const identity = identityFor(pcm);
   for (const problem of ["mutated-output", "early-complete", "wrong-count", "cancel-before-promotion"] as const) {
     class ForgingWorker extends FakeWorker {
       override emit(message: FlacWorkerResponse): void {
@@ -1560,7 +1563,7 @@ test("custom Worker digest claims cannot bypass canonical store hashing and comp
       leaseId: problem, stems: [{ sourceId: "source", identity, bytes: 4 }], resolver, signal: abort.signal,
       onProgress: event => { if (problem === "cancel-before-promotion" && event.stage === "ingesting") abort.abort(problem); },
     }), error => error instanceof EngineWebAdapterError && error.code === (problem === "cancel-before-promotion" ? "stem.cancelled" : "stem.corrupt"));
-    assert.equal([...backend.files.keys()].some(name => name.startsWith("staging-") || name.startsWith("sha256-")), false);
+    assert.equal([...backend.files.keys()].some(name => name.startsWith("staging-") || name.startsWith("blake3-")), false);
   }
 });
 

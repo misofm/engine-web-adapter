@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
-assert.equal(packageJson.version, "0.4.2");
+assert.equal(packageJson.version, "0.5.0");
 assert.deepEqual(packageJson.dependencies, {
   "@misofm/codec": "0.1.1",
-  "@misofm/engine": "0.2.3",
+  "@misofm/engine": "0.2.4",
   effect: "4.0.0-rc.112",
+  "hash-wasm": "4.12.0",
 });
 assert.equal(packageJson.type, "module");
 const { ADAPTER_PROVENANCE } = await import("../dist/provenance.js");
@@ -28,6 +29,7 @@ for (const required of [
   "dist/internal/engine-web-opfs-worker.js",
   "dist/codec-licenses/codec-LICENSE",
   "dist/codec-licenses/effect-LICENSE",
+  "dist/codec-licenses/hash-wasm-LICENSE",
   "dist/codec-licenses/THIRD_PARTY_NOTICES.md",
   "dist/codec-licenses/vendor/licenses/compiler-rt.txt",
   "dist/codec-licenses/vendor/licenses/emscripten.txt",
@@ -38,6 +40,7 @@ for (const required of [
 for (const [packedPath, sourcePath] of [
   ["dist/codec-licenses/codec-LICENSE", "node_modules/@misofm/codec/LICENSE"],
   ["dist/codec-licenses/effect-LICENSE", "node_modules/effect/LICENSE"],
+  ["dist/codec-licenses/hash-wasm-LICENSE", "node_modules/hash-wasm/LICENSE"],
 ]) {
   assert.equal(
     await readFile(packedPath, "utf8"),

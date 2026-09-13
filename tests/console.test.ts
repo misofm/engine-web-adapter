@@ -18,7 +18,7 @@ import type {
 import { MSB1_CONTROL, Msb1RingWriter } from "../src/stems/ring.js";
 import type { DeclaredStemSource, StemSessionLease, StemStore } from "../src/stems/types.js";
 
-const IDENTITY = `sha256:${"a".repeat(64)}` as const;
+const IDENTITY = `blake3:${"a".repeat(64)}` as const;
 const SOURCES: readonly DeclaredStemSource[] = [
   { id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
 ];

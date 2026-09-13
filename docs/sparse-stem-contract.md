@@ -14,9 +14,11 @@ the payload remains a Blob view and no FLAC bytes are authenticated here.
 The manifest has one source shape and the fixed format tag
 miso_sparse_stem_v1. Its recursively lexicographic canonical JSON contains
 the identity, rate, channels, bit depth, total frames, timeline intervals and
-packed FLAC chunks. Intervals are sorted, non-overlapping and maximal. Their
+packed FLAC chunks. The identity is the BLAKE3-256 digest of the complete
+canonical PCM timeline, including implicit zero gaps. Intervals are sorted,
+non-overlapping and maximal. Their
 packedFrameOffset values cover active frames from zero. Chunks have
-independent FLAC and decoded PCM digests, contiguous payload offsets and
+independent SHA-256 FLAC and decoded PCM transport digests, contiguous payload offsets and
 packed-frame offsets. Chunk records may cross interval boundaries and are
 bounded to 30 seconds and 32 MiB. Empty intervals and chunks represent a
 valid all-silent stem with an empty payload. Admission proves metadata and
@@ -43,6 +45,6 @@ boundaries and hashes never enter the PCM index. The existing
 miso_sparse_pcm_v1 admission and readSparsePcmWindow helper retain their
 private one-time brand, 65,536-interval and 8 MiB metadata bounds, binary
 search, one contiguous packed read per window, exact zero fill, and 8,192-frame
-window cap. Preparation must later verify each FLAC hash, exact STREAMINFO,
-decoded chunk length/hash, and the full canonical source hash before cache
-readiness.
+window cap. Preparation must later verify each SHA-256 FLAC hash, exact
+STREAMINFO, decoded chunk length/SHA-256 hash, and the full canonical BLAKE3-256
+source identity before cache readiness.

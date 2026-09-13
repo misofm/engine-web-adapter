@@ -22,7 +22,7 @@ test("Worker handles seek while an old Blob read is outstanding and discards its
     const ring = createMsb1Ring({ sourceId: "source", channels: 1, frameCapacity: 4, capacity: 4 });
     scope.send({
       type: "initialize", requestId: 1, windowFrames: 4, generation: 1n, idleMs: 1,
-      sources: [{ sourceId: "source", identity: `sha256:${"0".repeat(64)}`, channels: 1, bitDepth: 16, frames: 16, ring, blob: delayedBlob }],
+      sources: [{ sourceId: "source", identity: `blake3:${"0".repeat(64)}`, channels: 1, bitDepth: 16, frames: 16, ring, blob: delayedBlob }],
     });
     await scope.waitFor("initialized");
     await entered.promise;

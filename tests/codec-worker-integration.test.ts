@@ -173,7 +173,7 @@ async function runDecode(worker: Worker, options: DecodeCase, requestId: number)
   worker.on("message", onMessage);
   timeout = setTimeout(() => settle(new Error(`codec worker case timed out: ${options.fixture}`), true), 15_000);
   worker.postMessage({
-    type: "start", requestId, identity: `sha256:${requestId.toString(16).padStart(64, "0")}`,
+    type: "start", requestId, identity: `blake3:${requestId.toString(16).padStart(64, "0")}`,
     decoderWasmUrl: "https://asset.invalid/codec.wasm", decoderModule, inputSlot: producer.buffers, verifyPcm: true,
   } satisfies FlacWorkerRequest);
   try {

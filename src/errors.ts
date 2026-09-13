@@ -161,7 +161,7 @@ const CODES: Record<EngineWebAdapterErrorCode, CodeRow> = {
   },
   "stem.corrupt": {
     phase: "store",
-    remedy: "Republish the stem: the delivered bytes did not hash to the declared sha256 identity.",
+    remedy: "Republish the stem: the delivered bytes did not hash to the declared blake3 identity.",
     transient: false,
   },
   "stem.decode.asset": {

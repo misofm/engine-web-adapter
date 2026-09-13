@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { Effect, Exit, Fiber } from "effect";
 import { TestClock } from "effect/testing";
+import { createBLAKE3 } from "hash-wasm";
 
 import { EngineWebAdapterError } from "../src/errors.js";
 import {
@@ -21,11 +22,13 @@ import { acquireNamedLock } from "../src/stems/lock.js";
 import { registerSparseResolver } from "../src/stems/sparse-scheduling.js";
 import { sparseSourceProgramForTest } from "../src/stems/sparse-store.js";
 
+const identityHasher = await createBLAKE3(256);
+
 function expectation(bytes: Uint8Array, frames: number, shape: { readonly channels?: 1 | 2; readonly bitDepth?: 16 | 24 } = {}): SparsePcmExpectation {
   const channels = shape.channels ?? 1;
   const bitDepth = shape.bitDepth ?? 16;
   return {
-    identity: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    identity: `blake3:${identityHasher.init().update(bytes).digest("hex")}`,
     sampleRateHz: 48_000,
     channels,
     bitDepth,
@@ -1292,7 +1295,7 @@ describe("VerifiedSparsePcmStore", () => {
       fetch: async (input) => {
         await new Promise<void>((resolve) => setTimeout(resolve, 10));
         const identity = new URL(String(input)).pathname.slice(1);
-        return new Response(responseBody(packages.get(`sha256:${identity}`)), { status: 200 });
+        return new Response(responseBody(packages.get(`blake3:${identity}`)), { status: 200 });
       },
       createWorker: () => { throw new Error("silent sources must not create workers"); },
       hardwareConcurrency: 3,

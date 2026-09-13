@@ -20,8 +20,10 @@ export const FLAC_PACKAGE_MEMORY_COMPONENTS = Object.freeze({
   codecPendingOutput: MAXIMUM_CANONICAL_OUTPUT_BYTES,
   decodedInFlightWrite: MAXIMUM_CANONICAL_OUTPUT_BYTES,
   opfsWriteClone: MAXIMUM_CANONICAL_OUTPUT_BYTES,
-  /** One fixed 64 KiB SHA Wasm memory per host/Worker realm. */
-  sha256WasmScratch: 2 * 64 * 1024,
+  /** One 128 KiB BLAKE3 instance in each overlapping host/Worker operation. */
+  canonicalBlake3Wasm: 2 * 128 * 1024,
+  /** The main-realm sparse transport SHA instance remains independently live. */
+  transportSha256Wasm: 64 * 1024,
   metadataAndControl: 4 * 1024 + FLAC_INPUT_CONTROL_BYTES,
 });
 export const FLAC_ACCOUNTED_FIXED_BUFFER_BYTES = Object.values(FLAC_PACKAGE_MEMORY_COMPONENTS)

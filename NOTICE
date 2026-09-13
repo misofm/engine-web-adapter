@@ -1,15 +1,19 @@
 @misofm/engine-web-adapter
 Copyright 2026 Miso
 
-This product depends on @misofm/engine@0.1.0. The reviewed integration archive
+This product depends on @misofm/engine@0.2.4. The reviewed integration archive
 was packed from misofm/engine commit
-8a19a84813230713e8f1604db04be4dccf653283 with SHA256
-5694c21f1e4eb99f6366d7bcc0330f0af06744768810edc3cc6e0e186df09488.
+64018c1a97ea84224362b0c659f06756a186e3b7 with SHA256
+5a8b3e37d6b2718efe2063ae7a20b8cbbfe233db46606eb402658f86b07c2b15.
 This records reviewed source/archive identity, not registry publication.
 
-The incremental SHA-256 implementation and verified-store/session-gate
-invariants were adapted from the issue-authorized misofm/engine stem-store
-baseline at commit bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c.
+The transport SHA-256 implementation and verified-store/session-gate invariants
+were adapted from the issue-authorized misofm/engine stem-store baseline at
+commit bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c.
+
+Canonical PCM identity verification uses hash-wasm 4.12.0 under the MIT
+License. Its complete license text is included in
+`dist/codec-licenses/hash-wasm-LICENSE`.
 
 The bounded PCM pump and its serialized Worker self-drive/control queue were
 adapted from that same authorized Engine baseline. Ring allocation/writing,
@@ -20,6 +24,6 @@ attribution is shipped with the SDK that now owns these implementations.
 
 This product redistributes the pinned libFLAC 1.5.0 WebAssembly decoder owned
 and published by `@misofm/codec@0.1.0`. The packed adapter also bundles the
-public codec's Effect-powered worker implementation. The complete codec and
-Effect license texts, together with the codec's third-party notices and
+public codec's Effect-powered worker implementation. The complete codec,
+Effect, and hash-wasm license texts, together with the codec's third-party notices and
 licenses for the bundled Wasm asset, are included in `dist/codec-licenses/`.

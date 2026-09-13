@@ -9,6 +9,7 @@ import { BrowserBootError, Msb1RingWriter, PcmFeedError } from "@misofm/engine/b
 import { scratchBootWithWorker, prepareBrowserSessionWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createBLAKE3 } from "hash-wasm";
 
 import type { BrowserEngine } from "@misofm/engine/browser";
 import { EngineWebAdapterError, openEngineWebSession, openSparseEngineWebSession } from "../src/index.js";
@@ -21,8 +22,11 @@ import type { SparsePcmExpectation, SparsePcmSessionLease, SparsePcmSessionOptio
 import type { SparsePcmPumpSource } from "../src/stems/pump.js";
 import type { OpfsWorkerLike, OpfsWorkerRequest, OpfsWorkerResponse } from "../src/stems/opfs-worker-protocol.js";
 
-const IDENTITY = `sha256:${"a".repeat(64)}` as const;
-const IDENTITY_Z = `sha256:${"b".repeat(64)}` as const;
+const identityHasher = await createBLAKE3(256);
+const identityFor = (bytes: Uint8Array) => `blake3:${identityHasher.init().update(bytes).digest("hex")}` as const;
+
+const IDENTITY = `blake3:${"a".repeat(64)}` as const;
+const IDENTITY_Z = `blake3:${"b".repeat(64)}` as const;
 
 test("capabilities refuse before store or resolver work", async () => {
   let opened = false;
@@ -469,7 +473,7 @@ test("public sparse sessions report cold, warm, and all-silent progress through 
   const activePcm = new Uint8Array(activeFrames * 2);
   const coldFixture = sessionSparseProgressFixture(flac, activePcm, 50_000, 12_000);
   const silentFixture = sessionSparseProgressFixture(undefined, undefined, 60_000, 0);
-  const bodies = new Map<`sha256:${string}`, Uint8Array>([
+  const bodies = new Map<`blake3:${string}`, Uint8Array>([
     [coldFixture.expected.identity, coldFixture.body],
     [silentFixture.expected.identity, silentFixture.body],
   ]);
@@ -482,7 +486,7 @@ test("public sparse sessions report cold, warm, and all-silent progress through 
       return `https://fixture.invalid/${identity}`;
     },
     fetch: async (input) => {
-      const identity = new URL(String(input)).pathname.slice(1) as `sha256:${string}`;
+      const identity = new URL(String(input)).pathname.slice(1) as `blake3:${string}`;
       const body = bodies.get(identity);
       assert.ok(body, `fixture body for ${identity}`);
       fetched.push(identity);
@@ -824,7 +828,7 @@ const SPARSE_OWNED_BYTES = new Uint8Array([1, 2]);
 
 function sparseOwnedExpected(): SparsePcmExpectation {
   return {
-    identity: `sha256:${createHash("sha256").update(SPARSE_OWNED_BYTES).digest("hex")}`,
+    identity: identityFor(SPARSE_OWNED_BYTES),
     sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames: 1, canonicalBytes: 2,
   };
 }
@@ -1604,7 +1608,7 @@ function sessionSparseProgressFixture(
   activeStartFrame: number,
 ): { readonly body: Uint8Array; readonly expected: SparsePcmExpectation } {
   const canonical = new Uint8Array(frames * 2);
-  const identity = `sha256:${createHash("sha256").update(canonical).digest("hex")}` as `sha256:${string}`;
+  const identity = identityFor(canonical);
   const expected: SparsePcmExpectation = {
     identity, sampleRateHz: 48_000, channels: 1, bitDepth: 16, frames, canonicalBytes: canonical.byteLength,
   };
@@ -1985,13 +1989,13 @@ test("per-open ingest diagnostics preserve warm admission lifetime, independent 
   await assert.rejects(openEngineWebSession({ ...baseOptions(), ingestDiagnostics: early }), /only one open/);
 
   const pcm = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
-  const identity = `sha256:${createHash("sha256").update(pcm).digest("hex")}` as const;
+  const identity = identityFor(pcm);
   const sources: DeclaredStemSource[] = [{ id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: identity } }];
   const afterStore = new Error("stop after verified store");
   const makeWarm = () => {
     const backend = new MemoryStemStorageBackend();
     Object.assign(backend, { folderName: "miso-stems-v1" });
-    backend.files.set(`sha256-${identity.slice(7)}`, pcm);
+    backend.files.set(`blake3-${identity.slice(7)}`, pcm);
     backend.files.set("index.json", new TextEncoder().encode(JSON.stringify({ version: 1,
       stems: { [identity]: { bytes: pcm.length, pins: ["offline:existing"], lastUsedAt: 0 } } })));
     const reading = deferred<void>();
@@ -2023,9 +2027,9 @@ test("per-open ingest diagnostics preserve warm admission lifetime, independent 
   assert.equal(second.snapshot().residency!.active, 1);
   assert.equal(first.snapshot().residency!.limit, 3);
   assert.equal(second.snapshot().residency!.limit, 2);
-  assert.equal(first.snapshot().reservation!.fixedBufferBytes, 4_984_848);
+  assert.equal(first.snapshot().reservation!.fixedBufferBytes, 5_181_456);
   assert.equal(first.snapshot().reservation!.slotBytes, 8_388_608);
-  assert.equal(first.snapshot().reservation!.headroomBytes, 3_403_760);
+  assert.equal(first.snapshot().reservation!.headroomBytes, 3_207_152);
   const during = first.snapshot();
   one.proceed.resolve(); await firstDone;
   assert.equal(first.snapshot().residency!.active, 0);

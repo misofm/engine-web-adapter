@@ -1,11 +1,11 @@
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
 
 import { EngineWebAdapterError } from "../errors.js";
+import { createIncrementalBlake3, type IncrementalBlake3 } from "./blake3.js";
 import { registerForcedProgressObserver, sparseProgressReporter, type ProgressObserver } from "./progress.js";
 import { sparseResolverScheduling } from "./sparse-scheduling.js";
 import { assertStemIdentity } from "./identity.js";
 import { canonicalJsonBytes } from "./canonical-json.js";
-import { IncrementalSha256 } from "./sha256.js";
 import { OpfsStorageBackend, ownsOpfsWriteDeadlines } from "./storage.js";
 import type { StemStorageBackend, StemStorageWriter } from "./storage.js";
 import { acquireStemLock, sharedFor, type LockLease, type SharedLockState, type WebLockProvider } from "./lock.js";
@@ -904,8 +904,8 @@ function normalizeExpectation(value: { readonly identity: string; readonly sampl
 }
 
 function identityHex(identity: StemIdentity): string { return identity.slice(7); }
-function markerName(identity: StemIdentity): string { return `sparse-pcm-v1-commit-${identityHex(identity)}.json`; }
-function payloadName(identity: StemIdentity, generation: string): string { return `sparse-pcm-v1-data-${identityHex(identity)}-${safeFilePart(generation)}`; }
+function markerName(identity: StemIdentity): string { return `sparse-pcm-v1-commit-blake3-${identityHex(identity)}.json`; }
+function payloadName(identity: StemIdentity, generation: string): string { return `sparse-pcm-v1-data-blake3-${identityHex(identity)}-${safeFilePart(generation)}`; }
 function browserLocks(): WebLockProvider | undefined { return globalThis.navigator?.locks as unknown as WebLockProvider | undefined; }
 function randomInstanceId(): string { return globalThis.crypto?.randomUUID?.().replaceAll("-", "") ?? "sparse-store"; }
 function safeFilePart(value: string): string { const part = value.replace(/[^a-zA-Z0-9_-]/gu, "_"); if (part.length === 0 || part.length > 128) throw new RangeError("instanceId is not a bounded file component"); return part; }
@@ -990,8 +990,11 @@ function ingestAndCommit(
     // A backend may create a file and then reject/cancel the create promise;
     // cleanup must still know that this transaction owns that name.
     const dataWriter = yield* Effect.acquireRelease(backend.createWriter(dataName, operation.signal), (writer) => dataClosed ? Effect.void : backend.abort(writer, "data writer scope closed"), { interruptible: true });
+    const hash = yield* Effect.tryPromise({
+      try: createIncrementalBlake3,
+      catch: (cause) => new SparseBoundaryError({ message: "BLAKE3 verification could not initialize", cause }),
+    });
     const intervals: SparsePcmInterval[] = [];
-    const hash = new IncrementalSha256();
     let previousEnd = 0;
     let activeBytes = 0;
     let intervalBytes = 0;
@@ -1047,7 +1050,7 @@ function ingestAndCommit(
     }), previousEnd * frameBytes);
     const index = yield* Effect.try({ try: () => validateSparsePcmIndex({ format: SPARSE_PCM_FORMAT, identity: expected.identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth, frames: expected.frames, intervals, activeBytes, canonicalBytes: expected.canonicalBytes }, activeBytes), catch: (cause) => new SparseCorruptError({ message: "Derived sparse index is invalid", cause }) });
     if (asserted !== undefined) compareIndexes(asserted, index);
-    if (hash.digestHex() !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse active spans do not match canonical identity" });
+    if (hash.digest("hex") !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse active spans do not match canonical identity" });
     if (dataClosed) return yield* new SparseCorruptError({ message: "Sparse data writer closed unexpectedly" });
     yield* backend.close(dataWriter);
     dataClosed = true;
@@ -1172,7 +1175,7 @@ async function settlePhysical<T>(promise: PromiseLike<T>): Promise<void> {
   await Promise.resolve(promise).then(() => undefined, () => undefined);
 }
 function hashZeros(
-  hash: IncrementalSha256,
+  hash: IncrementalBlake3,
   bytes: number,
   signal: AbortSignal,
   onProgress?: (bytes: number) => void,
@@ -1261,7 +1264,10 @@ function verifyMarker(
     let readBytes = 0;
     let hashedBytes = 0;
     const data = admitted.data;
-    const hash = new IncrementalSha256();
+    const hash = yield* Effect.tryPromise({
+      try: createIncrementalBlake3,
+      catch: (cause) => new SparseBoundaryError({ message: "BLAKE3 verification could not initialize", cause }),
+    });
     const update = (chunk: Uint8Array): void => {
       const before = performance.now();
       hash.update(chunk);
@@ -1298,7 +1304,7 @@ function verifyMarker(
       stage: "verifying", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
     }), frameCursor * frameBytes, update);
     const beforeDigest = performance.now();
-    const digest = hash.digestHex();
+    const digest = hash.digest("hex");
     hashMs += performance.now() - beforeDigest;
     if (payloadCursor !== data.size || digest !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse payload failed canonical verification" });
     yield* checkSignal(signal);

@@ -23,7 +23,7 @@ import {
   type SparseStemManifest,
 } from "../src/stems/index.js";
 
-const ID_A = ("sha256:" + "a".repeat(64)) as `sha256:${string}`;
+const ID_A = ("blake3:" + "a".repeat(64)) as `blake3:${string}`;
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 
@@ -271,7 +271,7 @@ test("single-source identity and shape binding rejects every mismatch", () => {
     { identity: ID_A, sampleRateHz: 44_100, channels: 2, bitDepth: 16, frames: 20 },
     { identity: ID_A, sampleRateHz: 44_100, channels: 1, bitDepth: 24, frames: 20 },
     { identity: ID_A, sampleRateHz: 44_100, channels: 1, bitDepth: 16, frames: 21 },
-    { identity: ("sha256:" + "b".repeat(64)) as `sha256:${string}`, sampleRateHz: 44_100, channels: 1, bitDepth: 16, frames: 20 },
+    { identity: ("blake3:" + "b".repeat(64)) as `blake3:${string}`, sampleRateHz: 44_100, channels: 1, bitDepth: 16, frames: 20 },
   ] as const) assert.throws(() => assertSparseStemSessionBinding(manifest, expected), /identity|shape/u);
 });
 

@@ -1,7 +1,7 @@
 # @misofm/engine-web-adapter
 
 Headless, framework-neutral browser session hosting for
-`@misofm/engine@0.2.3`. Version 0.3 streams standards-compliant native FLAC
+`@misofm/engine@0.2.4`. Version 0.5 identifies canonical PCM with BLAKE3-256 and streams standards-compliant native FLAC
 through bounded HTTP ranges and a one-stem universal `@misofm/codec@0.1.1`
 Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
@@ -10,15 +10,15 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.4.2 @misofm/engine@0.2.3
+npm install @misofm/engine-web-adapter@0.5.0 @misofm/engine@0.2.4
 ```
 
-The package is ESM-only and remains pinned to exactly Engine `0.2.3` and
+The package is ESM-only and remains pinned to exactly Engine `0.2.4` and
 `@misofm/codec` `0.1.1`. The codec currently supports Node `>=22.23.2 <23`
 and Bun `>=1.4.2 <1.5`; browser consumers use the bundled public codec asset.
-The integration uses the published Engine 0.2.3 archive
-from commit `0d9af85d9cfeb8ccb2567aea26bdcf284a73fa0c`, SHA256
-`2fd0f6f6bc4c7e311fdd10610c6c26de810e564a89ad912fc1961bebd8d5c590`.
+The integration uses the published Engine 0.2.4 archive
+from commit `64018c1a97ea84224362b0c659f06756a186e3b7`, SHA256
+`5a8b3e37d6b2718efe2063ae7a20b8cbbfe233db46606eb402658f86b07c2b15`.
 This release adds indexed full-response stem acquisition: active FLAC chunks are
 decoded once into verified sparse PCM, and timeline gaps are generated as zeroes
 when the Engine reads them. The existing native-FLAC path remains available.
@@ -189,8 +189,10 @@ asset fields without discarding the other common fields; the low-level
   opaque and excluded.
 - Legacy defaults share one FIFO width. Opt-in processing separates decode/hash,
   physical FLAC delivery, and warm-cache verification.
-- PCM is not leased or pumped until exact byte count and incremental SHA-256
+- PCM is not leased or pumped until exact byte count and incremental BLAKE3-256
   verification succeeds and the staging file is promoted.
+- Indexed sparse chunk `flacSha256` and `pcmSha256` fields remain SHA-256
+  transport checks; the complete reconstructed stem identity is BLAKE3-256.
 - Canonical PCM is headerless interleaved little-endian PCM16 or PCM24 at
   44.1, 48, 88.2, or 96 kHz; there is no implicit sample-rate conversion.
 
@@ -355,8 +357,9 @@ again, or add transient ingest slots to the steady-state playing budget.
 
 ## Shared cache ownership
 
-`OpfsStemStore` accepts `folderName` so an application can continue using its
-existing version-1 cache. `store.read(identity)` returns its stored Blob;
+`OpfsStemStore` defaults to the algorithm-qualified
+`miso-engine-web-stems-blake3-v1` folder and accepts `folderName` for an
+application-owned namespace. `store.read(identity)` returns its stored Blob;
 `await store.setOfflinePin(identity, pinId, true)` adds durable `offline:<pinId>`
 intent, and `false` removes only that pin. Repeating the same operation is a
 no-op. Adding a missing identity rejects with `stem.not_found`; removing a

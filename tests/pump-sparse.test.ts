@@ -17,10 +17,10 @@ import type { SparsePcmDescriptor } from "../src/stems/sparse-store.js";
 import type { StemIdentity } from "../src/stems/types.js";
 import type { PumpWorkerRequest, PumpWorkerResponse } from "../src/stems/worker-protocol.js";
 
-const IDENTITY = `sha256:${"2".repeat(64)}` as StemIdentity;
+const IDENTITY = `blake3:${"2".repeat(64)}` as StemIdentity;
 
 function identityFor(digit: string): StemIdentity {
-  return `sha256:${digit.repeat(64)}` as StemIdentity;
+  return `blake3:${digit.repeat(64)}` as StemIdentity;
 }
 
 interface Interval { readonly startFrame: number; readonly frames: number }

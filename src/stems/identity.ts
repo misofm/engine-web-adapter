@@ -3,13 +3,13 @@ import type { SourceSpec } from "@misofm/engine";
 import { EngineWebAdapterError } from "../errors.js";
 import type { StemIdentity } from "./types.js";
 
-const STEM_IDENTITY = /^sha256:[0-9a-f]{64}$/u;
+const STEM_IDENTITY = /^blake3:[0-9a-f]{64}$/u;
 
 export function assertStemIdentity(value: string): asserts value is StemIdentity {
   if (!STEM_IDENTITY.test(value)) {
     throw new EngineWebAdapterError(
       "stem.invalid_declaration",
-      "Stem content must be sha256: followed by 64 lowercase hexadecimal digits",
+      "Stem content must be blake3: followed by 64 lowercase hexadecimal digits",
       { content: value },
     );
   }

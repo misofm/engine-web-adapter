@@ -73,7 +73,7 @@ export class OpfsStorageBackend implements StemStorageBackend {
     readonly createWorker?: () => OpfsWorkerLike;
     readonly idleGraceMs?: number;
   } = {}) {
-    this.#folderName = options.folderName ?? "miso-engine-web-stems-v1";
+    this.#folderName = options.folderName ?? "miso-engine-web-stems-blake3-v1";
     if (this.#folderName.length === 0 || this.#folderName === "." || this.#folderName === ".." || this.#folderName.includes("/")) {
       throw new RangeError("folderName must be one non-empty OPFS path component");
     }

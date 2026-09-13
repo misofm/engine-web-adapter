@@ -226,7 +226,7 @@ async function openSessionCommon(options: SessionOpenOptions, prepareSources: Pr
 
     const pumpSources: PcmPumpSource[] = orderedSources.map((source, index) => ({
       sourceId: source.id,
-      identity: source.spec.content as `sha256:${string}`,
+      identity: source.spec.content as `blake3:${string}`,
       channels: source.spec.channels,
       bitDepth: source.spec.bitDepth as 16 | 24,
       frames: exactFrames(source.spec.frames),
@@ -593,7 +593,7 @@ function sparseSessionSources(
     }
     return Object.freeze({
       sourceId: source.id,
-      identity: source.spec.content as `sha256:${string}`,
+      identity: source.spec.content as `blake3:${string}`,
       sampleRateHz,
       channels: source.spec.channels,
       bitDepth: source.spec.bitDepth,
@@ -682,7 +682,7 @@ function requirementsFor(leaseId: string, sources: readonly DeclaredStemSource[]
   return sources.map((source) => {
     if (source.id.length === 0 || ids.has(source.id)) throw new EngineWebAdapterError("session.declaration_mismatch", "Source IDs must be non-empty and unique", { sourceId: source.id });
     ids.add(source.id);
-    return { sourceId: source.id, identity: source.spec.content as `sha256:${string}`, bytes: canonicalPcmBytes(source.spec) };
+    return { sourceId: source.id, identity: source.spec.content as `blake3:${string}`, bytes: canonicalPcmBytes(source.spec) };
   });
 }
 
@@ -707,8 +707,8 @@ function snapshotSources(sources: readonly DeclaredStemSource[]): readonly Decla
 function expectationsFor(
   sources: readonly DeclaredStemSource[],
   sampleRateHz: number,
-): ReadonlyMap<`sha256:${string}`, CanonicalPcmExpectation> {
-  const expectations = new Map<`sha256:${string}`, CanonicalPcmExpectation>();
+): ReadonlyMap<`blake3:${string}`, CanonicalPcmExpectation> {
+  const expectations = new Map<`blake3:${string}`, CanonicalPcmExpectation>();
   for (const source of sources) {
     if (source.spec.bitDepth !== 16 && source.spec.bitDepth !== 24) {
       throw new EngineWebAdapterError("session.declaration_mismatch", "Browser FLAC delivery requires PCM16 or PCM24", {
@@ -716,7 +716,7 @@ function expectationsFor(
         bitDepth: source.spec.bitDepth,
       });
     }
-    const identity = source.spec.content as `sha256:${string}`;
+    const identity = source.spec.content as `blake3:${string}`;
     const expectation: CanonicalPcmExpectation = {
       sampleRateHz,
       channels: source.spec.channels,

@@ -137,7 +137,7 @@ test("a public codec cleanup trap poisons the worker after decode and blocks res
     worker.on("message", (message: FlacWorkerResponse | { readonly type: "runner-ready" } | { readonly type: "closed" }) => {
       if (message.type === "runner-ready") {
         const start: FlacWorkerRequest = {
-          type: "start", requestId: 91, identity: `sha256:${"b".repeat(64)}`,
+          type: "start", requestId: 91, identity: `blake3:${"b".repeat(64)}`,
           decoderWasmUrl: "https://asset.invalid/trap.wasm", decoderModule, inputSlot: producer.buffers,
         };
         worker.postMessage(start);
