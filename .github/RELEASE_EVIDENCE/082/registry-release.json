@@ -1,0 +1,8 @@
+{
+  "version": "0.4.1",
+  "dist.integrity": "sha512-MdEAh4uslMqLnZKWwC7z49mvva4L0vN09ExxM4QnMGQgFE5xag9v91eawhjeOVqHLpI0PCfTEuynLzbPOWUl/Q==",
+  "gitHead": "03431dc0af004b8ba89cbadc002cf52c5a5a18f6",
+  "workflow": "https://github.com/misofm/engine-web-adapter/actions/runs/34751730600",
+  "opfsWorkflow": "https://github.com/misofm/engine-web-adapter/actions/runs/34751677418",
+  "codec": "0.1.1"
+}

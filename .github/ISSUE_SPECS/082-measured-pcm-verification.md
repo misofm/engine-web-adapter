@@ -122,3 +122,7 @@ Full review, report, and immutable raw measurements are retained in `.github/REL
 ## Adapter 0.4.1 release preparation
 
 Codec 0.1.1 is published and registry-qualified at codec main `04093a95187308e41e142e29862bfee3fb0e20b6` (https://github.com/misofm/codec/actions/runs/34751375776). Adapter now pins that exact registry release and decoder hash `70caf38185675dff89498e89f98171d49ec6f143a56c6895088d93c35e2018cd`. Version 0.4.1 passed `npm run check` (329 tests) and both ordinary/indexed packed browser profiles against the released codec. The final macOS OPFS release check and trusted publication follow this commit.
+
+## Published release
+
+Adapter 0.4.1 was merged in PR #83 at `03431dc0af004b8ba89cbadc002cf52c5a5a18f6`, published through trusted publishing, and registry-qualified: https://github.com/misofm/engine-web-adapter/actions/runs/34751730600 . The final combined release passed actual Chromium/WebKit OPFS qualification: https://github.com/misofm/engine-web-adapter/actions/runs/34751677418 . Tag `v0.4.1` identifies that release. Registry identity is retained in `.github/RELEASE_EVIDENCE/082/registry-release.json`.
