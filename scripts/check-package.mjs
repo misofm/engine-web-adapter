@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
-assert.equal(packageJson.version, "0.5.0");
+assert.equal(packageJson.version, "0.5.1");
 assert.deepEqual(packageJson.dependencies, {
   "@misofm/codec": "0.1.1",
   "@misofm/engine": "0.2.4",

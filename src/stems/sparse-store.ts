@@ -21,6 +21,7 @@ import type { SparseStemResolverContext, StemIdentity, StemProgress } from "./ty
 
 const MAX_MARKER_BYTES = 8 * 1024 * 1024;
 const MAX_SPAN_BYTES = 128 * 1024;
+const WARM_VERIFY_READ_BYTES = 512 * 1024;
 const ZERO_BLOCK = new Uint8Array(64 * 1024);
 const MARKER_TAG = "miso_sparse_pcm_commit_v1" as const;
 const SUPPORTED_RATES = [44_100, 48_000, 88_200, 96_000] as const;
@@ -1281,9 +1282,9 @@ function verifyMarker(
       yield* hashZeros(hash, (interval.startFrame - frameCursor) * frameBytes, signal, (bytes) => onProgress?.({
         stage: "verifying", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
       }), frameCursor * frameBytes, update);
-      for (let offset = 0; offset < interval.frames * frameBytes; offset += MAX_SPAN_BYTES) {
+      for (let offset = 0; offset < interval.frames * frameBytes; offset += WARM_VERIFY_READ_BYTES) {
         yield* checkSignal(signal);
-        const end = Math.min(offset + MAX_SPAN_BYTES, interval.frames * frameBytes);
+        const end = Math.min(offset + WARM_VERIFY_READ_BYTES, interval.frames * frameBytes);
         const beforeRead = performance.now();
         const bytes = yield* readBlobBytes(backend, data, payloadCursor + offset, payloadCursor + end, signal, "Sparse payload read");
         readWaitMs += performance.now() - beforeRead;
