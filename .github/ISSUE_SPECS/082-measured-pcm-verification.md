@@ -95,3 +95,11 @@ required WebKit OPFS run is blocked on this Linux host by its known missing
 `FileSystemFileHandle` global; the established macOS qualification workflow
 remains the appropriate gate. Fresh independent review and root release remain
 pending; this candidate does not claim publication.
+
+The frozen implementation commit is `faf88955fd5c35282c0123554a475bed853014e6`.
+The post-commit final browser record is
+`/tmp/miso-simd-study/evidence/browser-candidate-final.json`; it reports this
+adapter commit and the selected SIMD backend, with PCM verification at 2,183.3
+ms (2,182.4–2,189.2) and all corpus identities/counts passing. The final record
+also reports one-worker decode at 2,200.9 ms and eight-worker makespan at 386.2
+ms for the paired codec candidate.
