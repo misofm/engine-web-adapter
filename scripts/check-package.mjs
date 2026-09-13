@@ -24,7 +24,7 @@ const report = JSON.parse(packed.stdout)[0];
 const names = new Set(report.files.map((file) => file.path));
 for (const required of [
   "dist/index.js", "dist/index.d.ts",
-  "dist/internal/engine-web-pcm-pump-worker.js", "dist/internal/engine-web-flac-worker.js",
+  "dist/internal/engine-web-pcm-pump-worker.js", "dist/internal/engine-web-flac-worker.js", "dist/internal/engine-web-sparse-verify-worker.js",
   "dist/internal/engine-web-flac-decoder.wasm",
   "dist/internal/engine-web-opfs-worker.js",
   "dist/codec-licenses/codec-LICENSE",

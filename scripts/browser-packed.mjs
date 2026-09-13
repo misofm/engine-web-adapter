@@ -69,6 +69,52 @@ class Capture extends AudioWorkletProcessor {
 }
 registerProcessor('capture-first-quantum', Capture);
 `);
+// Test-only worker entry used by the indexed lane. It instruments the actual
+// packed verification worker realm, while the production worker entry remains
+// untouched and the main-thread observer only sees ordinary protocol events.
+await writeFile(join(consumer, "public", "sparse-disposal-wrapper.js"), `
+const nativePostMessage = self.postMessage.bind(self);
+const nativeSlice = Blob.prototype.slice;
+const readBuffers = [];
+const readLengths = [];
+const queuedMessages = [];
+let entryLoaded = false;
+const queueUntilEntryLoaded = (event) => {
+  if (!entryLoaded) queuedMessages.push(event);
+};
+self.addEventListener("message", queueUntilEntryLoaded);
+const isDetached = (buffer) => {
+  try { new Uint8Array(buffer); return false; } catch { return true; }
+};
+Blob.prototype.slice = function(...args) {
+  const child = nativeSlice.apply(this, args);
+  const nativeArrayBuffer = child.arrayBuffer.bind(child);
+  Object.defineProperty(child, "arrayBuffer", { configurable: true, value: async (...readArgs) => {
+    const value = await nativeArrayBuffer(...readArgs);
+    const beforeNext = readBuffers.every(isDetached);
+    readBuffers.push(value);
+    readLengths.push(value.byteLength);
+    nativePostMessage({ type: "__miso_sparse_disposal_read__", beforeNext, length: value.byteLength });
+    return value;
+  }});
+  return child;
+};
+const postMessage = self.postMessage.bind(self);
+self.postMessage = (message, transfer) => {
+  if (message?.type === "complete" || message?.type === "failure") {
+    postMessage({ type: "__miso_sparse_disposal_terminal__", terminal: message.type,
+      jobId: message.jobId, generation: message.generation, identity: message.identity,
+      allDetached: readBuffers.every(isDetached), readCount: readBuffers.length, lengths: [...readLengths] });
+    readBuffers.length = 0;
+    readLengths.length = 0;
+  }
+  return transfer === undefined ? postMessage(message) : postMessage(message, transfer);
+};
+try { await import("/node_modules/@misofm/engine-web-adapter/dist/internal/engine-web-sparse-verify-worker.js"); }
+catch (error) { nativePostMessage({ type: "__miso_sparse_disposal_error__", message: String(error?.stack ?? error) }); throw error; }
+entryLoaded = true;
+for (const event of queuedMessages.splice(0)) self.onmessage?.(event);
+`);
 await writeFile(join(consumer, "fault-pump-worker.ts"), `
 import "./node_modules/@misofm/engine-web-adapter/dist/internal/engine-web-pcm-pump-worker.js";
 let fault;
@@ -180,7 +226,10 @@ const server = createServer(async (request, response) => {
       return;
     }
     const relative = pathname === "/" ? "index.html" : pathname.slice(1);
-    const path = join(dist, relative);
+    const packagePrefix = "/node_modules/@misofm/engine-web-adapter/";
+    const path = pathname.startsWith(packagePrefix)
+      ? join(consumer, "node_modules", "@misofm", "engine-web-adapter", pathname.slice(packagePrefix.length))
+      : join(dist, relative);
     const mime = mimeFor(path);
     requests.set(pathname, mime);
     response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
@@ -506,8 +555,47 @@ function assertIndexedResult(raw, fixture, requests, requestCounts, requestFailu
   assert.equal(raw?.warm?.decoderAssetFetches, 0, "indexed warm open fetched a decoder asset");
   assert.equal(raw?.warm?.decoderCompileCalls, 0, "indexed warm open compiled a decoder module");
   assert.equal(raw?.warm?.jobs, 0, "indexed warm open launched a decoder job");
+  assert.equal(raw?.warm?.sparseVerifyWorkers, 2, "indexed warm open did not construct two verification Workers");
+  assert.ok((raw?.warm?.sparseVerifyProgress ?? 0) > 0, "indexed warm Worker emitted no progress");
+  assert.equal(raw?.warm?.sparseVerifyCompletions, 2, "indexed warm Workers did not complete exactly once per source");
+  const disposalReads = raw?.warm?.disposalReads ?? [];
+  const disposalTerminals = raw?.warm?.disposalTerminals ?? [];
+  const expectedReadLengths = new Map([
+    [fixture.sources[0].profile.expected.identity, [432_000, 246_144, 432_000]],
+    [fixture.sources[1].profile.expected.identity, [432_000, 246_144, 432_000]],
+  ]);
+  assert.ok(disposalReads.length > 0, "indexed warm native Workers did not expose any Blob reads");
+  assert.equal(disposalReads.every((read) => read.beforeNext === true), true, "indexed warm Worker retained a prior read buffer");
+  assert.equal(disposalTerminals.length, raw?.warm?.sparseVerifyCompletions, "indexed warm disposal terminal count changed: " + JSON.stringify({ disposalTerminals, warm: raw?.warm }));
+  for (const terminal of disposalTerminals) {
+    assert.deepEqual(terminal.lengths, expectedReadLengths.get(terminal.identity), "indexed warm Worker read slices changed for " + terminal.identity);
+  }
+  assert.equal(disposalTerminals.every((terminal) => terminal.terminal === "complete" && terminal.allDetached === true && terminal.readCount > 0), true,
+    "indexed warm Worker did not detach every consumed read buffer before completion");
+  assert.equal(disposalTerminals.reduce((sum, terminal) => sum + terminal.readCount, 0), disposalReads.length,
+    "indexed warm disposal read and terminal counts diverged");
+  assert.equal(raw?.tail?.sparseVerifyWorkers, 1, "indexed active-tail proof did not construct one native verification Worker");
+  assert.equal(raw?.tail?.sparseVerifyCompletions, 1, "indexed active-tail proof did not complete exactly once");
+  assert.deepEqual(raw?.tail?.disposalReads?.map((read) => read.length), [512 * 1024, 512 * 1024, 61_568],
+    "indexed active-tail proof did not take two full reads and one tail");
+  assert.equal(raw?.tail?.disposalReads?.every((read) => read.beforeNext === true), true, "indexed active-tail proof retained a read buffer");
+  assert.equal(raw?.tail?.disposalTerminals?.length, 1, "indexed active-tail terminal count changed");
+  assert.equal(raw?.tail?.disposalTerminals?.[0]?.terminal, "complete");
+  assert.equal(raw?.tail?.disposalTerminals?.[0]?.allDetached, true, "indexed active-tail proof did not detach every read buffer");
+  assert.equal(raw?.tail?.disposalTerminals?.[0]?.readCount, 3);
+  assert.deepEqual(raw?.tail?.disposalTerminals?.[0]?.lengths, [512 * 1024, 512 * 1024, 61_568]);
+  assert.equal(raw?.tail?.complete?.identity, raw?.tail?.identity);
+  assert.equal("blake3:" + raw?.tail?.complete?.digest, raw?.tail?.identity, "indexed active-tail digest did not match its independent oracle");
+  assert.equal(raw?.tail?.complete?.canonicalBytes, 1_110_144);
+  assert.equal(raw?.tail?.complete?.hashedBytes, 1_110_144);
+  assert.equal(raw?.tail?.complete?.progressBytes, 1_110_144);
+  assert.equal(raw?.tail?.complete?.readCalls, 3);
+  assert.equal(raw?.tail?.complete?.readBytes, 1_110_144);
+  assert.equal(raw?.tail?.complete?.zeroUpdates, 0);
+  assert.equal(raw?.tail?.complete?.hashUpdates, 3);
   assert.equal(raw?.warm?.spanCount, 0, "indexed warm open remapped stored PCM");
-  assert.deepEqual(raw?.warm?.progress?.stages, ["verifying", "source-ready", "ready"], "indexed warm progress reacquired cold stages");
+  assert.equal(raw?.warm?.progress?.stages?.[0], "verifying", "indexed warm progress omitted verification");
+  assert.equal(raw?.warm?.progress?.stages?.at(-1), "ready", "indexed warm progress omitted aggregate readiness");
   const multiSourceJobs = fixture.sources.length * fixture.sources[0].profile.chunks.length;
   assert.equal(raw?.serial?.maximumWorkers, 1, "indexed serial comparison used the wrong worker policy");
   assert.equal(raw?.serial?.physicalWorkers, 1, "indexed serial comparison constructed more than one Worker");
@@ -541,17 +629,18 @@ function assertIndexedResult(raw, fixture, requests, requestCounts, requestFailu
   assert.equal(raw?.silent?.decoderCompileCalls, 0, "all-silent source must not compile a decoder module");
   assert.deepEqual(raw?.silent?.progress?.stages, ["probing", "fetching", "ingesting", "source-ready", "ready"], "all-silent source did not expose zero-byte progress");
   assert.equal(raw?.workers?.allTerminated, true, "indexed physical Workers did not terminate after store close");
+  assert.equal(raw?.workers?.sparseAllTerminated, true, "indexed verification Workers did not terminate after store close");
   assert.deepEqual(raw?.workers?.errors, []);
   assert.deepEqual(requestFailures, []);
   assert.deepEqual(consoleErrors, []);
-  for (const [delivery, expectedCount] of [[fixture.sources[0], 3], [fixture.sources[1], 2], [fixture.silent, 1]]) {
+  for (const [delivery, expectedCount] of [[fixture.sources[0], 3], [fixture.sources[1], 3], [fixture.silent, 1]]) {
     assert.equal(requestCounts.get(delivery.profile.url), expectedCount, `${delivery.profile.name} was fetched an unexpected number of times`);
     assert.equal(requests.get(delivery.profile.url), "application/octet-stream", `${delivery.profile.name} MIME changed`);
   }
   const decoderPaths = [...requests.keys()].filter((path) => (path.includes("engine-web-flac-decoder") || path.includes("flac-decoder")) && path.endsWith(".wasm"));
   assert.equal(decoderPaths.length, 1, "decoder Wasm URL changed or was fetched through multiple assets");
   assert.equal(requests.get(decoderPaths[0]), "application/wasm", "decoder Wasm MIME changed");
-  assert.equal(requestCounts.get(decoderPaths[0]), 3, "each native resolver did not fetch its decoder asset exactly once");
+  assert.equal(requestCounts.get(decoderPaths[0]), 4, "each native resolver did not fetch its decoder asset exactly once");
   console.log(JSON.stringify({ profile: "indexed-sparse-reuse", origin: `http://127.0.0.1:${port}`,
     sources: fixture.sources.map((delivery) => ({ name: delivery.profile.name, ...delivery.profile })),
     silent: fixture.silent.profile, ...raw, requests: [...requests.entries()], requestCounts: [...requestCounts.entries()], requestFailures, consoleErrors }));
@@ -586,6 +675,7 @@ function indexedBrowserSource(fixture) {
   };
   return String.raw`
 import { createSparseStemResolver, OpfsStorageBackend, VerifiedSparsePcmStore, readSparsePcmWindow } from "@misofm/engine-web-adapter/stems";
+import { blake3 } from "hash-wasm";
 
 declare global { var __result: unknown; var __error: unknown }
 const fixture = ${JSON.stringify(browserFixture)} as const;
@@ -598,6 +688,9 @@ let networkRequests = 0;
 let decoderAssetFetches = 0;
 let decoderCompileCalls = 0;
 let flacWorkers = 0;
+let sparseVerifyWorkers = 0;
+let sparseVerifyProgress = 0;
+let sparseVerifyCompletions = 0;
 let spanCount = 0;
 let activeJobs = 0;
 let activePeak = 0;
@@ -622,6 +715,8 @@ interface WorkerJob {
 interface RunnablePhase {
   readonly buffer: SharedArrayBuffer;
   readonly buffers: Set<SharedArrayBuffer>;
+  readonly disposalReads: Array<{ readonly beforeNext: boolean; readonly length: number }>;
+  readonly disposalTerminals: Array<{ readonly workerId: number; readonly terminal: string; readonly jobId: number; readonly generation: number; readonly identity: string | undefined; readonly allDetached: boolean; readonly readCount: number; readonly lengths: readonly number[] }>;
   nextBit: number;
 }
 interface WorkerRecord {
@@ -635,6 +730,7 @@ interface WorkerRecord {
   runnableMask: number | undefined;
 }
 let runnablePhase: RunnablePhase | undefined;
+const sparseDisposalWrapperUrl = new URL("/sparse-disposal-wrapper.js", location.href);
 const observedFetch: typeof fetch = async (input, init) => {
   const url = input instanceof Request ? input.url : new URL(input, location.href).href;
   if (identityForUrl(url) !== undefined) networkRequests += 1;
@@ -654,17 +750,37 @@ try {
 }
 globalThis.Worker = class ObservedWorker extends NativeWorker {
   readonly observedRecord: WorkerRecord;
+  readonly disposalRelays = new Map<any, (event: MessageEvent) => void>();
   constructor(url: string | URL, options?: WorkerOptions) {
-    super(url, options);
     const label = String(url);
+    super(label.includes("sparse-verify-worker") ? sparseDisposalWrapperUrl : url, options);
     const record: WorkerRecord = { id: nextWorkerId++, label, jobs: [], completions: [], terminated: false,
       resetCount: 0, runnablePhase: undefined, runnableMask: undefined };
     this.observedRecord = record;
     workerByObject.set(this, record);
     workerRecords.push(record);
     if (label.includes("flac-worker")) flacWorkers += 1;
+    if (label.includes("sparse-verify-worker")) sparseVerifyWorkers += 1;
+    if (label.includes("sparse-verify-worker")) {
+      super.addEventListener("message", (event) => {
+        const message = event.data as { readonly type?: string; readonly beforeNext?: boolean; readonly length?: number;
+          readonly terminal?: string; readonly jobId?: number; readonly generation?: number; readonly identity?: string;
+          readonly allDetached?: boolean; readonly readCount?: number; readonly lengths?: unknown };
+        if (message.type === "__miso_sparse_disposal_read__" && runnablePhase !== undefined) {
+          runnablePhase.disposalReads.push({ beforeNext: message.beforeNext === true, length: Number(message.length) });
+        } else if (message.type === "__miso_sparse_disposal_terminal__" && runnablePhase !== undefined) {
+          runnablePhase.disposalTerminals.push({ workerId: record.id, terminal: String(message.terminal), jobId: Number(message.jobId), generation: Number(message.generation), identity: message.identity,
+            allDetached: message.allDetached === true, readCount: Number(message.readCount), lengths: Array.isArray(message.lengths) ? message.lengths.map(Number) : [] });
+        }
+      });
+    }
     this.addEventListener("message", (event) => {
       const message = event.data as { readonly type?: string; readonly requestId?: number; readonly reset?: boolean; readonly metrics?: { readonly decodeMs?: number } };
+      if (label.includes("sparse-verify-worker")) {
+        if (message.type === "progress") sparseVerifyProgress += 1;
+        if (message.type === "complete") sparseVerifyCompletions += 1;
+        return;
+      }
       if (!label.includes("flac-worker") || typeof message.requestId !== "number") return;
       const job = [...record.jobs].reverse().find((candidate) => candidate.requestId === message.requestId && !candidate.completed);
       if (job === undefined) return;
@@ -685,12 +801,50 @@ globalThis.Worker = class ObservedWorker extends NativeWorker {
       activeJobs = Math.max(0, activeJobs - 1);
     });
     this.addEventListener("error", (event) => {
-      if (label.includes("flac-worker")) workerErrors.push({ worker: label, message: event.message,
+      if (label.includes("flac-worker") || label.includes("sparse-verify-worker")) workerErrors.push({ worker: label, message: event.message,
         filename: event.filename, line: event.lineno, column: event.colno, error: event.error?.message });
     });
     this.addEventListener("messageerror", () => {
-      if (label.includes("flac-worker")) workerErrors.push({ worker: label, error: "messageerror" });
+      if (label.includes("flac-worker") || label.includes("sparse-verify-worker")) workerErrors.push({ worker: label, error: "messageerror" });
     });
+  }
+  override addEventListener(type: string, listener: any, options?: any): void {
+    const record = workerByObject.get(this);
+    if (type !== "message" || record === undefined || !record.label.includes("sparse-verify-worker")) {
+      super.addEventListener(type, listener, options);
+      return;
+    }
+    const relay = (event: MessageEvent) => {
+      const message = event.data as { readonly type?: string; readonly beforeNext?: boolean; readonly length?: number;
+        readonly terminal?: string; readonly jobId?: number; readonly generation?: number; readonly identity?: string;
+        readonly allDetached?: boolean; readonly readCount?: number; readonly lengths?: unknown };
+      if (message.type === "__miso_sparse_disposal_read__") {
+        return;
+      }
+      if (message.type === "__miso_sparse_disposal_terminal__") {
+        return;
+      }
+      if (message.type === "__miso_sparse_disposal_error__") {
+        workerErrors.push({ worker: record.label, error: "wrapper-error", message: String(message.message) });
+        return;
+      }
+      if (message.type === "__miso_sparse_disposal_boot__") {
+        workerErrors.push({ worker: record.label, error: "wrapper-boot" });
+        return;
+      }
+      listener(event);
+    };
+    this.disposalRelays.set(listener, relay);
+    super.addEventListener(type, relay, options);
+  }
+  override removeEventListener(type: string, listener: any, options?: any): void {
+    const relay = this.disposalRelays.get(listener);
+    if (type === "message" && relay !== undefined) {
+      this.disposalRelays.delete(listener);
+      super.removeEventListener(type, relay, options);
+      return;
+    }
+    super.removeEventListener(type, listener, options);
   }
   override postMessage(message: any, transfer?: Transferable[]): void {
     const record = workerByObject.get(this);
@@ -750,6 +904,9 @@ function resolverFor(maximumWorkers: number) {
     fetch: observedFetch,
     readDeadlineMs: 30_000,
     maximumWorkers,
+    // Candidate warm verification is funded only by explicit unused headroom;
+    // the derived cold width remains capped by maximumWorkers.
+    memoryBudgetBytes: maximumWorkers * 8 * 1024 * 1024 + 4 * 1024 * 1024,
     hardwareConcurrency: maximumWorkers === 1 ? 2 : 4,
     deviceMemory: maximumWorkers === 1 ? 1 : 2,
   });
@@ -764,11 +921,11 @@ function startPhase(): Counters {
   if (activeJobs !== 0) throw new Error("indexed Worker jobs remained active between phases");
   activePeak = 0;
   const buffer = new SharedArrayBuffer(8);
-  runnablePhase = { buffer, buffers: new Set([buffer]), nextBit: 0 };
+  runnablePhase = { buffer, buffers: new Set([buffer]), disposalReads: [], disposalTerminals: [], nextBit: 0 };
   return counters();
 }
 function counters() {
-  return { locateCalls, networkRequests, decoderAssetFetches, decoderCompileCalls, flacWorkers, spanCount,
+  return { locateCalls, networkRequests, decoderAssetFetches, decoderCompileCalls, flacWorkers, sparseVerifyWorkers, sparseVerifyProgress, sparseVerifyCompletions, spanCount,
     starts: workerRecords.reduce((sum, worker) => sum + worker.jobs.length, 0), workerCount: workerRecords.length, runnablePhase };
 }
 function runnablePeaks(phase: RunnablePhase | undefined): number[] {
@@ -789,6 +946,9 @@ function delta(before: Counters) {
     decoderAssetFetches: decoderAssetFetches - before.decoderAssetFetches,
     decoderCompileCalls: decoderCompileCalls - before.decoderCompileCalls,
     physicalWorkers: flacWorkers - before.flacWorkers,
+    sparseVerifyWorkers: sparseVerifyWorkers - before.sparseVerifyWorkers,
+    sparseVerifyProgress: sparseVerifyProgress - before.sparseVerifyProgress,
+    sparseVerifyCompletions: sparseVerifyCompletions - before.sparseVerifyCompletions,
     jobs: workerRecords.reduce((sum, worker) => sum + worker.jobs.length, 0) - before.starts,
     spanCount: spanCount - before.spanCount,
     activePeak,
@@ -802,8 +962,51 @@ function delta(before: Counters) {
     workerResetCounts: workers.map((worker) => worker.resetCount),
     workerInputSlotIds: workers.flatMap((worker) => worker.jobs.map((job) => job.inputSlotId)),
     workerModuleFlags: workers.flatMap((worker) => worker.jobs.map((job) => job.moduleProvided)),
+    disposalReads: before.runnablePhase?.disposalReads ?? [],
+    disposalTerminals: before.runnablePhase?.disposalTerminals ?? [],
     stages: [],
   };
+}
+async function runTailDisposalProof() {
+  const frameBytes = 6;
+  const frames = 185_024;
+  const payload = new Uint8Array(frames * frameBytes);
+  for (let index = 0; index < payload.length; index += 1) payload[index] = (index * 29 + 7) & 0xff;
+  const identity = "blake3:" + await blake3(payload, 256);
+  const intervals = new Float64Array([0, frames, 0]).buffer;
+  const before = startPhase();
+  const worker = new Worker("/node_modules/@misofm/engine-web-adapter/dist/internal/engine-web-sparse-verify-worker.js", { type: "module" });
+  let complete;
+  let timer;
+  let onTerminal;
+  try {
+    complete = await new Promise((resolve, reject) => {
+      const finish = (result, error) => {
+        if (timer !== undefined) clearTimeout(timer);
+        worker.removeEventListener("message", onTerminal);
+        if (error === undefined) resolve(result);
+        else reject(error);
+      };
+      onTerminal = (event) => {
+        const message = event.data;
+        if (message?.type === "progress") {
+          worker.postMessage({ type: "ack", version: 1, jobId: message.jobId, generation: message.generation, bytes: message.bytes });
+        } else if (message?.type === "complete") finish(message);
+        else if (message?.type === "failure") finish(undefined, new Error("tail disposal proof failed: " + message.kind + ": " + message.message));
+      };
+      worker.addEventListener("message", onTerminal);
+      timer = setTimeout(() => finish(undefined, new Error("tail disposal proof timed out")), 10_000);
+      worker.postMessage({ type: "start", version: 1, jobId: 1, generation: 1, identity, frames, channels: 2, bitDepth: 24,
+        frameBytes, canonicalBytes: payload.byteLength, activeBytes: payload.byteLength, intervalCount: 1, intervals,
+        data: new Blob([payload]), readDeadlineMs: 5_000 }, [intervals]);
+    });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (onTerminal !== undefined) worker.removeEventListener("message", onTerminal);
+    worker.terminate();
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return { ...delta(before), identity, complete };
 }
 function stageSummary(events: readonly Record<string, unknown>[]): string[] {
   const stages: string[] = [];
@@ -916,29 +1119,41 @@ try {
   const second = fixture.sources[1];
   const coldEvents: Record<string, unknown>[] = [];
   const coldResources = newStore("cold");
-  const coldResolver = resolverFor(1);
+  const coldPrimeResolver = resolverFor(1);
+  // Prime the second committed source before the measured cold arm so the
+  // candidate warm arm can exercise two native Worker URLs without adding a
+  // second source to the shipped one-source cold comparison.
+  startPhase();
+  const warmPrime = await openCold(coldResources.store, coldPrimeResolver, second, "warm-prime-second", []);
+  await warmPrime.close();
   const coldBefore = startPhase();
+  const coldResolver = resolverFor(1);
   const coldLease = await openCold(coldResources.store, coldResolver, first, "cold-source", coldEvents);
   const coldWorkersAtOpen = workersAtOpen(coldBefore);
   const coldDescriptor = await coldLease.read(first.expected.identity);
   const coldProof = await proveDescriptor(coldDescriptor, first);
   const coldProgress = assertProgress(coldEvents, [first], ["probing", "fetching", "decoding", "ingesting", "source-ready", "ready"]);
   await coldLease.close();
+  const cold = { ...delta(coldBefore), maximumWorkers: 1, workersAtOpen: coldWorkersAtOpen, progress: coldProgress, proof: coldProof };
   const warmEvents: Record<string, unknown>[] = [];
   const warmBefore = startPhase();
+  const warmResolver = resolverFor(2);
   const warmLease = await coldResources.store.openSession({
     leaseId: "warm-source",
-    sources: [sourceDeclaration(first, "warm-source")],
+    sources: [sourceDeclaration(first, "warm-source-first"), sourceDeclaration(second, "warm-source-second")],
+    // Preserve the native resolver registration so this packed fixture covers
+    // the preparation-owned warm Worker path.
+    resolve: warmResolver,
     onProgress: (event) => warmEvents.push({ ...event }),
   });
-  const warmDescriptor = await warmLease.read(first.expected.identity);
-  const warmProof = await proveDescriptor(warmDescriptor, first);
-  const warmProgress = assertProgress(warmEvents, [first], ["verifying", "source-ready", "ready"]);
+  const warmProofs = [];
+  for (const source of [first, second]) warmProofs.push(await proveDescriptor(await warmLease.read(source.expected.identity), source));
+  const warmProgress = assertProgress(warmEvents, [first, second], ["verifying", "source-ready", "ready"]);
   await warmLease.close();
   await coldResources.store.close();
   coldResources.backend.close();
-  const cold = { ...delta(coldBefore), maximumWorkers: 1, workersAtOpen: coldWorkersAtOpen, progress: coldProgress, proof: coldProof };
-  const warm = { ...delta(warmBefore), maximumWorkers: 0, workersAtOpen: [], progress: warmProgress, proof: warmProof };
+  const warm = { ...delta(warmBefore), maximumWorkers: 2, workersAtOpen: [], progress: warmProgress, proofs: warmProofs };
+  const tail = await runTailDisposalProof();
 
   const serialEvents: Record<string, unknown>[] = [];
   const serialResources = newStore("serial");
@@ -989,7 +1204,13 @@ try {
 
   // Let reset/completion and terminate tasks publish their final browser events before reporting evidence.
   await new Promise((resolve) => setTimeout(resolve, 0));
-  result = { cold, warm, serial, concurrent, silent, workers: { allTerminated: workerRecords.filter((worker) => worker.label.includes("flac-worker")).every((worker) => worker.terminated), records: workerRecords.filter((worker) => worker.label.includes("flac-worker")).map((worker) => ({ id: worker.id, jobs: worker.jobs.length, completions: worker.completions, resetCount: worker.resetCount, terminated: worker.terminated })), errors: workerErrors } };
+  result = { cold, warm, tail, serial, concurrent, silent, workers: {
+    allTerminated: workerRecords.filter((worker) => worker.label.includes("flac-worker")).every((worker) => worker.terminated),
+    sparseAllTerminated: workerRecords.filter((worker) => worker.label.includes("sparse-verify-worker")).every((worker) => worker.terminated),
+    records: workerRecords.filter((worker) => worker.label.includes("flac-worker")).map((worker) => ({ id: worker.id, jobs: worker.jobs.length, completions: worker.completions, resetCount: worker.resetCount, terminated: worker.terminated })),
+    sparseRecords: workerRecords.filter((worker) => worker.label.includes("sparse-verify-worker")).map((worker) => ({ id: worker.id, terminated: worker.terminated })),
+    errors: workerErrors,
+  } };
 } catch (error) {
   failure = error;
 }
