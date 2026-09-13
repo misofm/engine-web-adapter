@@ -134,3 +134,5 @@ A source PASS or tarball alone does not establish published app dependencies.
 
 Scope amendment only. The old three-method delegation and instruction to retain
 adapter measurement ownership are superseded. No new runtime result is claimed.
+
+Coordination entry point: https://github.com/misofm/engine/issues/796 . Independent follow-ups https://github.com/misofm/engine/issues/797 , https://github.com/misofm/engine-web-adapter/issues/101 and https://github.com/misofm/engine-web-adapter/issues/102 do not block this issue or app #210.

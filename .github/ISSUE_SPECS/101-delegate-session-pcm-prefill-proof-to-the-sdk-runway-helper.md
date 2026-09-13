@@ -1,0 +1,65 @@
+# Delegate session PCM prefill proof to the SDK runway helper
+
+Depends on misofm/engine#797 and a published SDK containing its
+`waitForPcmRunway` contract for final package acceptance. Independent of adapter
+misofm/engine-web-adapter#95, misofm/engine-web-adapter#102 and app misofm/app#210; never hold their delivery for this work.
+
+## Smallest outcome and facts
+
+Dense and sparse session opening/seek use the SDK's generic PCM runway proof,
+leaving this adapter responsible for its producer and aggregate choreography.
+Current source baseline is main
+`f833303f146de7cbe1705fe88ae68a6d6e0d4e45`; refresh before implementation.
+`src/feed.ts`, `src/scratch.ts` and `src/stems/ring.ts` already delegate to SDK
+primitives. Only `src/session.ts::waitForRunway` duplicates the generic generation,
+contiguity and ring-capacity proof. This is source-level ownership evidence.
+
+## Required change
+
+1. Replace that algorithm with SDK `waitForPcmRunway`. Opening supplies existing
+   source totals/rings, frame 0, generation 1 and the current two-second timeout;
+   seek supplies its acknowledged target/full generation and the same deadline.
+   Omit `minimumFrames` to retain today's full-capacity/EOF-clamped policy.
+2. Keep source `pump.seekFrames`, feed attachment/`prepareSeek`, context-state
+   checks, suspension/resumption, serialized transport, producer/refill work and
+   terminal cleanup exactly at their current composition seam. The helper never
+   grants permission to skip these steps or resumes audio itself.
+3. Remove now-unused per-prefill observer construction and direct protocol
+   checks. Keep the existing diagnostic/source-observation objects because they
+   have independent callers. Do not alter ring/read cursor behavior or prefetch.
+4. Translate `PcmRunwayError` into existing `session.open`/`session.seek` failures,
+   preserving source ID, cause and timeout/mismatch distinction in details.
+   Preserve abort/close semantics and meaningful SDK usage errors. No second
+   fallback algorithm or copy retained after migration.
+5. Preserve dense/sparse canonical BLAKE3/count checks, warm/cold worker limits,
+   512 KiB reads, 128 KiB ingest bounds, 64 KiB zero checkpoints, source-specific
+   cleanup/locks, current diagnostics and all playback behavior. No codec,
+   storage framework, source-policy expansion or transport rewrite.
+
+## Focused proof and delivery
+
+Files: `src/session.ts`, an existing error translation seam only if needed,
+`tests/session.test.ts`, README and package/provenance pins when adopting the
+published SDK. Reuse existing opening, suspended/running seek and failure tests:
+full current-generation prefill before success, wrong generation/contiguity,
+EOF, timeout/cancellation, close during seek, and restore-running only after
+successful proof. Assert consumer preparation precedes the SDK call and a
+failure still completes aggregate cleanup. SDK owns detailed ring unit cases;
+do not duplicate its matrix or add an engine factory just for testing.
+
+Root commits one focused-green implementation tranche. Run `npm run check`;
+for a released candidate run existing packed-browser/publish-dry-run gates and
+fresh-consumer dependency checks once. Package with another coherent adapter
+release when available; do not delay misofm/engine-web-adapter#95/app plotting to manufacture batching.
+Final published adoption needs exact SDK/adapter versions, merged source SHAs,
+registry integrities and existing provenance/attestation checks. If it cannot
+share misofm/engine-web-adapter#95's cut, use a stateless ordinary release issue for publication and
+record that dependency explicitly; source availability is never registry proof.
+
+Luna XHIGH implements; a fresh Astra MEDIUM independently verifies and fixes
+concrete in-scope bugs only; coordinator is a separate fresh Astra MEDIUM.
+Maximum five coherent attempts with one verdict each; preserve evidence and
+rebrief after five failures. Root synchronizes numbered local/GitHub evidence,
+integrates latest main, and closes after PASS, merged delivery, required CI and
+the published adoption evidence; verify remote CLOSED. No new results claimed
+by this scope-only brief.
