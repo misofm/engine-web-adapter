@@ -63,7 +63,7 @@ jobs:
           [[ "$(node -p "require('./package.json').version")" == "$PACKAGE_VERSION" ]]
           [[ "$(node -p "require('./package-lock.json').name")" == "$PACKAGE_NAME" ]]
           [[ "$(node -p "require('./package-lock.json').version")" == "$PACKAGE_VERSION" ]]
-          [[ "$(node -p "require('./package.json').dependencies['@misofm/engine']")" == "0.2.3" ]]
+          [[ "$(node -p "require('./package.json').dependencies['@misofm/engine']")" == "0.2.4" ]]
           [[ "$(node -p "require('./package.json').repository.url")" == "git+https://github.com/misofm/engine-web-adapter.git" ]]
 
       - name: Install dependencies
@@ -127,7 +127,7 @@ jobs:
             [[ "$attempt" == 60 ]] && { echo "registry did not converge" >&2; exit 1; }
             sleep 5
           done
-          [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dependencies.@misofm/engine)" == "0.2.3" ]]
+          [[ "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dependencies.@misofm/engine)" == "0.2.4" ]]
           consumer=$(mktemp -d)
           trap 'rm -rf -- "$consumer"' EXIT
           cd "$consumer"
