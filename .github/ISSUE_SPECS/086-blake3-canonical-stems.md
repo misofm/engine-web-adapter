@@ -1,0 +1,9 @@
+# BLAKE3 canonical stem verification
+
+User authorized clean prelaunch BLAKE3-256 canonical PCM identities with regeneration of existing prelaunch sessions. No SHA-256 canonical identity compatibility path. Adopt exact hash-wasm4.12.0 incremental BLAKE3 for canonical full-stem verification and `blake3:<64 lowercase hex>` identity grammar across sparse/dense host paths. Preserve PCM byte serialization, exact byte-count/refusal semantics, cancellation, bounded admission and storage cleanup.
+
+Keep `flacSha256` and `pcmSha256` per-chunk transport checks, artifact/package/codec SHA hashes and wire V1 names unchanged. Retain existing SHA helper only for those checks. No decoder optimization, OPFS chunk-size/worker topology change, or broad format redesign. BLAKE3 state belongs to one verification operation, never concurrently shared; account its bounded memory and release/reuse lifecycle. No top-level work that defeats browser packaging/lazy loading. Consume new engine SDK0.2.4 from engine issue787.
+
+Gates: official BLAKE3 vectors, canonical PCM vectors including gaps/raw float bytes where supported, independent interleaved states, byte-count and corruption refusals, cancellation/observer isolation, SHA identity rejection, bounded memory/accounting, complete package checks, packed fresh browser consumer and actual Chromium/WebKit OPFS cold/warm/offline verification. Benchmark the real Ghost load after regeneration; the earlier synthetic58% reduction is not a load-time claim.
+
+Sol /root/blake3_scope supplied the scope. Sol implements and a fresh Sol adversarially verifies per AGENTS. Root owns exact-path checkpoints, publication and cross-repo coordination. Start adapter main505c7b1; appmain61812c3 and CLI main9e6344f are consumers. Synthetic benchmark evidence: /tmp/miso-hash-wasm-eval/results.json. No artist media or generated caches in public commits.
