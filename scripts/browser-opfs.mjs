@@ -263,7 +263,7 @@ async function sparseGate() {
   let lateDataSeenAtAbort = false;
   lateCancelBackend.estimate = async () => {
     const estimate = await originalEstimate();
-    lateDataSeenAtAbort = (await lateCancelBackend.list()).some((name) => name.startsWith("sparse-pcm-v1-data-" + identity.slice(7) + "-"));
+    lateDataSeenAtAbort = (await lateCancelBackend.list()).some((name) => name.startsWith("sparse-pcm-v1-data-blake3-" + identity.slice(7) + "-"));
     lateController.abort(new DOMException("quota observation cancelled", "AbortError"));
     return estimate;
   };
