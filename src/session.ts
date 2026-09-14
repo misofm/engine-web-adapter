@@ -21,7 +21,7 @@ import {
 import type { BrowserEngine, CreateEngineOptions } from "@misofm/engine/browser";
 
 import { ADAPTER_ASSETS } from "./assets.js";
-import { assertEngineWebCapabilities } from "./capabilities.js";
+import { assertEngineRuntimeCapabilities, assertOpfsStorageCapabilities } from "./capabilities.js";
 import { attachSessionControl } from "./console.js";
 import type { SessionControl } from "./console.js";
 import { EngineWebAdapterError } from "./errors.js";
@@ -80,6 +80,7 @@ function sparseSessionCancellationError(cause: unknown): SparseSessionCancellati
 
 export async function openEngineWebSession(options: EngineWebSessionOptions): Promise<EngineWebSession> {
   const { flac, resolver, store, createPump, ingestDiagnostics, assets, onProgress } = options;
+  const storeSupplied = store !== undefined;
   bindIngestDiagnostics(ingestDiagnostics);
   const hasFlac = flac !== undefined;
   const hasResolver = resolver !== undefined;
@@ -90,13 +91,14 @@ export async function openEngineWebSession(options: EngineWebSessionOptions): Pr
       { hasFlac, hasResolver },
     );
   }
-  return openSessionCommon(options, (input) => prepareDenseSources({
+  return openSessionCommon(options, storeSupplied, (input) => prepareDenseSources({
     ...input, flac, resolver: resolver as StemResolver, store, createPump, ingestDiagnostics, assets, onProgress,
   }));
 }
 
 export async function openSparseEngineWebSession(options: SparseEngineWebSessionOptions): Promise<EngineWebSession> {
   const { store, resolver, maximumMetadataBytes, createPump, assets, onProgress, ...commonOptions } = options;
+  const storeSupplied = store !== undefined;
   if (onProgress !== undefined && typeof onProgress !== "function") throw new TypeError("Sparse session onProgress must be a function");
   const progress = sparseProgressReporter(onProgress);
   // This entry point has one source contract. Refuse dense/FLAC-shaped input
@@ -110,7 +112,7 @@ export async function openSparseEngineWebSession(options: SparseEngineWebSession
     );
   }
   try {
-    return await openSessionCommon({ ...commonOptions, ...(assets === undefined ? {} : { assets }), onProgress: progress.emit }, (input) => prepareSparseSources({
+    return await openSessionCommon({ ...commonOptions, ...(assets === undefined ? {} : { assets }), onProgress: progress.emit }, storeSupplied, (input) => prepareSparseSources({
       ...input, store, resolver, maximumMetadataBytes, createPump, assets, onProgress: progress.emit,
     }));
   } finally {
@@ -152,8 +154,9 @@ interface SparseSourcePreparationInput extends SourcePreparationInput {
   readonly onProgress: SparseEngineWebSessionOptions["onProgress"];
 }
 
-async function openSessionCommon(options: SessionOpenOptions, prepareSources: PrepareSources): Promise<EngineWebSession> {
-  assertEngineWebCapabilities(options.capabilityScope);
+async function openSessionCommon(options: SessionOpenOptions, storeSupplied: boolean, prepareSources: PrepareSources): Promise<EngineWebSession> {
+  assertEngineRuntimeCapabilities(options.capabilityScope);
+  if (!storeSupplied) assertOpfsStorageCapabilities(options.capabilityScope);
   // The SDK snapshots these values at its own boot boundary. This adapter has
   // source preparation awaits before that boundary, so copy caller-owned
   // analysis and subscription options before the first await as well.

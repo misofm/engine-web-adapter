@@ -25,10 +25,25 @@ export interface WebCapabilityScope {
 
 /** Synchronous, allocation-small gates that run before resolver/network work. */
 export function assertEngineWebCapabilities(scope: WebCapabilityScope = globalThis): void {
+  assertEngineRuntimeCapabilities(scope);
+  assertOpfsStorageCapabilities(scope);
+}
+
+/**
+ * Check the browser primitives required by every Engine Web session. Storage
+ * requirements are deliberately kept out of this helper so caller-supplied
+ * stores can own their persistence capabilities.
+ */
+export function assertEngineRuntimeCapabilities(scope: WebCapabilityScope = globalThis): void {
   requireCapability(scope.crossOriginIsolated === true, "capability.cross_origin_isolation", "Cross-origin isolation is required");
   requireCapability(typeof scope.SharedArrayBuffer === "function", "capability.shared_array_buffer", "SharedArrayBuffer is required");
   requireCapability(typeof scope.Worker === "function", "capability.module_worker", "Module Worker support is required");
   requireCapability(typeof scope.AudioContext === "function" && typeof scope.AudioWorkletNode === "function", "capability.audio_worklet", "AudioWorklet is required");
+  requireCapability(scope.WebAssembly?.validate(SIMD128_PROBE) === true, "capability.simd128", "WebAssembly SIMD128 is required");
+}
+
+/** Check the browser primitives used by the default OPFS storage path. */
+export function assertOpfsStorageCapabilities(scope: WebCapabilityScope = globalThis): void {
   requireCapability(
     typeof scope.navigator?.storage?.getDirectory === "function",
     "capability.opfs",
@@ -48,7 +63,6 @@ export function assertEngineWebCapabilities(scope: WebCapabilityScope = globalTh
     { missing: "FileSystemFileHandle", remedy: OPFS_WRITE_REMEDY },
   );
   requireCapability(typeof scope.navigator?.locks?.request === "function", "capability.web_locks", "Web Locks are required");
-  requireCapability(scope.WebAssembly?.validate(SIMD128_PROBE) === true, "capability.simd128", "WebAssembly SIMD128 is required");
 }
 
 function requireCapability(
