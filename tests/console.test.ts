@@ -141,6 +141,30 @@ test("an explicit no-console session names the missing console at first access",
   await session.close();
 });
 
+test("session.engine borrows the same host/context and rejects access after aggregate close", async () => {
+  const { session } = await open({});
+  const borrowed = session.engine;
+  assert.equal(borrowed.host, session.host, "the SDK Engine and session expose one host");
+  assert.equal(borrowed.context, session.context, "the SDK Engine and session expose one context");
+  assert.equal(session.engine, borrowed, "the borrowed Engine view is stable while open");
+  await session.close();
+  assert.throws(
+    () => session.engine,
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed",
+  );
+});
+
+test("captured console and measurement aliases refuse synchronously at aggregate close", async () => {
+  const { session } = await open({});
+  const console = session.console;
+  const closing = session.close();
+  const closed = (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed";
+  await assert.rejects(console.submit(console.edit.track("kick").mute(true)), closed);
+  await assert.rejects(session.meters(() => undefined), closed);
+  await assert.rejects(session.telemetry(() => undefined), closed);
+  await closing;
+});
+
 test("a first console command and a first meter subscription work in either order", async () => {
   for (const consoleFirst of [true, false]) {
     const { session, host } = await open({});
@@ -178,6 +202,20 @@ test("meters arrive keyed by track id with the master fold separated", async () 
   assert.equal(round(update.master.peak), 0.9);
   assert.equal(round(update.master.gainReductionDb ?? 0), 2.5);
   assert.equal(update.sequence, 7n);
+  assert.equal(update.generation, 1n);
+  assert.equal(update.validity, 11);
+  assert.equal(update.lossCount, 0);
+
+  host.meterFrame!({
+    tag: "miso.meter.v1", generation: 2n, validity: 12, lossCount: 3, sequence: 8, windows: 1, trackCount: 2,
+    peaks: new Float32Array([0, 0, 0, 0, 0, 0]), trackGrDb: new Float32Array([0, 0]), masterGrDb: null,
+    firstSample: 128n, endSample: 256n,
+  } as unknown as MeterFrame);
+  const nullMaster = updates[1]!;
+  assert.equal(nullMaster.master.gainReductionDb, null);
+  assert.equal(nullMaster.generation, 2n);
+  assert.equal(nullMaster.validity, 12);
+  assert.equal(nullMaster.lossCount, 3);
 
   stop();
   await new Promise((resolve) => setTimeout(resolve, 0));

@@ -149,3 +149,18 @@ only; package metadata/lockfiles remain unchanged pending registry #794.
 Root checkpoints the six source/test/README paths before final session/packed
 proof and published dependency adoption. No independent verdict/publication
 is claimed yet. Current adapter main f833303 remains included.
+
+
+Second Luna XHIGH checkpoint closes compatibility control admission synchronously
+at aggregate close start and adds captured-alias regressions. Opening map-race
+tests now target the single SDK console acquisition, preserving late settlement
+and original failure causes. SDK engine identity, canonical metadata/null and
+mutable-option snapshot coverage are added. Compiled console/session tests
+67/67, build, types, lint and whitespace checks PASS. Packed baseline passes;
+the new collection proof fails before final registry pins, with the temporary
+consumer reporting a zero collection-target capacity. No unsupported-product
+conclusion is claimed: the runner copies locked dependencies, still 0.2.4, and
+final registry 0.2.5 adoption/retest is required. Logs:
+`/tmp/miso-796-audit/adapter95-focused-2.log`, `adapter95-lint.log`,
+`adapter95-browser-2.log`. Latest main now includes accepted #102 and embedded
+BLAKE3 SIMD; root integrates that before the release metadata/proof tranche.

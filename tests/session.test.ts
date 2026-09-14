@@ -974,6 +974,14 @@ test("session snapshots document and source declarations before deferred scratch
   let scratchDocument: Uint8Array | undefined;
   let hostDocument: Uint8Array | undefined;
   const policy = { sourceRingFrames: 16, console: { commandQueueRecords: 8, meterBlocks: 2 } };
+  const spectrum = { target: { kind: "output" as const, outputId: "snapshot-output" }, channels: "left" as const,
+    spectrumLimits: { maximumCaptureBytes: 128, requestDeadlineMs: 75 } };
+  const observationSubscriptionLimits = { maximumHandles: 3, maximumBindings: 4, maximumSelections: 5,
+    maximumWindowBlocks: 6, maximumCadenceMs: 7 };
+  const responseSubscriptionLimits = { maximumHandles: 8, maximumJobs: 9, maximumRetainedBytes: 10,
+    maximumCaptureAttempts: 11, maximumDeliveredBytesPerSecond: 12, maximumCadenceMs: 13 };
+  const spectrumSubscriptionLimits = { maximumHandles: 14, maximumRetainedBytes: 15,
+    maximumDeliveredBytesPerSecond: 16, maximumCadenceMs: 17 };
   let scratchPolicy: unknown;
   let hostPolicy: unknown;
   let storeStem: unknown;
@@ -992,6 +1000,10 @@ test("session snapshots document and source declarations before deferred scratch
   const opening = openEngineWebSession({
     document,
     policy,
+    spectrum,
+    observationSubscriptionLimits,
+    responseSubscriptionLimits,
+    spectrumSubscriptionLimits,
     leaseId: "snapshot",
     sources: originalSources as readonly DeclaredStemSource[],
     resolver: { async resolve() { throw new Error("warm fixture must not resolve"); } },
@@ -1033,6 +1045,11 @@ test("session snapshots document and source declarations before deferred scratch
   policy.sourceRingFrames = 99;
   policy.console.commandQueueRecords = 99;
   policy.console.meterBlocks = 99;
+  spectrum.target.outputId = "mutated-output";
+  spectrum.spectrumLimits.maximumCaptureBytes = 512;
+  observationSubscriptionLimits.maximumHandles = 99;
+  responseSubscriptionLimits.maximumJobs = 99;
+  spectrumSubscriptionLimits.maximumHandles = 99;
   const mutable = originalSources[0]! as any;
   mutable.id = "mutated";
   mutable.spec.channels = 2;
@@ -1046,7 +1063,9 @@ test("session snapshots document and source declarations before deferred scratch
   assert.deepEqual(scratchPolicy, { sourceRingFrames: 16, requireSampleRateHz: 0, requireQuantumFrames: 0,
     console: { commandQueueRecords: 8, meterBlocks: 2 } });
   assert.deepEqual(hostPolicy, { sourceRingFrames: 16, requireSampleRateHz: 48_000, requireQuantumFrames: 4,
-    console: { commandQueueRecords: 8, meterBlocks: 2 } });
+    console: { commandQueueRecords: 8, meterBlocks: 2 },
+    spectrum: { target: { kind: "output", outputId: "snapshot-output" }, channels: "left",
+      spectrumLimits: { maximumCaptureBytes: 128, requestDeadlineMs: 75 } } });
   assert.deepEqual(storeStem, { sourceId: "source", identity: IDENTITY, bytes: 8 });
   assert.deepEqual(session.shape.sources, [{ id: "source", channels: 1, frames: 4n }]);
   await session.close();
@@ -1304,14 +1323,17 @@ test("pump failure during opening rejects open instead of duplicating a runtime 
 });
 
 test("pump failure interrupts either opening console map without awaiting late success or rejection", { timeout: 2000 }, async () => {
-  for (const pendingMap of [1, 2]) for (const lateReject of [false, true]) {
+  // The SDK owns the sole console acquisition and therefore performs one
+  // session-map request. Keep both late-settlement paths covered without
+  // retaining the former adapter-plus-SDK double-map assumption.
+  for (const lateReject of [false, true]) {
     const failed = deferred<unknown>(); const entered = deferred<void>(); const release = deferred<void>();
     const events: string[] = []; const reason = new Error("pump failed while attaching console");
     let calls = 0; let notifications = 0;
     const opening = pausedSeekFixture(true, {
       failure: failed.promise, events, onError: () => { notifications++; },
       async sessionMap() {
-        if (++calls === pendingMap) {
+        if (++calls === 1) {
           entered.resolve(); await release.promise;
           if (lateReject) throw new Error("late map rejection");
         }
@@ -1336,7 +1358,7 @@ test("same-turn console map completion and pump failure preserve the opening cau
     const opening = pausedSeekFixture(true, {
       failure: failed.promise, events,
       async sessionMap() {
-        if (++calls === 2) { entered.resolve(); await release.promise; }
+        if (++calls === 1) { entered.resolve(); await release.promise; }
         return { tag: "miso.sessionmap.v1", requestId: calls, result: 0, tracks: [], sources: [{ id: "source", channels: 1, frames: 512n }], metersAttached: false };
       },
     });

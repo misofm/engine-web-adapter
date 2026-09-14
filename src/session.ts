@@ -415,6 +415,11 @@ async function openSessionCommon(options: SessionOpenOptions, prepareSources: Pr
           closing = true;
           state = "closed";
           abort.abort(new DOMException("Engine Web session closed", "AbortError"));
+          // Refuse every adapter-owned control alias at the aggregate close
+          // boundary. Cleanup below may await SDK-owned lifecycle calls, but
+          // a caller must not be able to submit or acquire a measurement
+          // lease during that window.
+          control?.close();
           // Cleanup starts now; it never waits behind a hung lifecycle call.
           closePromise = reverseCleanup(cleanup);
         }
