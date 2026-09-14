@@ -5,7 +5,7 @@ import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { MemoryStemStorageBackend } from "../src/stems/storage.js";
 import { createSparseStemResolver, OpfsStorageBackend, serializeSparseStemIndex, VerifiedSparsePcmStore } from "../src/stems/index.js";
-import { BrowserBootError, Msb1RingWriter, PcmFeedError } from "@misofm/engine/browser";
+import { BrowserBootError, Msb1RingWriter, PcmFeedError, PcmRunwayError } from "@misofm/engine/browser";
 import { scratchBootWithWorker, prepareBrowserSessionWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -1548,23 +1548,43 @@ test("paused prepare refusal retains result and closes; close interrupts prepara
 test("wrong first target cannot be hidden by a later matching chunk", async () => {
   const f = await pausedSeekFixture();
   const seeking = f.session.seekFrames(100);
-  const rejected = assert.rejects(seeking, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek");
+  const rejected = assert.rejects(seeking, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek"
+    && e.cause instanceof EngineWebAdapterError && e.cause.details.reason === "mismatch"
+    && e.cause.details.sourceId === "source" && e.cause.cause instanceof PcmRunwayError);
   await tick(); f.confirm(); f.write(101n); f.write(100n);
   await rejected;
   assert.equal(f.session.state, "closed");
   assert.equal(f.events.includes("context.resume"), false);
+  for (const event of ["pump.close", "detach", "dispose", "context.close", "lease.close"]) {
+    assert.equal(f.events.filter((value) => value === event).length, 1, event + " completes before refusal");
+  }
 });
 
 test("paused preparation and fresh prefill deadlines close rather than allow play", { timeout: 6000 }, async () => {
   for (const prepared of [false, true]) {
     const f = await pausedSeekFixture();
     const seeking = f.session.seekFrames(100);
-    const rejected = assert.rejects(seeking, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek");
+    const rejected = assert.rejects(seeking, (e: unknown) => {
+      assert.ok(e instanceof EngineWebAdapterError && e.code === "session.seek");
+      assert.ok(e.cause instanceof EngineWebAdapterError);
+      if (prepared) {
+        assert.deepEqual(e.cause.details, { reason: "timeout" });
+        assert.ok(e.cause.cause instanceof PcmRunwayError);
+        assert.equal(e.cause.cause.reason, "timeout");
+      } else {
+        assert.ok(e.cause.cause instanceof PcmFeedError);
+        assert.equal(e.cause.cause.operation, "prepareTimeout");
+      }
+      return true;
+    });
     await tick(); if (prepared) f.confirm();
     await rejected;
     assert.equal(f.session.state, "closed");
     await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
     assert.equal(f.events.includes("context.resume"), false);
+    for (const event of ["pump.close", "detach", "dispose", "context.close", "lease.close"]) {
+      assert.equal(f.events.filter((value) => value === event).length, 1, event + " completes before refusal");
+    }
   }
 });
 
