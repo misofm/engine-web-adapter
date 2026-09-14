@@ -218,3 +218,32 @@ are retained separately and are not passing runs. Final candidate archive is
 This is candidate acceptance, not registry publication: merged required CI,
 trusted publish/verify, adapter registry integrity and attestation proof, then
 GitHub synchronization/closure remain coordinator-owned delivery gates.
+
+
+## Published delivery and final closure
+
+Independent Astra MEDIUM final published-adoption verdict: PASS. PR #107 merged
+as `09842280710425c8ab321b97d39ecb49b5fe75cc` after required macOS Chromium/WebKit
+qualification [34794520960](https://github.com/misofm/engine-web-adapter/actions/runs/34794520960)
+passed. The qualified PR and merged source have the same tree
+`ecbbecf4022bf5b7f559ad25b7ae5ce0cc3f59e0`. OIDC publication
+[34794726491](https://github.com/misofm/engine-web-adapter/actions/runs/34794726491)
+completed successfully. Public adapter `0.5.7` depends exactly on registry SDK
+`0.2.5`; concurrent adapter `0.5.6` had already been published, so its immutable
+identity was preserved.
+
+The independently downloaded public archive is byte-identical to the accepted
+candidate: SHA-256 `8a0b8ad2cc9f0973514c28b1b5d195a56485879835b5797299dc234a8e433c35`,
+SHA-1 `eae2472b38da784fc488273588f176f579dc3c5e`, integrity
+`sha512-XXAarTN8Wh2ENIujHTCKh07a+EXYgP4hVPsW2g2KoqNHliEzmOPAXadV3BWYf4L7zy/BM8vbiJDrGLw1BTAYzQ==`.
+A fresh normal registry installation passes public imports and strict types,
+including the borrowed engine close exclusion, and resolves exactly one SDK
+0.2.5 with its verified registry integrity. npm 11.19 cryptographically verified
+package signatures/attestations; the independently checked SLSA v1 DSSE binds
+the exact archive, repository, npm-publish workflow, main source commit above
+and publication invocation `34794726491/attempts/1`.
+
+Durable independent report: `/tmp/miso-796-audit/verify-adapter95-published-verdict.md`;
+registry archive: `/tmp/miso-796-audit/misofm-engine-web-adapter-0.5.7-registry.tgz`.
+All source, package and published-adoption gates are PASS. Root synchronizes
+this evidence upstream and the matching GitHub issue before verified closure.
