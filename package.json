@@ -45,6 +45,8 @@
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "build:sha256:wasm": "node scripts/build-sha256-wasm.mjs --verify",
     "build:sha256:wasm:update": "node scripts/build-sha256-wasm.mjs --update",
+    "build:blake3:wasm": "node scripts/build-blake3-wasm.mjs --verify",
+    "build:blake3:wasm:update": "node scripts/build-blake3-wasm.mjs --update",
     "prepack": "npm run build",
     "format:check": "node scripts/check-format.mjs",
     "lint": "npm run typecheck && node scripts/check-source-policy.mjs",
@@ -56,7 +58,7 @@
     "check:package": "npm run build && node scripts/check-package.mjs",
     "check:decoder": "node scripts/check-flac-decoder.mjs",
     "publish:dry-run": "npm publish --dry-run",
-    "check": "npm run format:check && npm run build:sha256:wasm && npm run lint && npm run check:decoder && npm test && npm run check:package"
+    "check": "npm run format:check && npm run build:sha256:wasm && npm run build:blake3:wasm && npm run lint && npm run check:decoder && npm test && npm run check:package"
   },
   "dependencies": {
     "@misofm/codec": "0.1.1",

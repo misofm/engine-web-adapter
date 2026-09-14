@@ -1,0 +1,12 @@
+{
+  "source": "BLAKE3 1.8.7 test_vectors.json at f3149ec5bb5449af877ba20377a11008ff499fa2",
+  "sourceSha256": "dcb91ea8accc77e6d6e632af7cdc1a99a9f3ae78cf648da595c7d064db32f624",
+  "inputRule": "input[i] = i % 251",
+  "cases": [
+    { "inputLen": 0, "hash": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262" },
+    { "inputLen": 1024, "hash": "42214739f095a406f3fc83deb889744ac00df831c10daa55189b5d121c855af7" },
+    { "inputLen": 4096, "hash": "015094013f57a5277b59d8475c0501042c0b642e531b0a1c8f58d2163229e969" },
+    { "inputLen": 16384, "hash": "f875d6646de28985646f34ee13be9a576fd515f76b5b0a26bb324735041ddde4" },
+    { "inputLen": 102400, "hash": "bc3e3d41a1146b069abffad3c0d44860cf664390afce4d9661f7902e7943e085" }
+  ]
+}

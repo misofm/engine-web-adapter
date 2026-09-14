@@ -79,6 +79,17 @@ jobs:
           "$RUNNER_TEMP/codec-emsdk/emsdk" activate 6.0.9
           echo "CODEC_EMSCRIPTEN_ROOT=$RUNNER_TEMP/codec-emsdk/upstream/emscripten" >> "$GITHUB_ENV"
 
+      - name: Install pinned Rust and wasm target
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal --target wasm32-unknown-unknown --no-self-update
+          rustc_identity="$(rustc +1.97.1 -vV)"
+          grep -Fx 'rustc 1.97.1 (8bab26f4f 2026-07-14)' <<<"$rustc_identity"
+          grep -Fx 'commit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452' <<<"$rustc_identity"
+          grep -Fx 'host: x86_64-unknown-linux-gnu' <<<"$rustc_identity"
+          [[ "$(cargo +1.97.1 -V)" == "cargo 1.97.1 (c980f4866 2026-06-30)" ]]
+          rustup target list --toolchain 1.97.1 --installed | grep -Fx 'wasm32-unknown-unknown'
+
       - name: Install and qualify
         run: |
           npm run check
