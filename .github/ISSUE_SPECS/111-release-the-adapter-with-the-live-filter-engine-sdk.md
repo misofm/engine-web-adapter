@@ -64,3 +64,26 @@ console-focused,foundation,publish-dry-run,browser-packed,fresh-consumer}.log.
 Initial373/380 fixture-loader failure is preserved in npm-check.log. Fresh
 Astra MEDIUM review, required macOS OPFS qualification and registry publication
 remain; no adapter release is claimed yet.
+
+### Reviewed, published and independently verified delivery
+
+Fresh Astra MEDIUM **attempt1 PASS** at2ad491c: exact dependency/lock/provenance
+identities and release guards agree; controlled-port fixtures use actual packaged
+helper/ABI; no production adapter behavior change. PR#112 passed required macOS
+Chromium/WebKit OPFS and indexed-sparse qualification34883585640, then merged as
+`bb8e1661e54d339901a5bfab0d04f45c4bd1f9ef`.
+
+Existing OIDC publication/registry verification34883822457 **PASS** published
+**@misofm/engine-web-adapter0.5.9**, exact SDK dependency0.3.0. Root independently
+downloaded the actual registry archive: SHA256
+`6915c9921968948e02f45d56b54b92ba3cce44aa3e5fc75ea5a7885a724f2714`, integrity
+`sha512-lHg/up7n+cZllLox8W577wtfBN3Y92RuSEQP6mIzt8VAHNvsFvN1f1yvu2vmj6pnkRvr1AtAQvhXDi6iejsYvA==`.
+These bytes exactly match the reviewed ordinary-consumer tarball. A fresh actual
+registry consumer passes public runtime and TypeScript imports with one SDK.
+Using npm11.19.0, cryptographic attestation verification and root inspection bind
+the package SHA512 subject to exactbb8e1661 source and this repository's
+.github/workflows/npm-publish.yml on refs/heads/main. No republish or changed
+version was needed. Evidence: /tmp/111-registry-consumer,
+/tmp/111-registry-signatures.json and /tmp/111-verified-statement.json, plus the
+public workflow runs. App#222 now adopts both verified packages; parent engine#804
+remains open until app deployment. Close #111 after this evidence is upstream.
