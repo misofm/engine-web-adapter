@@ -120,3 +120,18 @@ Raw logs and the repeatable review probe are preserved outside this worktree in
 and `adapter102-adversarial.mjs`. The coordinator owns evidence checkpointing,
 merged required CI, GitHub synchronization and ordinary package release. This
 review does not claim merged delivery, issue completion or registry availability.
+
+
+## Source delivery — CLOSED
+
+Latest main advanced to `d2f234aa4a48cd1c37cd9dbde06607f0c1228478` (PR #104,
+embedded BLAKE3 SIMD and 0.5.5 release metadata) before landing. Root integrated
+it without conflicts at `769de0e5a3deaed360542c3ddf2446b980f4620d`, preserving
+all new hashing/build/legal assets. Full updated `npm run check` PASS
+(`/tmp/miso-796-audit/adapter102-main-check.log`) and the repeated required
+macOS Chromium/WebKit OPFS workflow 34792810150 PASS. PR #105 merged at
+`fe96ecb31673e8b2ca4199ba506d7a15549e700d`. Independent attempt-1 PASS evidence
+is upstream. Source delivery is complete; published availability is explicitly
+assigned to the existing #95 ordinary release cut, which must use an unused
+version after the independent 0.5.5 release. No registry availability is claimed
+for this correction until that release succeeds.
