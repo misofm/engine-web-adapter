@@ -288,3 +288,20 @@ Independent report `/tmp/miso-adapter058-verifier/candidate-verdict.md` clearly
 separates independent results from implementation-reported terminal gates.
 Required CI, immutable publication and published archive/signature/attestation
 verification remain pending; no completion claimed for corrected adapter bytes.
+
+## Adapter 0.5.8 published and independently verified
+
+PR #109 merged `fdb6cbe825505795898fb52038ba0dfdcaa72bc2` after required macOS
+Chromium/WebKit OPFS run 34805731836 PASS. Original OIDC publish 34805925930
+completed SUCCESS after registry propagation; no republish/recovery was needed.
+Fresh Astra MEDIUM independently downloaded the public registry archive and
+proved it byte-identical to the accepted candidate above (SHA256 `ad740867c1c80d2594d96364d646a135490e1f9a03c73fec5b9601346507d948`).
+Normal fresh registry installation has exactly one SDK 0.2.6; strict public types
+and all imports PASS. npm 11.19.0 cryptographic signature/attestation audit exits
+zero with no invalid or missing signatures. Verified SLSA uniquely binds the
+exact package PURL/SHA512, trusted adapter workflow/main source `fdb6cbe8` and
+original invocation `34805925930/attempts/1`.
+Report `/tmp/miso-adapter058-verifier/published-verdict.md`; registry, archive,
+signature and verified DSSE evidence are preserved beside it. Corrected adapter
+release is PASS and ready for app#210 final registry adoption/deployment.
+Previous 0.5.7 evidence remains preserved separately.
