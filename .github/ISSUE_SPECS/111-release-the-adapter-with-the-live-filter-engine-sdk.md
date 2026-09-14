@@ -16,3 +16,24 @@ One dependency/provenance adoption tranche, then root checkpoint and focused sou
 ## Evidence
 
 Implementation, qualification and publication pending. Record accepted source SHA, SDK and adapter versions, archive hashes, registry provenance, fresh consumer result and workflow IDs before closure.
+
+### Accepted dependency and release freeze
+
+Root refreshed origin/main (unchanged d2492ef8) and audited all49 local numbered
+specs against56 remote issues: none missing; #111 number/title/open state match.
+Engine SDK **0.3.0** is published and verified from source
+`51e03cfdde61802fc8456872a6637a265fae5979`. Required mainCI34880226665 and
+immutable qualification34880929687 pass. Publication34881586727 was accepted by
+npm but exceeded registry propagation time; verify-only34881963287 then passed
+fresh public imports/CLI and cryptographic SLSA archive/source/workflow checks,
+without republishing. Root independently downloaded the registry archive: SHA256
+`0da5f34d6d5e021f543acf21053b6176931548f3bbc584301c42c2f278f5b804`, integrity
+`sha512-56Xwu7K/k7gRSGGLpNz7Vo1WSwaaP2F2to6Ahb/iMZM21GTFsgk24ZXVTVpdVsG1Q8fme/VbEPNjtm50tpRFLQ==`.
+Wasm remains7e925d939234b67d14be41a647b4cc6de23099501a763d27e8a56c77524999e7.
+
+Root freezes unused adapter **0.5.9** after a fresh registry version check
+(latest0.5.8). Luna XHIGH may implement the one exact-dependency/provenance
+tranche now. Existing local Emscripten6.0.9 and pinned Rust/browser tools are
+available. Keep runtime/API behavior unchanged; app#222 owns the live-cut browser
+episode against the same SDK bytes. Fresh tarball consumer, existing checks and
+packed indexed-sparse proof remain; root owns review, macOSCI and publication.
