@@ -1,9 +1,9 @@
 export const ADAPTER_PROVENANCE = Object.freeze({
   engine: Object.freeze({
-    package: "@misofm/engine@0.2.5",
+    package: "@misofm/engine@0.2.6",
     repository: "misofm/engine",
-    archiveSha256: "c26208470b5409ad789085d251d94bdf1117b32dcd3b5e544f8696dffffe3d4d",
-    commit: "1646a6a1bd0011cc2b5480283bf498b27be460e5",
+    archiveSha256: "8219178d591c76d820d7ad2e2f7b894fe7f39185f89667f59c675fad603b81eb",
+    commit: "cdf629d6bfd0224b3532dd0abd04b9581240da56",
   }),
   safeBaselines: Object.freeze({
     stemStore: "bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c",
