@@ -1690,7 +1690,8 @@ async function exerciseSparseSession() {
         { target: { kind: "trackPostMatrix", trackId: "sparse-track-000" }, channels: "both" },
         { target: { kind: "output", outputId: "sparse-out" }, channels: "both" },
       ],
-      maximumCaptureBytes: 65_536,
+      // The budget covers both prepared capture owners and their queues, not only FFT input bytes.
+      maximumCaptureBytes: 1_048_576,
     },
     responseSubscriptionLimits: { maximumHandles: 2, maximumJobs: 2 },
     spectrumSubscriptionLimits: { maximumHandles: 2 },
@@ -1712,15 +1713,31 @@ async function exerciseSparseSession() {
     channels: "both",
     cadenceMs: 50,
   });
+  const waitForSpectrum = async (kind: "output" | "trackPostMatrix", afterSample: bigint) => {
+    const deadline = performance.now() + 3_000;
+    while (performance.now() < deadline) {
+      await spectrum.pump();
+      const result = spectrum.readLatest();
+      if (result?.target.kind === kind && result.endSample > afterSample) return result;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error("packed spectrum did not deliver a fresh " + kind + " frame before its deadline");
+  };
   let proof: any;
   try {
     await engine.play();
     await engine.seekFrames(200);
     await new Promise((resolve) => setTimeout(resolve, 250));
     await response.pump();
-    await spectrum.pump();
-    const responseReady = response.readLatest() !== undefined;
-    const spectrumReady = spectrum.readLatest() !== undefined;
+    const initialSpectrum = await waitForSpectrum("output", 0n);
+    const responseResult = response.readLatest();
+    if (meterUpdates.length === 0 || responseResult?.trackId !== "sparse-track-000"
+      || responseResult.frequenciesHz.length !== 16 || initialSpectrum?.target.kind !== "output"
+      || initialSpectrum.target.outputId !== "sparse-out" || initialSpectrum.binCount === 0) {
+      throw new Error("packed SDK measurements did not deliver the prepared response and output spectrum");
+    }
+    const responseReady = true;
+    const spectrumReady = true;
     const priorTarget = spectrum.configuration.target;
     const selected = await spectrum.update({
       target: { kind: "trackPostMatrix", trackId: "sparse-track-000" },
@@ -1730,12 +1747,24 @@ async function exerciseSparseSession() {
     if (selected.configuration.target.kind !== "trackPostMatrix" || engine.state !== "playing") {
       throw new Error("managed spectrum target switch did not preserve the running session");
     }
+    const switchedSpectrum = await waitForSpectrum("trackPostMatrix", initialSpectrum.endSample);
+    if (switchedSpectrum?.target.kind !== "trackPostMatrix" || switchedSpectrum.target.trackId !== "sparse-track-000"
+      || switchedSpectrum.endSample <= initialSpectrum.endSample || engine.context.state !== "running") {
+      throw new Error("managed spectrum selection did not deliver a fresh track frame while running");
+    }
+    const selectedJob = spectrum.job;
     let refused = false;
     try {
       await spectrum.update({ target: { kind: "output", outputId: "missing-output" }, channels: "both", cadenceMs: 50 });
     } catch { refused = true; }
     if (!refused || spectrum.configuration.target.kind !== "trackPostMatrix") {
       throw new Error("refused spectrum target did not preserve the active stream");
+    }
+    const retainedSpectrum = await waitForSpectrum("trackPostMatrix", switchedSpectrum.endSample);
+    if (spectrum.job !== selectedJob || retainedSpectrum?.target.kind !== "trackPostMatrix"
+      || retainedSpectrum.target.trackId !== "sparse-track-000" || retainedSpectrum.endSample <= switchedSpectrum.endSample
+      || engine.state !== "playing" || engine.context.state !== "running") {
+      throw new Error(JSON.stringify({ message: "refused spectrum selection did not preserve fresh delivery from the running track stream", job: String(spectrum.job), selectedJob: String(selectedJob), target: retainedSpectrum?.target, priorSample: String(switchedSpectrum.endSample), retainedSample: String(retainedSpectrum?.endSample), state: engine.state, context: engine.context.state }));
     }
     await engine.pause();
     proof = {
@@ -1748,6 +1777,7 @@ async function exerciseSparseSession() {
       initialSpectrumTarget: priorTarget,
       selectedSpectrumTarget: spectrum.configuration.target,
       responseConfiguration: response.configuration,
+      spectrumSamples: [initialSpectrum.endSample, switchedSpectrum.endSample, retainedSpectrum.endSample].map(String),
     };
   } finally {
     await response.close().catch(() => {});
@@ -1755,6 +1785,9 @@ async function exerciseSparseSession() {
     stopMeters();
     await engine.close();
   }
+  const closedMeterCount = meterUpdates.length;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  if (meterUpdates.length !== closedMeterCount) throw new Error("SDK meters delivered after aggregate close");
   if (engine.state !== "closed" || reads !== 1 || leaseClosed !== 1) throw new Error("packed sparse session lifecycle did not settle exactly once");
   return { ...proof, state: engine.state, reads, leaseClosed };
 }
