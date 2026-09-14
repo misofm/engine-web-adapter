@@ -1,4 +1,6 @@
 node_modules/
 dist/
 .test-dist/
+.cache/
+native/blake3/target/
 *.tgz

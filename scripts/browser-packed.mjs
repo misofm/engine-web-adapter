@@ -133,6 +133,31 @@ self.onmessage = (event) => {
   if (fault === "crash") setTimeout(() => { throw new Error("injected worker crash"); }, 0);
 };
 `);
+// A fresh worker realm forces the packed adapter through its unsupported-SIMD
+// selection before any hasher is created. The worker imports the actual packed
+// deep module and checks streamed input against hash-wasm's scalar fallback.
+await writeFile(join(consumer, "blake3-fallback-worker.ts"), `
+const nativeValidate = WebAssembly.validate;
+WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
+(async () => {
+  try {
+    const { createIncrementalBlake3 } = await import("./node_modules/@misofm/engine-web-adapter/dist/stems/blake3.js");
+    const { blake3: scalarBlake3 } = await import("hash-wasm");
+    const input = new TextEncoder().encode("abc");
+    const hash = await createIncrementalBlake3();
+    hash.update(input.subarray(0, 1));
+    hash.update(input.subarray(1, 2));
+    hash.update(input.subarray(2));
+    const digest = hash.digest("hex");
+    const expected = await scalarBlake3(input);
+    self.postMessage({ type: "result", ok: digest === expected && digest === "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85", digest, expected });
+  } catch (error) {
+    self.postMessage({ type: "failure", error: String(error?.stack ?? error) });
+  } finally {
+    WebAssembly.validate = nativeValidate;
+  }
+})();
+`);
 await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
 await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><script type="module" src="/src/main.ts"></script>\n');
 await mkdir(join(consumer, "src"));
@@ -1317,6 +1342,15 @@ import { blake3 } from "hash-wasm";
 declare global { var __result: unknown; var __error: unknown; var __seekStage: unknown }
 const profile = ${JSON.stringify(profile)} as const;
 void ADAPTER_ASSETS;
+const packedBlake3Fallback = await new Promise<{ readonly type?: string; readonly ok?: boolean; readonly digest?: string; readonly expected?: string; readonly error?: string }>((resolve, reject) => {
+  const worker = new Worker(new URL("../blake3-fallback-worker.ts", import.meta.url), { type: "module" });
+  const timer = setTimeout(() => { worker.terminate(); reject(new Error("packed BLAKE3 fallback worker timed out")); }, 30_000);
+  worker.onmessage = ({ data }) => { clearTimeout(timer); worker.terminate(); resolve(data); };
+  worker.onerror = (event) => { clearTimeout(timer); worker.terminate(); reject(new Error(event.message || "packed BLAKE3 fallback worker failed")); };
+});
+if (packedBlake3Fallback.type !== "result" || packedBlake3Fallback.ok !== true) {
+  throw new Error("packed BLAKE3 fallback proof failed: " + JSON.stringify(packedBlake3Fallback));
+}
 const identity = profile.identity;
 const source = { id: "source-000", spec: {
   channels: profile.channels, bitDepth: profile.bitDepth, frames: profile.frames, content: identity as any,
@@ -1785,6 +1819,7 @@ try {
     coldNetworkRequests, warmNetworkRequests: networkRequests,
     observedRemoteBytes, observedEtag,
     observedChunks, observationBytes: allocation.observationBytes, coldClosed, warmClosed, consoleFirst, meterFirst, notAttached, meterNotAttached,
+    packedBlake3Fallback,
     ...counters, seekProofs, terminalPumpFailures, sparseWorker, sparseSession,
   };
 } catch (error) {
