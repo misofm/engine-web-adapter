@@ -63,3 +63,18 @@ rebrief after five failures. Root synchronizes numbered local/GitHub evidence,
 integrates latest main, and closes after PASS, merged delivery, required CI and
 the published adoption evidence; verify remote CLOSED. No new results claimed
 by this scope-only brief.
+
+
+## Implementation checkpoint
+
+Luna XHIGH replaces the duplicated observer loop with SDK `waitForPcmRunway`,
+preserving aggregate opening/seek/feed/context/refill cleanup choreography and
+translating `PcmRunwayError` with reason/source ID/original cause. README and the
+existing mismatch assertion are updated. Build, types, format/source policy and
+six focused session/runway tests PASS; logs `/tmp/miso-796-audit/adapter101-*`.
+Only temporary accepted SDK 0.2.5 node_modules installation is used; no package,
+lock or provenance pins change. Implementer reports two opening-race failures
+reproducing without this patch under SDK 0.2.5; raw identification is being
+collected and full integration acceptance must resolve them. Focused success
+is not full-suite or registry acceptance. Root checkpoints this bounded source
+tranche before independent Astra MEDIUM review and latest-main integration.

@@ -10,7 +10,14 @@ import type {
   TrackResponseSubscriptionLimits,
 } from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
-import { createEngine, createDefaultHost, scratchBootOptions, MSB1_CONTROL, Msb1RingObserver } from "@misofm/engine/browser";
+import {
+  createEngine,
+  createDefaultHost,
+  scratchBootOptions,
+  Msb1RingObserver,
+  PcmRunwayError,
+  waitForPcmRunway,
+} from "@misofm/engine/browser";
 import type { BrowserEngine, CreateEngineOptions } from "@misofm/engine/browser";
 
 import { ADAPTER_ASSETS } from "./assets.js";
@@ -395,7 +402,7 @@ async function openSessionCommon(options: SessionOpenOptions, prepareSources: Pr
             await abortable(feed!.ready(), abort.signal);
             const generation = await abortable(pump!.seekFrames(target), abort.signal);
             await abortable(feed!.prepareSeek(), abort.signal);
-            await waitForSeekPrefill(orderedSources, feed!.rings, counters, target, generation, abort.signal);
+            await waitForSeekPrefill(orderedSources, feed!.rings, target, generation, abort.signal);
             assertOpen();
             if (restoreRunning) {
               await abortable(context.resume(), abort.signal, PREFILL_TIMEOUT_MS);
@@ -964,10 +971,11 @@ function exactFrames(value: number | bigint): number {
 }
 
 async function waitForPrefill(sources: readonly PcmPumpSource[], signal: AbortSignal): Promise<void> {
-  const observers = new Map(sources.map((source) => [source.sourceId, new Msb1RingObserver(source.ring)]));
-  try {
-    await waitForRunway(sources.map((source) => ({ id: source.sourceId, frames: BigInt(source.frames), ring: source.ring })), observers, 0n, 1n, signal, "session.open");
-  } finally { for (const observer of observers.values()) observer.close(); }
+  await waitForSessionPcmRunway(sources.map((source) => ({
+    sourceId: source.sourceId,
+    frames: BigInt(source.frames),
+    ring: source.ring,
+  })), 0n, 1n, signal, "session.open");
 }
 
 function assertSeekContextState(context: EngineAudioContext, expected: "running" | "suspended"): void {
@@ -977,45 +985,36 @@ function assertSeekContextState(context: EngineAudioContext, expected: "running"
 async function waitForSeekPrefill(
   sources: readonly DeclaredStemSource[],
   rings: readonly SharedArrayBuffer[],
-  observers: ReadonlyMap<string, Msb1RingObserver>,
   target: bigint,
   generation: bigint,
   signal: AbortSignal,
 ): Promise<void> {
-  await waitForRunway(sources.map((source, index) => ({ id: source.id, frames: BigInt(source.spec.frames), ring: rings[index]! })), observers, target, generation, signal, "session.seek");
+  await waitForSessionPcmRunway(sources.map((source, index) => ({
+    sourceId: source.id,
+    frames: BigInt(source.spec.frames),
+    ring: rings[index]!,
+  })), target, generation, signal, "session.seek");
 }
 
-async function waitForRunway(
-  sources: readonly { readonly id: string; readonly frames: bigint; readonly ring: SharedArrayBuffer }[],
-  observers: ReadonlyMap<string, Msb1RingObserver>,
+async function waitForSessionPcmRunway(
+  sources: readonly { readonly sourceId: string; readonly frames: bigint; readonly ring: SharedArrayBuffer }[],
   target: bigint,
   generation: bigint,
   signal: AbortSignal,
   code: "session.open" | "session.seek",
 ): Promise<void> {
-  const pending = new Map<string, { next: bigint; end: bigint; total: bigint }>();
-  for (const source of sources) {
-    if (target >= source.frames) continue;
-    const control = new Int32Array(source.ring);
-    const quantum = BigInt(Atomics.load(control, MSB1_CONTROL.FRAME_CAPACITY));
-    const runway = quantum * BigInt(Atomics.load(control, MSB1_CONTROL.CAPACITY));
-    pending.set(source.id, { next: target, end: target + runway < source.frames ? target + runway : source.frames, total: source.frames });
-  }
-  const deadline = performance.now() + PREFILL_TIMEOUT_MS;
-  for (;;) {
-    signal.throwIfAborted();
-    for (const [id, expected] of pending) {
-      observers.get(id)!.pull((chunk) => {
-        if (chunk.generation !== generation || chunk.startFrame !== expected.next || chunk.startFrame + BigInt(chunk.frames) > expected.total) {
-          throw new EngineWebAdapterError(code, "PCM prefill is not contiguous at the acknowledged position", { sourceId: id });
-        }
-        expected.next += BigInt(chunk.frames);
-        if (expected.next >= expected.end) pending.delete(id);
-      }, 32);
-    }
-    if (pending.size === 0) return;
-    if (performance.now() >= deadline) throw new EngineWebAdapterError(code, "Current-generation PCM runway prefill timed out");
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  try {
+    await waitForPcmRunway({ sources, targetFrame: target, generation, timeoutMs: PREFILL_TIMEOUT_MS, signal });
+  } catch (error) {
+    if (!(error instanceof PcmRunwayError)) throw error;
+    const details = {
+      reason: error.reason,
+      ...(error.sourceId === undefined ? {} : { sourceId: error.sourceId }),
+    };
+    const message = error.reason === "mismatch"
+      ? "PCM prefill is not contiguous at the acknowledged position"
+      : "Current-generation PCM runway prefill timed out";
+    throw new EngineWebAdapterError(code, message, details, error);
   }
 }
 

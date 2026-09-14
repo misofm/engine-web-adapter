@@ -470,6 +470,8 @@ before ready. Initial opening and seek completion require a contiguous full-gene
 across every source's 64 shared-ring slots, or that source's exact shorter remaining tail. At
 48 kHz with 128-frame quanta this is about 171 ms. Seek preparation remains suspended, including
 running seeks; the adapter restores running state only after every source passes that gate.
+The generic ring proof is delegated to the SDK's `waitForPcmRunway`; source preparation, feed seek
+preparation, refill and context lifecycle remain owned by the adapter.
 
 Pass `onError(error)` to observe a terminal playback-worker failure after opening. The adapter
 marks the session closed immediately, interrupts pending lifecycle calls, and completes cleanup
