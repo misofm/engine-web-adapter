@@ -12,11 +12,13 @@ export type {
   EngineWebSessionCommonOptions,
   EngineWebSessionOptions,
   SparseEngineWebSessionOptions,
+  SessionEngine,
   EngineWebSessionState,
   FeedDiagnostics,
   PumpAllocation,
   SourceObservation,
   MeterUpdate,
+  MasterMeter,
   TelemetryUpdate,
   TrackMeter,
 } from "./session-types.js";

@@ -1,7 +1,7 @@
 # @misofm/engine-web-adapter
 
 Headless, framework-neutral browser session hosting for
-`@misofm/engine@0.2.4`. Version 0.5 identifies canonical PCM with BLAKE3-256 and streams standards-compliant native FLAC
+`@misofm/engine@0.2.5`. Version 0.5 identifies canonical PCM with BLAKE3-256 and streams standards-compliant native FLAC
 through bounded HTTP ranges and a one-stem universal `@misofm/codec@0.1.1`
 Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
@@ -10,15 +10,15 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.5.1 @misofm/engine@0.2.4
+npm install @misofm/engine-web-adapter@0.5.7 @misofm/engine@0.2.5
 ```
 
-The package is ESM-only and remains pinned to exactly Engine `0.2.4` and
+The package is ESM-only and remains pinned to exactly Engine `0.2.5` and
 `@misofm/codec` `0.1.1`. The codec currently supports Node `>=22.23.2 <23`
 and Bun `>=1.4.2 <1.5`; browser consumers use the bundled public codec asset.
-The integration uses the published Engine 0.2.4 archive
-from commit `64018c1a97ea84224362b0c659f06756a186e3b7`, SHA256
-`5a8b3e37d6b2718efe2063ae7a20b8cbbfe233db46606eb402658f86b07c2b15`.
+The integration uses the published Engine 0.2.5 archive
+from commit `1646a6a1bd0011cc2b5480283bf498b27be460e5`, SHA256
+`c26208470b5409ad789085d251d94bdf1117b32dcd3b5e544f8696dffffe3d4d`.
 This release adds indexed full-response stem acquisition: active FLAC chunks are
 decoded once into verified sparse PCM, and timeline gaps are generated as zeroes
 when the Engine reads them. The existing native-FLAC path remains available.
@@ -120,6 +120,39 @@ and application sample; transport failures reject. Request identifiers are
 allocated by the raw host, so direct `session.host` calls no longer collide with
 console, meter, or telemetry operations. Prefer the typed adapter surfaces when
 possible.
+
+## Use the SDK Engine directly
+
+`session.engine` is a borrowed view of the same SDK Engine that owns the
+session's host, console, measurements, response queries, spectrum queries, and
+managed observation subscriptions. It is object-identical to the Engine used
+for playback; the adapter only retains `session.close()` as the aggregate close
+operation. Do not call `session.engine.close()` or start new work after closing
+the session.
+
+```ts
+const sdk = session.engine
+const stopMeters = await sdk.subscribeMeters((update) => {
+  for (const [trackId, meter] of update.tracks) draw(trackId, meter.peakLeft)
+})
+const response = await sdk.queryTrackResponse({
+  trackId: "kick",
+  grid: { kind: "linear", points: 256, minimumHz: 20, maximumHz: 20_000 },
+})
+const spectrum = await sdk.querySpectrum({
+  target: { kind: "output", outputId: "master" },
+})
+stopMeters()
+await session.close()
+```
+
+Pass SDK `spectrum`, `spectrumCollection`, and observation, response, or
+spectrum subscription limits in the open options when those capabilities are
+needed. The values are snapshotted before source preparation begins and are
+forwarded to this same Engine. The older `session.meters` and
+`session.telemetry` methods remain deprecated compatibility paths; their meter
+updates add only the legacy `peak` field while retaining the SDK generation,
+validity, loss, span, and nullable master gain-reduction fields.
 
 ## Deployment requirements
 
@@ -443,6 +476,8 @@ before ready. Initial opening and seek completion require a contiguous full-gene
 across every source's 64 shared-ring slots, or that source's exact shorter remaining tail. At
 48 kHz with 128-frame quanta this is about 171 ms. Seek preparation remains suspended, including
 running seeks; the adapter restores running state only after every source passes that gate.
+The generic ring proof is delegated to the SDK's `waitForPcmRunway`; source preparation, feed seek
+preparation, refill and context lifecycle remain owned by the adapter.
 
 Pass `onError(error)` to observe a terminal playback-worker failure after opening. The adapter
 marks the session closed immediately, interrupts pending lifecycle calls, and completes cleanup

@@ -1,9 +1,23 @@
 import { bindIngestDiagnostics, inheritFlacRegistration } from "./stems/ingest-diagnostics.js";
 import { ABI_LAYOUT } from "@misofm/engine";
 import { Cause, Effect, Exit, Scope, Schema } from "effect";
-import type { BrowserBootPolicy } from "@misofm/engine/browser";
+import type {
+  BrowserBootPolicy,
+  ObservationSubscriptionLimits,
+  SpectrumCollection,
+  SpectrumQuery,
+  SpectrumSubscriptionLimits,
+  TrackResponseSubscriptionLimits,
+} from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
-import { createEngine, createDefaultHost, scratchBootOptions, MSB1_CONTROL, Msb1RingObserver } from "@misofm/engine/browser";
+import {
+  createEngine,
+  createDefaultHost,
+  scratchBootOptions,
+  Msb1RingObserver,
+  PcmRunwayError,
+  waitForPcmRunway,
+} from "@misofm/engine/browser";
 import type { BrowserEngine, CreateEngineOptions } from "@misofm/engine/browser";
 
 import { ADAPTER_ASSETS } from "./assets.js";
@@ -21,6 +35,7 @@ import type {
   EngineWebSession,
   EngineWebSessionOptions,
   EngineWebSessionState,
+  SessionEngine,
   SparseEngineWebSessionOptions,
   SourceObservation,
 } from "./session-types.js";
@@ -142,6 +157,17 @@ interface SparseSourcePreparationInput extends SourcePreparationInput {
 async function openSessionCommon(options: SessionOpenOptions, storeSupplied: boolean, prepareSources: PrepareSources): Promise<EngineWebSession> {
   assertEngineRuntimeCapabilities(options.capabilityScope);
   if (!storeSupplied) assertOpfsStorageCapabilities(options.capabilityScope);
+  // The SDK snapshots these values at its own boot boundary. This adapter has
+  // source preparation awaits before that boundary, so copy caller-owned
+  // analysis and subscription options before the first await as well.
+  const spectrum = options.spectrum === undefined ? undefined : snapshotSpectrumQuery(options.spectrum);
+  const spectrumCollection = options.spectrumCollection === undefined ? undefined : snapshotSpectrumCollection(options.spectrumCollection);
+  const observationSubscriptionLimits = options.observationSubscriptionLimits === undefined
+    ? undefined : snapshotObservationSubscriptionLimits(options.observationSubscriptionLimits);
+  const responseSubscriptionLimits = options.responseSubscriptionLimits === undefined
+    ? undefined : snapshotTrackResponseSubscriptionLimits(options.responseSubscriptionLimits);
+  const spectrumSubscriptionLimits = options.spectrumSubscriptionLimits === undefined
+    ? undefined : snapshotSpectrumSubscriptionLimits(options.spectrumSubscriptionLimits);
   const abort = new AbortController();
   const detachAbort = forwardAbort(options.signal, abort);
   const cleanup: Array<() => void | Promise<void>> = [];
@@ -211,6 +237,11 @@ async function openSessionCommon(options: SessionOpenOptions, storeSupplied: boo
       simd128ModuleUrl: String(engineWasmUrl),
       workletModuleUrl: String(engineWorkletUrl),
       policy,
+      ...(spectrum === undefined ? {} : { spectrum }),
+      ...(spectrumCollection === undefined ? {} : { spectrumCollection }),
+      ...(observationSubscriptionLimits === undefined ? {} : { observationSubscriptionLimits }),
+      ...(responseSubscriptionLimits === undefined ? {} : { responseSubscriptionLimits }),
+      ...(spectrumSubscriptionLimits === undefined ? {} : { spectrumSubscriptionLimits }),
       ...(prepared.module === undefined ? {} : { preparedModule: prepared.module }),
     };
     engine = options.createContext === undefined
@@ -250,7 +281,7 @@ async function openSessionCommon(options: SessionOpenOptions, storeSupplied: boo
     // so a first console command and a first meter subscription work in either
     // order and neither caller nor adapter ever names an identifier.
     if (consoleAttached(policy)) {
-      control = await abortable(attachSessionControl(engine.host), abort.signal, undefined, (late) => late.close());
+      control = await abortable(attachSessionControl(engine), abort.signal, undefined, (late) => late.close());
       cleanup.push(() => control!.close());
     }
     abort.signal.throwIfAborted();
@@ -285,6 +316,10 @@ async function openSessionCommon(options: SessionOpenOptions, storeSupplied: boo
     const session: EngineWebSession = {
       shape: engine.shape,
       context,
+      get engine(): SessionEngine {
+        assertOpen();
+        return engine! as SessionEngine;
+      },
       host: engine.host,
       get console(): EngineWebConsole {
         if (control === undefined) throw consoleNotAttached();
@@ -370,7 +405,7 @@ async function openSessionCommon(options: SessionOpenOptions, storeSupplied: boo
             await abortable(feed!.ready(), abort.signal);
             const generation = await abortable(pump!.seekFrames(target), abort.signal);
             await abortable(feed!.prepareSeek(), abort.signal);
-            await waitForSeekPrefill(orderedSources, feed!.rings, counters, target, generation, abort.signal);
+            await waitForSeekPrefill(orderedSources, feed!.rings, target, generation, abort.signal);
             assertOpen();
             if (restoreRunning) {
               await abortable(context.resume(), abort.signal, PREFILL_TIMEOUT_MS);
@@ -390,6 +425,11 @@ async function openSessionCommon(options: SessionOpenOptions, storeSupplied: boo
           closing = true;
           state = "closed";
           abort.abort(new DOMException("Engine Web session closed", "AbortError"));
+          // Refuse every adapter-owned control alias at the aggregate close
+          // boundary. Cleanup below may await SDK-owned lifecycle calls, but
+          // a caller must not be able to submit or acquire a measurement
+          // lease during that window.
+          control?.close();
           // Cleanup starts now; it never waits behind a hung lifecycle call.
           closePromise = reverseCleanup(cleanup);
         }
@@ -603,6 +643,61 @@ function sparseSessionSources(
       frames: exactFrames(source.spec.frames),
       canonicalBytes: canonicalPcmBytes(source.spec),
     });
+  });
+}
+
+function snapshotSpectrumQuery(query: SpectrumQuery): SpectrumQuery {
+  const target: SpectrumQuery["target"] = query.target.kind === "output"
+    ? Object.freeze({ kind: "output", outputId: query.target.outputId })
+    : Object.freeze({ kind: query.target.kind, trackId: query.target.trackId });
+  const spectrumLimits = query.spectrumLimits === undefined ? undefined : Object.freeze({
+    ...(query.spectrumLimits.maximumCaptureBytes === undefined ? {} : { maximumCaptureBytes: query.spectrumLimits.maximumCaptureBytes }),
+    ...(query.spectrumLimits.requestDeadlineMs === undefined ? {} : { requestDeadlineMs: query.spectrumLimits.requestDeadlineMs }),
+  });
+  return Object.freeze({
+    target,
+    ...(query.channels === undefined ? {} : { channels: query.channels }),
+    ...(spectrumLimits === undefined ? {} : { spectrumLimits }),
+  });
+}
+
+function snapshotSpectrumCollection(collection: SpectrumCollection): SpectrumCollection {
+  const entries = collection.entries.map((entry) => Object.freeze({
+    target: entry.target.kind === "output"
+      ? Object.freeze({ kind: "output", outputId: entry.target.outputId })
+      : Object.freeze({ kind: entry.target.kind, trackId: entry.target.trackId }),
+    ...(entry.channels === undefined ? {} : { channels: entry.channels }),
+  }));
+  return Object.freeze({ entries: Object.freeze(entries), maximumCaptureBytes: collection.maximumCaptureBytes });
+}
+
+function snapshotObservationSubscriptionLimits(limits: ObservationSubscriptionLimits): ObservationSubscriptionLimits {
+  return Object.freeze({
+    ...(limits.maximumHandles === undefined ? {} : { maximumHandles: limits.maximumHandles }),
+    ...(limits.maximumBindings === undefined ? {} : { maximumBindings: limits.maximumBindings }),
+    ...(limits.maximumSelections === undefined ? {} : { maximumSelections: limits.maximumSelections }),
+    ...(limits.maximumWindowBlocks === undefined ? {} : { maximumWindowBlocks: limits.maximumWindowBlocks }),
+    ...(limits.maximumCadenceMs === undefined ? {} : { maximumCadenceMs: limits.maximumCadenceMs }),
+  });
+}
+
+function snapshotTrackResponseSubscriptionLimits(limits: TrackResponseSubscriptionLimits): TrackResponseSubscriptionLimits {
+  return Object.freeze({
+    ...(limits.maximumHandles === undefined ? {} : { maximumHandles: limits.maximumHandles }),
+    ...(limits.maximumJobs === undefined ? {} : { maximumJobs: limits.maximumJobs }),
+    ...(limits.maximumRetainedBytes === undefined ? {} : { maximumRetainedBytes: limits.maximumRetainedBytes }),
+    ...(limits.maximumCaptureAttempts === undefined ? {} : { maximumCaptureAttempts: limits.maximumCaptureAttempts }),
+    ...(limits.maximumDeliveredBytesPerSecond === undefined ? {} : { maximumDeliveredBytesPerSecond: limits.maximumDeliveredBytesPerSecond }),
+    ...(limits.maximumCadenceMs === undefined ? {} : { maximumCadenceMs: limits.maximumCadenceMs }),
+  });
+}
+
+function snapshotSpectrumSubscriptionLimits(limits: SpectrumSubscriptionLimits): SpectrumSubscriptionLimits {
+  return Object.freeze({
+    ...(limits.maximumHandles === undefined ? {} : { maximumHandles: limits.maximumHandles }),
+    ...(limits.maximumRetainedBytes === undefined ? {} : { maximumRetainedBytes: limits.maximumRetainedBytes }),
+    ...(limits.maximumDeliveredBytesPerSecond === undefined ? {} : { maximumDeliveredBytesPerSecond: limits.maximumDeliveredBytesPerSecond }),
+    ...(limits.maximumCadenceMs === undefined ? {} : { maximumCadenceMs: limits.maximumCadenceMs }),
   });
 }
 
@@ -884,10 +979,11 @@ function exactFrames(value: number | bigint): number {
 }
 
 async function waitForPrefill(sources: readonly PcmPumpSource[], signal: AbortSignal): Promise<void> {
-  const observers = new Map(sources.map((source) => [source.sourceId, new Msb1RingObserver(source.ring)]));
-  try {
-    await waitForRunway(sources.map((source) => ({ id: source.sourceId, frames: BigInt(source.frames), ring: source.ring })), observers, 0n, 1n, signal, "session.open");
-  } finally { for (const observer of observers.values()) observer.close(); }
+  await waitForSessionPcmRunway(sources.map((source) => ({
+    sourceId: source.sourceId,
+    frames: BigInt(source.frames),
+    ring: source.ring,
+  })), 0n, 1n, signal, "session.open");
 }
 
 function assertSeekContextState(context: EngineAudioContext, expected: "running" | "suspended"): void {
@@ -897,45 +993,36 @@ function assertSeekContextState(context: EngineAudioContext, expected: "running"
 async function waitForSeekPrefill(
   sources: readonly DeclaredStemSource[],
   rings: readonly SharedArrayBuffer[],
-  observers: ReadonlyMap<string, Msb1RingObserver>,
   target: bigint,
   generation: bigint,
   signal: AbortSignal,
 ): Promise<void> {
-  await waitForRunway(sources.map((source, index) => ({ id: source.id, frames: BigInt(source.spec.frames), ring: rings[index]! })), observers, target, generation, signal, "session.seek");
+  await waitForSessionPcmRunway(sources.map((source, index) => ({
+    sourceId: source.id,
+    frames: BigInt(source.spec.frames),
+    ring: rings[index]!,
+  })), target, generation, signal, "session.seek");
 }
 
-async function waitForRunway(
-  sources: readonly { readonly id: string; readonly frames: bigint; readonly ring: SharedArrayBuffer }[],
-  observers: ReadonlyMap<string, Msb1RingObserver>,
+async function waitForSessionPcmRunway(
+  sources: readonly { readonly sourceId: string; readonly frames: bigint; readonly ring: SharedArrayBuffer }[],
   target: bigint,
   generation: bigint,
   signal: AbortSignal,
   code: "session.open" | "session.seek",
 ): Promise<void> {
-  const pending = new Map<string, { next: bigint; end: bigint; total: bigint }>();
-  for (const source of sources) {
-    if (target >= source.frames) continue;
-    const control = new Int32Array(source.ring);
-    const quantum = BigInt(Atomics.load(control, MSB1_CONTROL.FRAME_CAPACITY));
-    const runway = quantum * BigInt(Atomics.load(control, MSB1_CONTROL.CAPACITY));
-    pending.set(source.id, { next: target, end: target + runway < source.frames ? target + runway : source.frames, total: source.frames });
-  }
-  const deadline = performance.now() + PREFILL_TIMEOUT_MS;
-  for (;;) {
-    signal.throwIfAborted();
-    for (const [id, expected] of pending) {
-      observers.get(id)!.pull((chunk) => {
-        if (chunk.generation !== generation || chunk.startFrame !== expected.next || chunk.startFrame + BigInt(chunk.frames) > expected.total) {
-          throw new EngineWebAdapterError(code, "PCM prefill is not contiguous at the acknowledged position", { sourceId: id });
-        }
-        expected.next += BigInt(chunk.frames);
-        if (expected.next >= expected.end) pending.delete(id);
-      }, 32);
-    }
-    if (pending.size === 0) return;
-    if (performance.now() >= deadline) throw new EngineWebAdapterError(code, "Current-generation PCM runway prefill timed out");
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  try {
+    await waitForPcmRunway({ sources, targetFrame: target, generation, timeoutMs: PREFILL_TIMEOUT_MS, signal });
+  } catch (error) {
+    if (!(error instanceof PcmRunwayError)) throw error;
+    const details = {
+      reason: error.reason,
+      ...(error.sourceId === undefined ? {} : { sourceId: error.sourceId }),
+    };
+    const message = error.reason === "mismatch"
+      ? "PCM prefill is not contiguous at the acknowledged position"
+      : "Current-generation PCM runway prefill timed out";
+    throw new EngineWebAdapterError(code, message, details, error);
   }
 }
 

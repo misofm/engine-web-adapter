@@ -136,3 +136,85 @@ Scope amendment only. The old three-method delegation and instruction to retain
 adapter measurement ownership are superseded. No new runtime result is claimed.
 
 Coordination entry point: https://github.com/misofm/engine/issues/796 . Independent follow-ups https://github.com/misofm/engine/issues/797 , https://github.com/misofm/engine-web-adapter/issues/101 and https://github.com/misofm/engine-web-adapter/issues/102 do not block this issue or app misofm/app#210.
+
+
+## First source checkpoint
+
+Luna XHIGH implements borrowed `session.engine`, SDK-owned console/meter/telemetry
+paths, removal of adapter HostFeed, the sole legacy peak display projection with
+canonical metadata/null preserved, and snapshotted spectrum/collection/limits
+forwarding. Build, typecheck and focused compiled console suite 22/22 pass.
+The exact accepted local SDK tarball is installed temporarily in node_modules
+only; package metadata/lockfiles remain unchanged pending registry #794.
+Root checkpoints the six source/test/README paths before final session/packed
+proof and published dependency adoption. No independent verdict/publication
+is claimed yet. Current adapter main f833303 remains included.
+
+
+Second Luna XHIGH checkpoint closes compatibility control admission synchronously
+at aggregate close start and adds captured-alias regressions. Opening map-race
+tests now target the single SDK console acquisition, preserving late settlement
+and original failure causes. SDK engine identity, canonical metadata/null and
+mutable-option snapshot coverage are added. Compiled console/session tests
+67/67, build, types, lint and whitespace checks PASS. Packed baseline passes;
+the new collection proof fails before final registry pins, with the temporary
+consumer reporting a zero collection-target capacity. No unsupported-product
+conclusion is claimed: the runner copies locked dependencies, still 0.2.4, and
+final registry 0.2.5 adoption/retest is required. Logs:
+`/tmp/miso-796-audit/adapter95-focused-2.log`, `adapter95-lint.log`,
+`adapter95-browser-2.log`. Latest main now includes accepted #102 and embedded
+BLAKE3 SIMD; root integrates that before the release metadata/proof tranche.
+
+
+## Independent attempt 1 candidate review — 2026-09-14
+
+Fresh Astra MEDIUM independently reviewed integrated candidate `0bcc74d` and
+verification checkpoint `3746df9`: **PASS for the #95 source and 0.5.7 package
+candidate**, including combined #101 adoption. No production correction was
+needed. The borrowed object is the existing SDK engine, the compatibility
+console uses its managed owner, direct/compatibility measurements converge on
+SDK leases, canonical metadata and master null survive projection, and aggregate
+close preserves admission, late acquisition and source-lifetime cleanup.
+Analysis preparation and all three subscription-limit families are copied before
+opening awaits; the strengthened existing snapshot test proves singular and
+collection forwarding and SDK refusal at original limits after caller mutation.
+
+The verifier corrected the existing packed scenario's evidence: it previously
+recorded readiness booleans without requiring delivery. It now requires real SDK
+meter/response/spectrum payloads, fresh target-labelled frames after an atomic
+selection and a refused selection, stable managed job ownership, running context,
+and no meter delivery after completed close. A bounded three-second wait proves
+fresh frames rather than assuming a fixed delay. SDK revision advances with each
+capture; stable job identity is the appropriate refusal-preservation assertion.
+The fixture's 65,536-byte collection budget was correctly refused with result 5:
+two targets already require that much for observer and queued dual-mono PCM alone,
+before states, bindings and IDs. The two-entry fixture now uses the accepted SDK
+browser fixture's finite 1 MiB budget. Production policy is unchanged; native
+accounting remains `host-core/src/spectrum.rs::spectrum_capture_collection_resources`.
+
+Independent evidence on Node 22.23.2:
+
+- Full `npm run check`: 380/380 tests PASS, both reproducible hash Wasm assets,
+  source/decoder/types/package policy PASS (247 packaged files).
+- Corrected `npm run test:browser`: PASS, Chromium 153.0.8010.12. Sparse session
+  delivered 11 SDK meter updates, a 16-point response, and output/track/retained
+  track spectrum end samples 2304, 14720, 16768. One sparse read and lease close;
+  fourteen assets, zero console errors or failed requests. Existing dense
+  cold/warm, seek, terminal cleanup and BLAKE3 fixture assertions also PASS.
+- `npm run publish:dry-run`, fresh normal tarball dependency installation,
+  strict public-surface compilation (including absent borrowed `close`) and
+  imports PASS. Fresh lock resolves exactly one SDK, registry `0.2.5`, with
+  integrity `sha512-cNMuslg9t7NAkBrYFMl8jcd1fOy5/fN+FEeDE+WdiMj+8+DkWTkvbWvMo1UMWgC+MrnX4BKhYz2QrKmAstIWwQ==`.
+- Candidate metadata/lock/workflow consistently use adapter `0.5.7`, SDK `0.2.5`,
+  full source `1646a6a1bd0011cc2b5480283bf498b27be460e5` and SDK archive SHA256
+  `c26208470b5409ad789085d251d94bdf1117b32dcd3b5e544f8696dffffe3d4d`.
+
+Logs are `/tmp/miso-796-audit/verify-adapter95-*`; the passing browser record is
+`verify-adapter95-final-browser-bounded.log`. Earlier fixture/refusal diagnostics
+are retained separately and are not passing runs. Final candidate archive is
+`/tmp/engine-web-adapter-browser-DIvKBi/misofm-engine-web-adapter-0.5.7.tgz`, SHA256
+`8a0b8ad2cc9f0973514c28b1b5d195a56485879835b5797299dc234a8e433c35`, integrity
+`sha512-XXAarTN8Wh2ENIujHTCKh07a+EXYgP4hVPsW2g2KoqNHliEzmOPAXadV3BWYf4L7zy/BM8vbiJDrGLw1BTAYzQ==`.
+This is candidate acceptance, not registry publication: merged required CI,
+trusted publish/verify, adapter registry integrity and attestation proof, then
+GitHub synchronization/closure remain coordinator-owned delivery gates.

@@ -5,7 +5,7 @@ import { BoundedStemAdmission } from "../src/stems/flac-admission.js";
 import { VerifiedStemStore } from "../src/stems/store.js";
 import { MemoryStemStorageBackend } from "../src/stems/storage.js";
 import { createSparseStemResolver, OpfsStorageBackend, serializeSparseStemIndex, VerifiedSparsePcmStore } from "../src/stems/index.js";
-import { BrowserBootError, Msb1RingWriter, PcmFeedError } from "@misofm/engine/browser";
+import { BrowserBootError, Msb1RingWriter, PcmFeedError, PcmRunwayError } from "@misofm/engine/browser";
 import { scratchBootWithWorker, prepareBrowserSessionWithWorker } from "../src/scratch.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -1018,94 +1018,130 @@ function sessionOpfsWorker(root: SessionOpfsDirectory, events: string[], mode: "
   return worker;
 }
 
-test("session snapshots document and source declarations before deferred scratch work", async () => {
-  const originalSources = [{
-    id: "source",
-    spec: { channels: 1 as const, bitDepth: 16 as const, frames: 4, content: IDENTITY },
-  }];
-  const document = new TextEncoder().encode(documentFor(originalSources));
-  const snapshot = new Uint8Array(document);
-  const scratchStarted = deferred<void>();
-  const releaseScratch = deferred<void>();
-  let scratchDocument: Uint8Array | undefined;
-  let hostDocument: Uint8Array | undefined;
-  const policy = { sourceRingFrames: 16, console: { commandQueueRecords: 8, meterBlocks: 2 } };
-  let scratchPolicy: unknown;
-  let hostPolicy: unknown;
-  let storeStem: unknown;
-  const events: string[] = [];
-  const context = fakeContext(events);
-  const host = {
-    node: { connect() {}, disconnect() {} },
-    async sessionMap() { return { tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }], metersAttached: false }; },
-    async command() { return { ok: true, result: 0, code: "ok", reason: 0, reasonName: "none", rejectedIndex: 0, admitted: 0, appliedAtSample: 0n }; },
-    async dispose() {},
-  } as unknown as BrowserEngine["host"];
-  const lease: StemSessionLease = {
-    leaseId: "snapshot", stems: [{ sourceId: "source", identity: IDENTITY, bytes: 8 }],
-    async read() { return new Blob([new Uint8Array(8)]); }, async close() {},
-  };
-  const opening = openEngineWebSession({
-    document,
-    policy,
-    leaseId: "snapshot",
-    sources: originalSources as readonly DeclaredStemSource[],
-    resolver: { async resolve() { throw new Error("warm fixture must not resolve"); } },
-    capabilityScope: capabilities(),
-    store: {
-      async open() { return this; },
-      async openSession(request) { storeStem = request.stems[0]; return lease; },
-    },
-    scratchBoot: async (request) => {
-      scratchDocument = request.document;
-      scratchPolicy = request.options;
-      scratchStarted.resolve();
-      await releaseScratch.promise;
-      return {
-        sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
-        sources: [{ id: "source", channels: 1, frames: 4n }], tracks: [],
-      };
-    },
-    createContext: () => context,
-    createHost: async (request) => {
-      assert.equal("preparedModule" in request, false, "custom shape-only scratch remains compatible");
-      hostDocument = request.document; hostPolicy = request.options; return host;
-    },
-    createAttachNode: () => ({
-      port: { postMessage(message: unknown) {
-        const value = message as { op: string; rings?: SharedArrayBuffer[] };
-        if (value.op === "attach") for (const ring of value.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
-      } },
-      disconnect() {},
-    }),
-    createPump: async ({ sources }) => {
-      for (const source of sources) fillRing(source.ring, source.frames);
-      return { async seekFrames() { return 0n; }, close() {} };
-    },
-    createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
-  });
-  await scratchStarted.promise;
-  document.fill(0x78);
-  policy.sourceRingFrames = 99;
-  policy.console.commandQueueRecords = 99;
-  policy.console.meterBlocks = 99;
-  const mutable = originalSources[0]! as any;
-  mutable.id = "mutated";
-  mutable.spec.channels = 2;
-  mutable.spec.bitDepth = "32f";
-  mutable.spec.frames = 99;
-  mutable.spec.content = IDENTITY_Z;
-  releaseScratch.resolve();
-  const session = await opening;
-  assert.deepEqual(scratchDocument, snapshot, "scratch sees owned document snapshot A");
-  assert.deepEqual(hostDocument, snapshot, "createEngine host sees the same document snapshot A");
-  assert.deepEqual(scratchPolicy, { sourceRingFrames: 16, requireSampleRateHz: 0, requireQuantumFrames: 0,
-    console: { commandQueueRecords: 8, meterBlocks: 2 } });
-  assert.deepEqual(hostPolicy, { sourceRingFrames: 16, requireSampleRateHz: 48_000, requireQuantumFrames: 4,
-    console: { commandQueueRecords: 8, meterBlocks: 2 } });
-  assert.deepEqual(storeStem, { sourceId: "source", identity: IDENTITY, bytes: 8 });
-  assert.deepEqual(session.shape.sources, [{ id: "source", channels: 1, frames: 4n }]);
-  await session.close();
+test("session snapshots document, preparation and limits before deferred scratch work", async () => {
+  for (const collection of [false, true]) {
+    const originalSources = [{
+      id: "source",
+      spec: { channels: 1 as const, bitDepth: 16 as const, frames: 4, content: IDENTITY },
+    }];
+    const document = new TextEncoder().encode(documentFor(originalSources));
+    const snapshot = new Uint8Array(document);
+    const scratchStarted = deferred<void>();
+    const releaseScratch = deferred<void>();
+    let scratchDocument: Uint8Array | undefined;
+    let hostDocument: Uint8Array | undefined;
+    const policy = { sourceRingFrames: 16, console: { commandQueueRecords: 8, meterBlocks: 2 } };
+    const spectrum = { target: { kind: "output" as const, outputId: "snapshot-output" }, channels: "left" as const,
+      spectrumLimits: { maximumCaptureBytes: 128, requestDeadlineMs: 75 } };
+    const spectrumCollection = { entries: [{ target: { kind: "output" as const, outputId: "snapshot-output" }, channels: "left" as const }], maximumCaptureBytes: 128 };
+    const observationSubscriptionLimits = { maximumHandles: 3, maximumBindings: 4, maximumSelections: 5,
+      maximumWindowBlocks: 6, maximumCadenceMs: 7 };
+    const responseSubscriptionLimits = { maximumHandles: 8, maximumJobs: 9, maximumRetainedBytes: 10,
+      maximumCaptureAttempts: 11, maximumDeliveredBytesPerSecond: 12, maximumCadenceMs: 13 };
+    const spectrumSubscriptionLimits = { maximumHandles: 14, maximumRetainedBytes: 15,
+      maximumDeliveredBytesPerSecond: 16, maximumCadenceMs: 17 };
+    let scratchPolicy: unknown;
+    let hostPolicy: unknown;
+    let storeStem: unknown;
+    const events: string[] = [];
+    const context = fakeContext(events);
+    const host = {
+      node: { connect() {}, disconnect() {} },
+      async sessionMap() { return { tracks: [], sources: [{ id: "source", channels: 1, frames: 4n }], metersAttached: false }; },
+      async command() { return { ok: true, result: 0, code: "ok", reason: 0, reasonName: "none", rejectedIndex: 0, admitted: 0, appliedAtSample: 0n }; },
+      async dispose() {},
+    } as unknown as BrowserEngine["host"];
+    const lease: StemSessionLease = {
+      leaseId: "snapshot", stems: [{ sourceId: "source", identity: IDENTITY, bytes: 8 }],
+      async read() { return new Blob([new Uint8Array(8)]); }, async close() {},
+    };
+    const opening = openEngineWebSession({
+      document,
+      policy,
+      ...(collection ? { spectrumCollection } : { spectrum }),
+      observationSubscriptionLimits,
+      responseSubscriptionLimits,
+      spectrumSubscriptionLimits,
+      leaseId: "snapshot",
+      sources: originalSources as readonly DeclaredStemSource[],
+      resolver: { async resolve() { throw new Error("warm fixture must not resolve"); } },
+      capabilityScope: capabilities(),
+      store: {
+        async open() { return this; },
+        async openSession(request) { storeStem = request.stems[0]; return lease; },
+      },
+      scratchBoot: async (request) => {
+        scratchDocument = request.document;
+        scratchPolicy = request.options;
+        scratchStarted.resolve();
+        await releaseScratch.promise;
+        return {
+          sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16, backend: "simd128",
+          sources: [{ id: "source", channels: 1, frames: 4n }], tracks: [],
+        };
+      },
+      createContext: () => context,
+      createHost: async (request) => {
+        assert.equal("preparedModule" in request, false, "custom shape-only scratch remains compatible");
+        hostDocument = request.document; hostPolicy = request.options; return host;
+      },
+      createAttachNode: () => ({
+        port: { postMessage(message: unknown) {
+          const value = message as { op: string; rings?: SharedArrayBuffer[] };
+          if (value.op === "attach") for (const ring of value.rings ?? []) Atomics.store(new Int32Array(ring), MSB1_CONTROL.ATTACHED, 1);
+        } },
+        disconnect() {},
+      }),
+      createPump: async ({ sources }) => {
+        for (const source of sources) fillRing(source.ring, source.frames);
+        return { async seekFrames() { return 0n; }, close() {} };
+      },
+      createOutput: () => ({ connect() {}, disconnect() {} }) as unknown as AudioNode,
+    });
+    await scratchStarted.promise;
+    document.fill(0x78);
+    policy.sourceRingFrames = 99;
+    policy.console.commandQueueRecords = 99;
+    policy.console.meterBlocks = 99;
+    spectrumCollection.entries[0]!.target.outputId = "mutated-output";
+    spectrumCollection.maximumCaptureBytes = 512;
+    spectrum.target.outputId = "mutated-output";
+    spectrum.spectrumLimits.maximumCaptureBytes = 512;
+    observationSubscriptionLimits.maximumHandles = 99;
+    responseSubscriptionLimits.maximumJobs = 99;
+    spectrumSubscriptionLimits.maximumHandles = 99;
+    observationSubscriptionLimits.maximumCadenceMs = 99;
+    responseSubscriptionLimits.maximumCadenceMs = 99;
+    spectrumSubscriptionLimits.maximumCadenceMs = 99;
+    const mutable = originalSources[0]! as any;
+    mutable.id = "mutated";
+    mutable.spec.channels = 2;
+    mutable.spec.bitDepth = "32f";
+    mutable.spec.frames = 99;
+    mutable.spec.content = IDENTITY_Z;
+    releaseScratch.resolve();
+    const session = await opening;
+    assert.deepEqual(scratchDocument, snapshot, "scratch sees owned document snapshot A");
+    assert.deepEqual(hostDocument, snapshot, "createEngine host sees the same document snapshot A");
+    assert.deepEqual(scratchPolicy, { sourceRingFrames: 16, requireSampleRateHz: 0, requireQuantumFrames: 0,
+      console: { commandQueueRecords: 8, meterBlocks: 2 } });
+    assert.deepEqual(hostPolicy, { sourceRingFrames: 16, requireSampleRateHz: 48_000, requireQuantumFrames: 4,
+      console: { commandQueueRecords: 8, meterBlocks: 2 },
+      ...(collection
+        ? { spectrumCollection: { entries: [{ target: { kind: "output", outputId: "snapshot-output" }, channels: "left" }], maximumCaptureBytes: 128 } }
+        : { spectrum: { target: { kind: "output", outputId: "snapshot-output" }, channels: "left",
+          spectrumLimits: { maximumCaptureBytes: 128, requestDeadlineMs: 75 } } }) });
+    assert.throws(() => session.engine.subscribeObservations({ selections: [{ trackId: "track", rack: "dynamic", effectSlotId: "effect", tapId: 1, channels: "both" }], windowBlocks: 1, cadenceMs: 8 }),
+      /observation cadenceMs must be an integer in 1\.\.=7/);
+    assert.throws(() => session.engine.subscribeTrackResponse({ trackId: "track", cadenceMs: 14,
+      grid: { kind: "linear", points: 16, minimumHz: 20, maximumHz: 20_000 } }),
+      /track response cadenceMs must be an integer in 1\.\.=13/);
+    assert.throws(() => session.engine.subscribeSpectrum({ target: { kind: "output", outputId: "snapshot-output" }, cadenceMs: 18 }),
+      /spectrum cadenceMs must be an integer in 1\.\.=17/);
+    assert.deepEqual(storeStem, { sourceId: "source", identity: IDENTITY, bytes: 8 });
+    assert.deepEqual(session.shape.sources, [{ id: "source", channels: 1, frames: 4n }]);
+    await session.close();
+  }
 });
 
 test("high-level FLAC path honors common Worker assets with nested FLAC precedence", async () => {
@@ -1360,14 +1396,17 @@ test("pump failure during opening rejects open instead of duplicating a runtime 
 });
 
 test("pump failure interrupts either opening console map without awaiting late success or rejection", { timeout: 2000 }, async () => {
-  for (const pendingMap of [1, 2]) for (const lateReject of [false, true]) {
+  // The SDK owns the sole console acquisition and therefore performs one
+  // session-map request. Keep both late-settlement paths covered without
+  // retaining the former adapter-plus-SDK double-map assumption.
+  for (const lateReject of [false, true]) {
     const failed = deferred<unknown>(); const entered = deferred<void>(); const release = deferred<void>();
     const events: string[] = []; const reason = new Error("pump failed while attaching console");
     let calls = 0; let notifications = 0;
     const opening = pausedSeekFixture(true, {
       failure: failed.promise, events, onError: () => { notifications++; },
       async sessionMap() {
-        if (++calls === pendingMap) {
+        if (++calls === 1) {
           entered.resolve(); await release.promise;
           if (lateReject) throw new Error("late map rejection");
         }
@@ -1392,7 +1431,7 @@ test("same-turn console map completion and pump failure preserve the opening cau
     const opening = pausedSeekFixture(true, {
       failure: failed.promise, events,
       async sessionMap() {
-        if (++calls === 2) { entered.resolve(); await release.promise; }
+        if (++calls === 1) { entered.resolve(); await release.promise; }
         return { tag: "miso.sessionmap.v1", requestId: calls, result: 0, tracks: [], sources: [{ id: "source", channels: 1, frames: 512n }], metersAttached: false };
       },
     });
@@ -1526,23 +1565,43 @@ test("paused prepare refusal retains result and closes; close interrupts prepara
 test("wrong first target cannot be hidden by a later matching chunk", async () => {
   const f = await pausedSeekFixture();
   const seeking = f.session.seekFrames(100);
-  const rejected = assert.rejects(seeking, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek");
+  const rejected = assert.rejects(seeking, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek"
+    && e.cause instanceof EngineWebAdapterError && e.cause.details.reason === "mismatch"
+    && e.cause.details.sourceId === "source" && e.cause.cause instanceof PcmRunwayError);
   await tick(); f.confirm(); f.write(101n); f.write(100n);
   await rejected;
   assert.equal(f.session.state, "closed");
   assert.equal(f.events.includes("context.resume"), false);
+  for (const event of ["pump.close", "detach", "dispose", "context.close", "lease.close"]) {
+    assert.equal(f.events.filter((value) => value === event).length, 1, event + " completes before refusal");
+  }
 });
 
 test("paused preparation and fresh prefill deadlines close rather than allow play", { timeout: 6000 }, async () => {
   for (const prepared of [false, true]) {
     const f = await pausedSeekFixture();
     const seeking = f.session.seekFrames(100);
-    const rejected = assert.rejects(seeking, (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.seek");
+    const rejected = assert.rejects(seeking, (e: unknown) => {
+      assert.ok(e instanceof EngineWebAdapterError && e.code === "session.seek");
+      assert.ok(e.cause instanceof EngineWebAdapterError);
+      if (prepared) {
+        assert.deepEqual(e.cause.details, { reason: "timeout" });
+        assert.ok(e.cause.cause instanceof PcmRunwayError);
+        assert.equal(e.cause.cause.reason, "timeout");
+      } else {
+        assert.ok(e.cause.cause instanceof PcmFeedError);
+        assert.equal(e.cause.cause.operation, "prepareTimeout");
+      }
+      return true;
+    });
     await tick(); if (prepared) f.confirm();
     await rejected;
     assert.equal(f.session.state, "closed");
     await assert.rejects(f.session.play(), (e: unknown) => e instanceof EngineWebAdapterError && e.code === "session.closed");
     assert.equal(f.events.includes("context.resume"), false);
+    for (const event of ["pump.close", "detach", "dispose", "context.close", "lease.close"]) {
+      assert.equal(f.events.filter((value) => value === event).length, 1, event + " completes before refusal");
+    }
   }
 });
 
