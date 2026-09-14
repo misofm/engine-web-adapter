@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
-assert.equal(packageJson.version, "0.5.4");
+assert.equal(packageJson.version, "0.5.5");
 assert.deepEqual(packageJson.dependencies, {
   "@misofm/codec": "0.1.1",
   "@misofm/engine": "0.2.4",
@@ -13,6 +14,14 @@ assert.deepEqual(packageJson.dependencies, {
   "hash-wasm": "4.12.0",
 });
 assert.equal(packageJson.type, "module");
+const blake3Manifest = JSON.parse(await readFile("src/stems/blake3-wasm.manifest.json", "utf8"));
+const blake3Wasm = await import("../dist/stems/blake3-wasm.js");
+assert.equal(blake3Wasm.BLAKE3_WASM_SHA256, blake3Manifest.assetSha256);
+assert.equal(
+  createHash("sha256").update(blake3Wasm.BLAKE3_WASM_BYTES).digest("hex"),
+  blake3Manifest.assetSha256,
+  "packed BLAKE3 Wasm bytes must match the reproducible manifest",
+);
 const { ADAPTER_PROVENANCE } = await import("../dist/provenance.js");
 assert.equal(ADAPTER_PROVENANCE.engine.package, `@misofm/engine@${packageJson.dependencies["@misofm/engine"]}`, "built provenance must identify the installed Engine dependency");
 const cache = await mkdtemp(join(tmpdir(), "engine-web-adapter-npm-cache-"));
@@ -30,6 +39,17 @@ for (const required of [
   "dist/codec-licenses/codec-LICENSE",
   "dist/codec-licenses/effect-LICENSE",
   "dist/codec-licenses/hash-wasm-LICENSE",
+  "dist/stems/blake3-wasm.js",
+  "dist/codec-licenses/blake3-LICENSE_A2",
+  "dist/codec-licenses/blake3-LICENSE_A2LLVM",
+  "dist/codec-licenses/blake3-LICENSE_CC0",
+  "dist/codec-licenses/blake3-arrayvec-LICENSE-APACHE",
+  "dist/codec-licenses/blake3-arrayvec-LICENSE-MIT",
+  "dist/codec-licenses/blake3-cfg-if-LICENSE-APACHE",
+  "dist/codec-licenses/blake3-cfg-if-LICENSE-MIT",
+  "dist/codec-licenses/blake3-constant_time_eq-LICENSE-APACHE",
+  "dist/codec-licenses/blake3-constant_time_eq-LICENSE-CC0",
+  "dist/codec-licenses/blake3-constant_time_eq-LICENSE-MIT0",
   "dist/codec-licenses/THIRD_PARTY_NOTICES.md",
   "dist/codec-licenses/vendor/licenses/compiler-rt.txt",
   "dist/codec-licenses/vendor/licenses/emscripten.txt",
@@ -41,6 +61,16 @@ for (const [packedPath, sourcePath] of [
   ["dist/codec-licenses/codec-LICENSE", "node_modules/@misofm/codec/LICENSE"],
   ["dist/codec-licenses/effect-LICENSE", "node_modules/effect/LICENSE"],
   ["dist/codec-licenses/hash-wasm-LICENSE", "node_modules/hash-wasm/LICENSE"],
+  ["dist/codec-licenses/blake3-LICENSE_A2", "native/blake3/licenses/LICENSE_A2"],
+  ["dist/codec-licenses/blake3-LICENSE_A2LLVM", "native/blake3/licenses/LICENSE_A2LLVM"],
+  ["dist/codec-licenses/blake3-LICENSE_CC0", "native/blake3/licenses/LICENSE_CC0"],
+  ["dist/codec-licenses/blake3-arrayvec-LICENSE-APACHE", "native/blake3/vendor/arrayvec/LICENSE-APACHE"],
+  ["dist/codec-licenses/blake3-arrayvec-LICENSE-MIT", "native/blake3/vendor/arrayvec/LICENSE-MIT"],
+  ["dist/codec-licenses/blake3-cfg-if-LICENSE-APACHE", "native/blake3/vendor/cfg-if/LICENSE-APACHE"],
+  ["dist/codec-licenses/blake3-cfg-if-LICENSE-MIT", "native/blake3/vendor/cfg-if/LICENSE-MIT"],
+  ["dist/codec-licenses/blake3-constant_time_eq-LICENSE-APACHE", "native/blake3/vendor/constant_time_eq/LICENSE-APACHE"],
+  ["dist/codec-licenses/blake3-constant_time_eq-LICENSE-CC0", "native/blake3/vendor/constant_time_eq/LICENSE-CC0"],
+  ["dist/codec-licenses/blake3-constant_time_eq-LICENSE-MIT0", "native/blake3/vendor/constant_time_eq/LICENSE-MIT0"],
 ]) {
   assert.equal(
     await readFile(packedPath, "utf8"),
