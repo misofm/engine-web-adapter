@@ -266,3 +266,25 @@ provide exact identities to app#210. Existing packed browser scenario must retai
 same-engine measurements and corrected live spectrum. No republishing existing
 versions, dependency overrides or deployment on local-only identities. Record
 new source/run/archive identities separately, sync GitHub, close after verification.
+
+## Adapter 0.5.8 candidate PASS
+
+Checkpoint `d0f7db8` changes only the eight dependency/version/provenance guard
+paths: adapter 0.5.8 adopts published SDK 0.2.6 from source
+`cdf629d6bfd0224b3532dd0abd04b9581240da56`, SDK archive SHA256
+`8219178d591c76d820d7ad2e2f7b894fe7f39185f89667f59c675fad603b81eb`.
+No adapter runtime/backend/Wasm changes. Luna's terminal evidence reports full
+check 380/380 tests, 247 package files, packed Chromium spectrum/response proof
+and publish dry-run PASS; those implementation gate runs have no saved log files.
+
+Fresh Astra MEDIUM independently reviewed the diff and rebuilt the same archive,
+then passed normal fresh tarball installation, strict public types/imports and
+exactly one registry SDK 0.2.6. Actual SDK archive/source provenance matches the
+pins. Candidate adapter SHA256
+`ad740867c1c80d2594d96364d646a135490e1f9a03c73fec5b9601346507d948`;
+SHA1 `d8546f99d955d9687d934b0119a2d8a8b3374805`;
+integrity `sha512-rWOffhfIjwquuIpnI3S3jBYdxeZYD5MqG33Y9VpRGGBaKLRsN9Gf3ci1i2peveCYuvf3HE0VH77WOitq2qHRJQ==`.
+Independent report `/tmp/miso-adapter058-verifier/candidate-verdict.md` clearly
+separates independent results from implementation-reported terminal gates.
+Required CI, immutable publication and published archive/signature/attestation
+verification remain pending; no completion claimed for corrected adapter bytes.
