@@ -247,3 +247,22 @@ Durable independent report: `/tmp/miso-796-audit/verify-adapter95-published-verd
 registry archive: `/tmp/miso-796-audit/misofm-engine-web-adapter-0.5.7-registry.tgz`.
 All source, package and published-adoption gates are PASS. Root synchronizes
 this evidence upstream and the matching GitHub issue before verified closure.
+
+## Exact SDK dependency correction release
+
+Reopened after app#210's required real-browser proof established engine#801:
+published SDK 0.2.5 live spectrum repeatedly gaps despite valid uninterrupted
+audio. Previous adapter 0.5.7 source/provenance PASS remains valid for its bytes.
+The bounded next slice changes only the exact SDK dependency to the verified
+engine#794 correction release and adapter patch metadata/lock/necessary existing
+guards. Candidate versions are SDK 0.2.6 and adapter 0.5.8; re-audit availability
+before freezing. No adapter backend, ownership, cache, PCM or Wasm changes.
+
+Luna XHIGH implements metadata; separate fresh Astra MEDIUM verifies. Root
+checkpoints, integrates latest main, runs existing package/type/test and packed
+fresh-consumer gates with exactly one SDK resolution, then required browser CI
+and the existing OIDC release. Verify registry archive/integrity/provenance and
+provide exact identities to app#210. Existing packed browser scenario must retain
+same-engine measurements and corrected live spectrum. No republishing existing
+versions, dependency overrides or deployment on local-only identities. Record
+new source/run/archive identities separately, sync GitHub, close after verification.
