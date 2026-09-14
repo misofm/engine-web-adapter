@@ -37,3 +37,30 @@ tranche now. Existing local Emscripten6.0.9 and pinned Rust/browser tools are
 available. Keep runtime/API behavior unchanged; app#222 owns the live-cut browser
 episode against the same SDK bytes. Fresh tarball consumer, existing checks and
 packed indexed-sparse proof remain; root owns review, macOSCI and publication.
+
+### Bounded fixture compatibility correction
+
+The exact dependency/provenance update passes packed indexed-sparse Chromium,
+publish dry-run, package checks and foundation tests. Full check reaches373/380:
+seven existing controlled-port tests load the packaged SDK host through a data
+URL, which cannot resolve its new sibling prepared-control.js import. Root
+permits a narrow tests/console.test.ts loader correction using the actual
+packaged sibling/ABI identity, retaining all existing controlled-port assertions.
+No production SDK/adapter source or publishing mechanism changes. Complete the
+existing check and ordinary fresh tarball consumer before checkpoint/review.
+
+### Attempt1 implementation checkpoint
+
+Luna XHIGH completed exact SDK0.3.0/adapter0.5.9 dependency, provenance and
+existing release-guard updates. The existing console fixture now resolves the
+actual packaged helper and ABI JSON while preserving controlled-port assertions.
+No adapter runtime/API/decoder changes.
+
+PASS: full npm check380/380 tests and package policy247 files/474783 bytes,
+24 focused console fixtures,7 foundation tests, publish dry-run, existing packed
+indexed-sparse Chromium proof, and ordinary fresh tarball public imports with
+exactly one installed SDK0.3.0. Logs are /tmp/miso-adapter-804-{npm-check-final,
+console-focused,foundation,publish-dry-run,browser-packed,fresh-consumer}.log.
+Initial373/380 fixture-loader failure is preserved in npm-check.log. Fresh
+Astra MEDIUM review, required macOS OPFS qualification and registry publication
+remain; no adapter release is claimed yet.

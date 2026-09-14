@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { ABI_LAYOUT, encodeLaneEdits } from "@misofm/engine";
@@ -412,11 +414,16 @@ async function packedControl() {
     },
   };
   function frame(data: unknown) { port.onmessage?.({ data }); }
-  const asset = await readFile("node_modules/@misofm/engine/dist/assets/miso-engine-v1-audio-worklet-host.js", "utf8");
+  const asset = (await readFile("node_modules/@misofm/engine/dist/assets/miso-engine-v1-audio-worklet-host.js", "utf8"))
+    .replace(
+      'from "./prepared-control.js"',
+      `from ${JSON.stringify(pathToFileURL(resolve("node_modules/@misofm/engine/dist/assets/prepared-control.js")).href)}`,
+    );
+  const preparedAbiLayout = JSON.parse(await readFile("node_modules/@misofm/engine/dist/assets/miso-engine-v1-abi-layout.json", "utf8"));
   const sdk = await import(`data:text/javascript;base64,${Buffer.from(`${asset}\nexport { MisoAudioWorkletHost };`).toString("base64")}`) as {
     readonly MisoAudioWorkletHost: new (...args: readonly unknown[]) => BrowserEngine["host"];
   };
-  const host = new sdk.MisoAudioWorkletHost({ port, disconnect() {} }, "simd128", 48_000, 128, {}, 65_536, 8, 32, 1);
+  const host = new sdk.MisoAudioWorkletHost({ port, disconnect() {} }, "simd128", 48_000, 128, {}, 65_536, 8, 32, 1, undefined, preparedAbiLayout);
   const sdkConsole = await createBrowserConsole(host);
   const feeds = new TestMeasurementFeeds(host, TRACKS);
   const engine = {
