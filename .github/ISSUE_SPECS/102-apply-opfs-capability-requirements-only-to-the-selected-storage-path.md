@@ -83,3 +83,40 @@ package policy, and whitespace checks PASS. Root checkpoints the four intended
 source/test/README paths; no release pins changed. Independent fresh Astra
 MEDIUM verification and required merged CI remain pending. This is attempt 1;
 no published capability or final acceptance is claimed yet.
+
+
+## Independent attempt 1 review — 2026-09-14
+
+Fresh Astra MEDIUM adversarial review of implementation
+`6616d01b7560d35975ad0b9733f97e7f76cfe708`: **PASS for the frozen correction**.
+No production or test fixes were needed. Both entry points retain their supplied
+store and selected-path fact before awaiting work; runtime predicates always
+run, default persistence predicates precede scratch/source work, and supplied
+stores retain their actual backend checks and error propagation. The helpers
+remain module exports, without a new package API or backend protocol.
+
+Independent local evidence, Node 22.23.2/npm 10.9.8:
+
+- Focused session tests: 45/45 PASS.
+- `npm run check`: 367/367 PASS, including reproducible SHA256 Wasm,
+  source/decoder/package policies and type checks.
+- Fourteen review probes: all six runtime refusals precede scratch/store work
+  for both entry points; mutating `options.store` during deferred scratch work
+  preserves the original supplied store and its exact typed backend refusal.
+- Existing packed default browser fixture: PASS on Chromium 151.0.7922.34,
+  including cold/warm ingestion, Worker/AudioWorklet assets and no console or
+  request failures.
+- Existing packed OPFS gate: Chromium PASS (65,536 cold bytes, warm reuse,
+  sparse verification and cleanup). Linux Playwright WebKit 26.5 is an
+  environment blocker: its fixture throws `ReferenceError` for the absent
+  `FileSystemFileHandle`. A separate blank localhost page, secure and
+  cross-origin isolated, confirms both `FileSystemFileHandle` and
+  `navigator.storage.getDirectory` are undefined without loading the adapter.
+  This is **not a passing WebKit gate**; required macOS OPFS CI remains pending.
+- Implementation whitespace check: PASS.
+
+Raw logs and the repeatable review probe are preserved outside this worktree in
+`/tmp/miso-796-audit/adapter102-{focused,check,adversarial,packed-browser,packed-opfs,webkit-environment}.log`
+and `adapter102-adversarial.mjs`. The coordinator owns evidence checkpointing,
+merged required CI, GitHub synchronization and ordinary package release. This
+review does not claim merged delivery, issue completion or registry availability.
