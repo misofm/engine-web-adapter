@@ -17,6 +17,7 @@ await copyFile(
 const codecLicenseRoot = new URL("../node_modules/@misofm/codec/", import.meta.url);
 const effectLicenseRoot = new URL("../node_modules/effect/", import.meta.url);
 const hashWasmLicenseRoot = new URL("../node_modules/hash-wasm/", import.meta.url);
+const blake3LicenseRoot = new URL("../native/blake3/licenses/", import.meta.url);
 const adapterLicenseRoot = new URL("../dist/codec-licenses/", import.meta.url);
 await mkdir(new URL("vendor/licenses/", adapterLicenseRoot), { recursive: true });
 await copyFile(
@@ -40,6 +41,24 @@ for (const license of ["compiler-rt.txt", "emscripten.txt", "libFLAC.txt", "musl
     new URL(`vendor/licenses/${license}`, codecLicenseRoot),
     new URL(`vendor/licenses/${license}`, adapterLicenseRoot),
   );
+}
+for (const license of ["LICENSE_A2", "LICENSE_A2LLVM", "LICENSE_CC0"]) {
+  await copyFile(
+    new URL(license, blake3LicenseRoot),
+    new URL(`blake3-${license}`, adapterLicenseRoot),
+  );
+}
+for (const [dependency, licenses] of [
+  ["arrayvec", ["LICENSE-APACHE", "LICENSE-MIT"]],
+  ["cfg-if", ["LICENSE-APACHE", "LICENSE-MIT"]],
+  ["constant_time_eq", ["LICENSE-APACHE", "LICENSE-CC0", "LICENSE-MIT0"]],
+]) {
+  for (const license of licenses) {
+    await copyFile(
+      new URL(`../native/blake3/vendor/${dependency}/${license}`, import.meta.url),
+      new URL(`blake3-${dependency}-${license}`, adapterLicenseRoot),
+    );
+  }
 }
 
 // Factory overrides receive an asset URL, so these entries must carry their imports.

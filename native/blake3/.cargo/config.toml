@@ -1,0 +1,16 @@
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
+
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "target-feature=+simd128",
+  "-C", "link-arg=--no-entry",
+  "-C", "link-arg=--export-memory",
+  "-C", "link-arg=--initial-memory=131072",
+  "-C", "link-arg=--max-memory=131072",
+  "-C", "link-arg=--stack-first",
+  "-C", "link-arg=-zstack-size=65536",
+]
