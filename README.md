@@ -138,6 +138,12 @@ the only decoder path. The server must expose exact `Content-Range` and `Content
 return status 206, avoid `Content-Encoding`, and keep total size and any visible
 ETag stable across attempts.
 
+Supplying an existing `store` selects caller-owned persistence for either the
+dense or sparse session entry point. The adapter still checks the shared Engine
+runtime requirements, while the store owns its own persistence and locking
+requirements. Omitting `store` selects the default OPFS path and runs the typed
+OPFS and Web Locks preflight before scratch boot or source resolution begins.
+
 ### Safari floor
 
 The **decoder** is universal: Chromium, macOS Safari, and mobile Safari run the

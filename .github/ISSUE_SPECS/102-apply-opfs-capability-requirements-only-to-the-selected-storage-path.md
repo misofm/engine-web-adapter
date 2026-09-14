@@ -69,3 +69,17 @@ successor and do not claim registry availability. It may share a ready adapter
 release cut, but misofm/engine-web-adapter#95 and app misofm/app#210 do not wait for this independent correction.
 
 Decision record: scope-only; no implementation or fresh runtime result yet.
+
+
+## Implementation checkpoint
+
+Luna XHIGH implemented the frozen selected-path correction in isolated
+`codex/backend-capabilities`: runtime and OPFS preflights compose the existing
+comprehensive checker; dense and sparse opens snapshot whether a store was
+supplied and skip persistence predicates only for that selected custom path.
+Default-store refusal order and actual backend failures remain intact.
+Implementer reports focused session 45/45, full `npm run check` 367/367 with
+package policy, and whitespace checks PASS. Root checkpoints the four intended
+source/test/README paths; no release pins changed. Independent fresh Astra
+MEDIUM verification and required merged CI remain pending. This is attempt 1;
+no published capability or final acceptance is claimed yet.

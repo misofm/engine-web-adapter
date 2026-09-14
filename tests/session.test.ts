@@ -13,7 +13,7 @@ import { createBLAKE3 } from "hash-wasm";
 
 import type { BrowserEngine } from "@misofm/engine/browser";
 import { EngineWebAdapterError, openEngineWebSession, openSparseEngineWebSession } from "../src/index.js";
-import { assertEngineWebCapabilities } from "../src/capabilities.js";
+import { assertEngineRuntimeCapabilities, assertEngineWebCapabilities, assertOpfsStorageCapabilities } from "../src/capabilities.js";
 import { MSB1_CONTROL } from "../src/stems/ring.js";
 import type { EngineAudioContext, EnginePump, EngineWebSessionCommonOptions, EngineWebSessionOptions } from "../src/session-types.js";
 import type { FlacWorkerRequest, FlacWorkerResponse } from "../src/stems/flac-worker-protocol.js";
@@ -85,6 +85,60 @@ test("OPFS refusals name what is missing and carry a remedy", () => {
         && (error.details["remedy"] as string).includes("15.2"),
     );
   }
+});
+
+test("runtime and OPFS capability checks compose independently", () => {
+  const withoutStorage = capabilitiesWithoutOpfs();
+  assert.doesNotThrow(() => assertEngineRuntimeCapabilities(withoutStorage));
+  assert.throws(
+    () => assertOpfsStorageCapabilities(withoutStorage),
+    (error: unknown) => error instanceof EngineWebAdapterError
+      && error.code === "capability.opfs"
+      && error.details.missing === "navigator.storage.getDirectory",
+  );
+
+  const withoutRuntime = { ...capabilities(), crossOriginIsolated: false };
+  assert.throws(
+    () => assertEngineRuntimeCapabilities(withoutRuntime),
+    (error: unknown) => error instanceof EngineWebAdapterError && error.code === "capability.cross_origin_isolation",
+  );
+});
+
+test("default dense and sparse stores retain OPFS preflight before source work", async () => {
+  const base = baseOptions();
+  let denseScratch = 0;
+  let denseResolver = 0;
+  const denseResolverPath: StemResolver = {
+    async resolve() { denseResolver += 1; throw new Error("default resolver must not run"); },
+  };
+  await assert.rejects(
+    openEngineWebSession({
+      ...base, resolver: denseResolverPath, capabilityScope: capabilitiesWithoutOpfs(),
+      scratchBoot: async () => { denseScratch += 1; throw new Error("scratch must not run"); },
+    }),
+    (error: unknown) => error instanceof EngineWebAdapterError
+      && error.code === "capability.opfs"
+      && error.details.missing === "navigator.storage.getDirectory",
+  );
+  assert.equal(denseScratch, 0);
+  assert.equal(denseResolver, 0);
+
+  let sparseScratch = 0;
+  let sparseResolver = 0;
+  await assert.rejects(
+    openSparseEngineWebSession({
+      document: base.document, sources: base.sources!, leaseId: base.leaseId!,
+      resolver: async () => { sparseResolver += 1; throw new Error("default resolver must not run"); },
+      capabilityScope: capabilitiesWithoutOpfs(),
+      scratchBoot: async () => { sparseScratch += 1; throw new Error("scratch must not run"); },
+      // The omitted store selects the default OPFS path.
+    }),
+    (error: unknown) => error instanceof EngineWebAdapterError
+      && error.code === "capability.opfs"
+      && error.details.missing === "navigator.storage.getDirectory",
+  );
+  assert.equal(sparseScratch, 0);
+  assert.equal(sparseResolver, 0);
 });
 
 test("default module Worker handshake fails before store or resolver work", async () => {
@@ -234,7 +288,8 @@ test("session composes in order and serializes lifecycle with reverse cleanup", 
       { id: "source-z", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY_Z } },
       { id: "source", spec: { channels: 1, bitDepth: 16, frames: 4, content: IDENTITY } },
     ]),
-    capabilityScope: capabilities(),
+    // This supplied store owns persistence, so unrelated OPFS APIs are not required.
+    capabilityScope: capabilitiesWithoutOpfs(),
     createContext: () => context,
     createHost: async ({ context: engineContext, preparedModule }) => {
       assert.equal(preparedModule, scratchWorker!.module, "the locally received module survives verified ingestion");
@@ -351,7 +406,8 @@ test("sparse session prepares complete authoritative sources through the shared 
   } as unknown as BrowserEngine["host"];
   const session = await openSparseEngineWebSession({
     document: documentFor(sources), sources, leaseId: "sparse-lease", console: false,
-    capabilityScope: capabilities(), store,
+    // This supplied store owns persistence, so unrelated OPFS APIs are not required.
+    capabilityScope: capabilitiesWithoutOpfs(), store,
     scratchBoot: async () => ({ sampleRateHz: 48_000, quantumFrames: 4, sourceRingFrames: 16,
       backend: "simd128", tracks: [], sources: compiled.map((source) => ({ id: source.id, channels: source.spec.channels, frames: BigInt(source.spec.frames) })) }),
     createContext: () => context,
@@ -1751,6 +1807,10 @@ function capabilities(): NonNullable<EngineWebSessionOptions["capabilityScope"]>
     navigator: { storage: { getDirectory() {} }, locks: { request() {} } },
     FileSystemFileHandle: class { getFile() {} },
   };
+}
+
+function capabilitiesWithoutOpfs(): NonNullable<EngineWebSessionOptions["capabilityScope"]> {
+  return { ...capabilities(), navigator: {}, FileSystemFileHandle: undefined };
 }
 
 function fakeContext(events: string[], hangResume = false): EngineAudioContext & { modules: string[] } {
