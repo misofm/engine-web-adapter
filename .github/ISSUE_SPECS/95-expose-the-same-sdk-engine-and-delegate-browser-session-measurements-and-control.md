@@ -136,3 +136,16 @@ Scope amendment only. The old three-method delegation and instruction to retain
 adapter measurement ownership are superseded. No new runtime result is claimed.
 
 Coordination entry point: https://github.com/misofm/engine/issues/796 . Independent follow-ups https://github.com/misofm/engine/issues/797 , https://github.com/misofm/engine-web-adapter/issues/101 and https://github.com/misofm/engine-web-adapter/issues/102 do not block this issue or app misofm/app#210.
+
+
+## First source checkpoint
+
+Luna XHIGH implements borrowed `session.engine`, SDK-owned console/meter/telemetry
+paths, removal of adapter HostFeed, the sole legacy peak display projection with
+canonical metadata/null preserved, and snapshotted spectrum/collection/limits
+forwarding. Build, typecheck and focused compiled console suite 22/22 pass.
+The exact accepted local SDK tarball is installed temporarily in node_modules
+only; package metadata/lockfiles remain unchanged pending registry #794.
+Root checkpoints the six source/test/README paths before final session/packed
+proof and published dependency adoption. No independent verdict/publication
+is claimed yet. Current adapter main f833303 remains included.

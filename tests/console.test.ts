@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { ABI_LAYOUT, encodeLaneEdits } from "@misofm/engine";
 import type { BootOptions, LaneEdit } from "@misofm/engine";
+import { createBrowserConsole } from "@misofm/engine/browser";
 import type { BrowserEngine } from "@misofm/engine/browser";
 
 import { EngineWebAdapterError, openEngineWebSession } from "../src/index.js";
@@ -12,6 +13,7 @@ import type {
   EngineAudioContext,
   EngineWebSession,
   EngineWebSessionCommonOptions,
+  MasterMeter,
   MeterUpdate,
   TrackMeter,
 } from "../src/session-types.js";
@@ -174,7 +176,7 @@ test("meters arrive keyed by track id with the master fold separated", async () 
   assert.deepEqual(rounded(update.tracks.get("kick")!), { peakLeft: 0.1, peakRight: 0.2, peak: 0.2, gainReductionDb: 1.5 });
   assert.deepEqual(rounded(update.tracks.get("snare")!), { peakLeft: 0.3, peakRight: 0.4, peak: 0.4, gainReductionDb: 0 });
   assert.equal(round(update.master.peak), 0.9);
-  assert.equal(round(update.master.gainReductionDb), 2.5);
+  assert.equal(round(update.master.gainReductionDb ?? 0), 2.5);
   assert.equal(update.sequence, 7n);
 
   stop();
@@ -280,6 +282,84 @@ test("SDK console, leases, session map, and raw host interleave without caller I
   await session.close();
 });
 
+class TestFeed<Frame, Update> {
+  readonly #lease: (onFrame: ((frame: Frame) => void) | null) => Promise<{ readonly result: number }>;
+  readonly #project: (frame: Frame) => Update;
+  readonly #name: string;
+  readonly #listeners = new Set<(update: Update) => void>();
+  #reconciling: Promise<void> | undefined;
+  #armed = false;
+  #closed = false;
+
+  constructor(name: string, lease: (onFrame: ((frame: Frame) => void) | null) => Promise<{ readonly result: number }>, project: (frame: Frame) => Update) {
+    this.#name = name;
+    this.#lease = lease;
+    this.#project = project;
+  }
+  async subscribe(listener: (update: Update) => void): Promise<() => void> {
+    if (typeof listener !== "function") throw new TypeError(`${this.#name} requires a listener function`);
+    if (this.#closed) throw new EngineWebAdapterError("session.closed", "Engine Web session is closed");
+    this.#listeners.add(listener);
+    try { await this.#reconcile(); } catch (error) { this.#listeners.delete(listener); throw error; }
+    let live = true;
+    return () => { if (!live) return; live = false; this.#listeners.delete(listener); void this.#reconcile(); };
+  }
+  close(): void { this.#closed = true; this.#listeners.clear(); void this.#reconcile(); }
+  #reconcile(): Promise<void> {
+    if (this.#reconciling !== undefined) return this.#reconciling;
+    if ((!this.#closed && this.#listeners.size > 0) === this.#armed) return Promise.resolve();
+    const run = (async () => {
+      for (;;) {
+        const wanted = !this.#closed && this.#listeners.size > 0;
+        if (wanted === this.#armed) return;
+        if (wanted) {
+          const ack = await this.#lease((frame) => {
+            const update = this.#project(frame);
+            for (const listener of [...this.#listeners]) listener(update);
+          });
+          if (ack.result !== 0) {
+            const error = Object.assign(new Error(`${this.#name} lease refused`), { result: ack.result, code: "unsupported" });
+            throw error;
+          }
+          this.#armed = true;
+        } else {
+          try { await this.#lease(null); } catch { /* release failures leave the test feed unarmed */ } finally { this.#armed = false; }
+        }
+      }
+    })();
+    this.#reconciling = run;
+    void run.then(() => { if (this.#reconciling === run) this.#reconciling = undefined; }, () => { if (this.#reconciling === run) this.#reconciling = undefined; });
+    return run;
+  }
+}
+
+class TestMeasurementFeeds {
+  readonly #meters: TestFeed<MeterFrame, import("../src/session-types.js").MeterUpdate>;
+  readonly #telemetry: TestFeed<Parameters<NonNullable<Parameters<BrowserEngine["host"]["telemetry"]>[0]["onFrame"]>>[0], import("../src/session-types.js").TelemetryUpdate>;
+  constructor(readonly host: BrowserEngine["host"], readonly trackIds: readonly string[]) {
+    this.#meters = new TestFeed<MeterFrame, import("../src/session-types.js").MeterUpdate>("meters", (onFrame) => host.meters({ enabled: onFrame !== null, onFrame }), (frame) => {
+      const tracks = new Map<string, TrackMeter>();
+      trackIds.forEach((id, index) => tracks.set(id, {
+        peakLeft: frame.peaks[index * 2] ?? 0, peakRight: frame.peaks[index * 2 + 1] ?? 0,
+        peak: Math.max(frame.peaks[index * 2] ?? 0, frame.peaks[index * 2 + 1] ?? 0), gainReductionDb: frame.trackGrDb[index] ?? 0,
+      }));
+      return {
+        sequence: BigInt(frame.sequence), generation: frame.generation, validity: frame.validity, lossCount: frame.lossCount,
+        windows: frame.windows, firstSample: frame.firstSample, endSample: frame.endSample,
+        tracks: tracks as ReadonlyMap<string, TrackMeter>,
+        master: { peakLeft: frame.peaks[frame.trackCount * 2] ?? 0, peakRight: frame.peaks[frame.trackCount * 2 + 1] ?? 0, peak: Math.max(frame.peaks[frame.trackCount * 2] ?? 0, frame.peaks[frame.trackCount * 2 + 1] ?? 0), gainReductionDb: frame.masterGrDb ?? 0 },
+      };
+    });
+    this.#telemetry = new TestFeed<Parameters<NonNullable<Parameters<BrowserEngine["host"]["telemetry"]>[0]["onFrame"]>>[0], import("../src/session-types.js").TelemetryUpdate>("telemetry", (onFrame) => host.telemetry({ enabled: onFrame !== null, onFrame }), (frame) => ({
+      sequence: BigInt(frame.sequence), blocks: frame.blocks, cpuPercent: frame.cpuPercent, peakBlockMs: frame.peakBlockMs,
+      meanBlockMs: frame.meanBlockMs, budgetMs: frame.budgetMs, deadlineMisses: frame.deadlineMisses, resolutionMs: frame.resolutionMs, belowResolution: frame.belowResolution,
+    }));
+  }
+  meters(listener: (update: import("../src/session-types.js").MeterUpdate) => void) { return this.#meters.subscribe(listener); }
+  telemetry(listener: (update: import("../src/session-types.js").TelemetryUpdate) => void) { return this.#telemetry.subscribe(listener); }
+  close(): void { this.#meters.close(); this.#telemetry.close(); }
+}
+
 // Expose only the packed module's class for a controlled port; its host logic is unchanged.
 async function packedControl() {
   type Request = { tag: string; requestId: number; enabled?: boolean; count?: number; records?: Uint8Array };
@@ -299,7 +379,14 @@ async function packedControl() {
     readonly MisoAudioWorkletHost: new (...args: readonly unknown[]) => BrowserEngine["host"];
   };
   const host = new sdk.MisoAudioWorkletHost({ port, disconnect() {} }, "simd128", 48_000, 128, {}, 65_536, 8, 32, 1);
-  const control = await attachSessionControl(host);
+  const sdkConsole = await createBrowserConsole(host);
+  const feeds = new TestMeasurementFeeds(host, TRACKS);
+  const engine = {
+    console: () => Promise.resolve(sdkConsole),
+    subscribeMeters: feeds.meters.bind(feeds),
+    subscribeTelemetry: feeds.telemetry.bind(feeds),
+  } as unknown as BrowserEngine;
+  const control = await attachSessionControl(engine);
   function ack(tag: string, fields: Record<string, unknown> = {}) {
     const index = pending.findIndex((request) => request.tag === tag);
     assert.notEqual(index, -1, `missing ${tag}`);
@@ -309,7 +396,7 @@ async function packedControl() {
     frame({ tag: tag === "miso.status.v1" ? tag : "miso.ack.v1", requestId: request.requestId, result: 0, ...extra, ...fields });
     return request;
   }
-  return { host, control, sent, pending, frame, ack };
+  return { host, control, engine, close: () => { control.close(); feeds.close(); }, sent, pending, frame, ack };
 }
 const tick = async () => { for (let index = 0; index < 8; index += 1) await Promise.resolve(); };
 const meterFrame = { tag: "miso.meter.v1", generation: 1n, validity: 11, lossCount: 0, sequence: 7, windows: 3, trackCount: 2, peaks: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.9, 0.8]), trackGrDb: new Float32Array([1.5, 2]), masterGrDb: 2.5, firstSample: 128n, endSample: 512n };
@@ -351,7 +438,7 @@ for (const feed of ["meters", "telemetry"] as const) {
       await tick();
       assert.equal(settlements, 0);
       assert.equal(f.pending.length, 1, "resubscribe cannot overlap release");
-      if (closeDuringRelease) { f.control.close(); f.control.close(); }
+      if (closeDuringRelease) { f.close(); f.close(); }
       assert.equal(f.ack(tag).enabled, false);
       await tick();
       if (!closeDuringRelease) {
@@ -366,7 +453,7 @@ for (const feed of ["meters", "telemetry"] as const) {
         f.frame(feed === "meters" ? meterFrame : telemetryFrame);
         assert.equal(laterUpdates.length, 0);
       }
-      f.control.close(); await tick();
+      f.close(); await tick();
       assert.equal(settlements, 1);
       assert.equal(f.pending.length, 0, "close never rearms");
       assert.deepEqual(f.sent.map((request) => request.requestId), f.sent.map((_, index) => index + 1));
@@ -385,7 +472,7 @@ for (const feed of ["meters", "telemetry"] as const) {
     assert.equal(f.ack(tag).enabled, true);
     const stop = await recovered; stop();
     assert.equal(f.ack(tag).enabled, false);
-    f.control.close(); await tick();
+    f.close(); await tick();
   });
 
   test(`packed ${feed}: pending arm and command settle once after close`, async () => {
@@ -394,7 +481,7 @@ for (const feed of ["meters", "telemetry"] as const) {
     const arm = f.control[feed](() => { updates += 1; }).then((stop) => { armSettlements += 1; return stop; });
     const cached = f.control.console;
     const command = cached.submit(cached.edit.track("kick").mute(true)).then((report) => { commandSettlements += 1; return report; });
-    f.control.close(); f.control.close();
+    f.close(); f.close();
     const closed = (error: unknown) => error instanceof EngineWebAdapterError && error.code === "session.closed";
     await assert.rejects(cached.submit(cached.edit.track("kick").mute(false)), closed);
     await assert.rejects(f.control[feed](() => undefined), closed);
@@ -427,7 +514,7 @@ test("packed host interleaves payload-only control, status, map, raw command and
   f.ack("miso.telemetry.v1"); f.ack("miso.meters.v1"); await tick();
   assert.deepEqual(f.sent.map((request) => request.requestId), f.sent.map((_, index) => index + 1));
   assert.equal(f.pending.length, 0);
-  f.control.close();
+  f.close();
 });
 
 test("the session derives declarations and a lease id from the document alone", async () => {
@@ -498,7 +585,7 @@ function round(value: number): number {
   return Math.round(value * 1e6) / 1e6;
 }
 
-function rounded(meter: TrackMeter): Record<string, number> {
+function rounded(meter: TrackMeter | MasterMeter): Record<string, number> {
   return Object.fromEntries(Object.entries(meter).map(([key, value]) => [key, round(value)]));
 }
 

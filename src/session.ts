@@ -1,7 +1,14 @@
 import { bindIngestDiagnostics, inheritFlacRegistration } from "./stems/ingest-diagnostics.js";
 import { ABI_LAYOUT } from "@misofm/engine";
 import { Cause, Effect, Exit, Scope, Schema } from "effect";
-import type { BrowserBootPolicy } from "@misofm/engine/browser";
+import type {
+  BrowserBootPolicy,
+  ObservationSubscriptionLimits,
+  SpectrumCollection,
+  SpectrumQuery,
+  SpectrumSubscriptionLimits,
+  TrackResponseSubscriptionLimits,
+} from "@misofm/engine/browser";
 import { BUNDLED_ENGINE_ASSETS } from "@misofm/engine/assets";
 import { createEngine, createDefaultHost, scratchBootOptions, MSB1_CONTROL, Msb1RingObserver } from "@misofm/engine/browser";
 import type { BrowserEngine, CreateEngineOptions } from "@misofm/engine/browser";
@@ -21,6 +28,7 @@ import type {
   EngineWebSession,
   EngineWebSessionOptions,
   EngineWebSessionState,
+  SessionEngine,
   SparseEngineWebSessionOptions,
   SourceObservation,
 } from "./session-types.js";
@@ -139,6 +147,17 @@ interface SparseSourcePreparationInput extends SourcePreparationInput {
 
 async function openSessionCommon(options: SessionOpenOptions, prepareSources: PrepareSources): Promise<EngineWebSession> {
   assertEngineWebCapabilities(options.capabilityScope);
+  // The SDK snapshots these values at its own boot boundary. This adapter has
+  // source preparation awaits before that boundary, so copy caller-owned
+  // analysis and subscription options before the first await as well.
+  const spectrum = options.spectrum === undefined ? undefined : snapshotSpectrumQuery(options.spectrum);
+  const spectrumCollection = options.spectrumCollection === undefined ? undefined : snapshotSpectrumCollection(options.spectrumCollection);
+  const observationSubscriptionLimits = options.observationSubscriptionLimits === undefined
+    ? undefined : snapshotObservationSubscriptionLimits(options.observationSubscriptionLimits);
+  const responseSubscriptionLimits = options.responseSubscriptionLimits === undefined
+    ? undefined : snapshotTrackResponseSubscriptionLimits(options.responseSubscriptionLimits);
+  const spectrumSubscriptionLimits = options.spectrumSubscriptionLimits === undefined
+    ? undefined : snapshotSpectrumSubscriptionLimits(options.spectrumSubscriptionLimits);
   const abort = new AbortController();
   const detachAbort = forwardAbort(options.signal, abort);
   const cleanup: Array<() => void | Promise<void>> = [];
@@ -208,6 +227,11 @@ async function openSessionCommon(options: SessionOpenOptions, prepareSources: Pr
       simd128ModuleUrl: String(engineWasmUrl),
       workletModuleUrl: String(engineWorkletUrl),
       policy,
+      ...(spectrum === undefined ? {} : { spectrum }),
+      ...(spectrumCollection === undefined ? {} : { spectrumCollection }),
+      ...(observationSubscriptionLimits === undefined ? {} : { observationSubscriptionLimits }),
+      ...(responseSubscriptionLimits === undefined ? {} : { responseSubscriptionLimits }),
+      ...(spectrumSubscriptionLimits === undefined ? {} : { spectrumSubscriptionLimits }),
       ...(prepared.module === undefined ? {} : { preparedModule: prepared.module }),
     };
     engine = options.createContext === undefined
@@ -247,7 +271,7 @@ async function openSessionCommon(options: SessionOpenOptions, prepareSources: Pr
     // so a first console command and a first meter subscription work in either
     // order and neither caller nor adapter ever names an identifier.
     if (consoleAttached(policy)) {
-      control = await abortable(attachSessionControl(engine.host), abort.signal, undefined, (late) => late.close());
+      control = await abortable(attachSessionControl(engine), abort.signal, undefined, (late) => late.close());
       cleanup.push(() => control!.close());
     }
     abort.signal.throwIfAborted();
@@ -282,6 +306,10 @@ async function openSessionCommon(options: SessionOpenOptions, prepareSources: Pr
     const session: EngineWebSession = {
       shape: engine.shape,
       context,
+      get engine(): SessionEngine {
+        assertOpen();
+        return engine! as SessionEngine;
+      },
       host: engine.host,
       get console(): EngineWebConsole {
         if (control === undefined) throw consoleNotAttached();
@@ -600,6 +628,61 @@ function sparseSessionSources(
       frames: exactFrames(source.spec.frames),
       canonicalBytes: canonicalPcmBytes(source.spec),
     });
+  });
+}
+
+function snapshotSpectrumQuery(query: SpectrumQuery): SpectrumQuery {
+  const target: SpectrumQuery["target"] = query.target.kind === "output"
+    ? Object.freeze({ kind: "output", outputId: query.target.outputId })
+    : Object.freeze({ kind: query.target.kind, trackId: query.target.trackId });
+  const spectrumLimits = query.spectrumLimits === undefined ? undefined : Object.freeze({
+    ...(query.spectrumLimits.maximumCaptureBytes === undefined ? {} : { maximumCaptureBytes: query.spectrumLimits.maximumCaptureBytes }),
+    ...(query.spectrumLimits.requestDeadlineMs === undefined ? {} : { requestDeadlineMs: query.spectrumLimits.requestDeadlineMs }),
+  });
+  return Object.freeze({
+    target,
+    ...(query.channels === undefined ? {} : { channels: query.channels }),
+    ...(spectrumLimits === undefined ? {} : { spectrumLimits }),
+  });
+}
+
+function snapshotSpectrumCollection(collection: SpectrumCollection): SpectrumCollection {
+  const entries = collection.entries.map((entry) => Object.freeze({
+    target: entry.target.kind === "output"
+      ? Object.freeze({ kind: "output", outputId: entry.target.outputId })
+      : Object.freeze({ kind: entry.target.kind, trackId: entry.target.trackId }),
+    ...(entry.channels === undefined ? {} : { channels: entry.channels }),
+  }));
+  return Object.freeze({ entries: Object.freeze(entries), maximumCaptureBytes: collection.maximumCaptureBytes });
+}
+
+function snapshotObservationSubscriptionLimits(limits: ObservationSubscriptionLimits): ObservationSubscriptionLimits {
+  return Object.freeze({
+    ...(limits.maximumHandles === undefined ? {} : { maximumHandles: limits.maximumHandles }),
+    ...(limits.maximumBindings === undefined ? {} : { maximumBindings: limits.maximumBindings }),
+    ...(limits.maximumSelections === undefined ? {} : { maximumSelections: limits.maximumSelections }),
+    ...(limits.maximumWindowBlocks === undefined ? {} : { maximumWindowBlocks: limits.maximumWindowBlocks }),
+    ...(limits.maximumCadenceMs === undefined ? {} : { maximumCadenceMs: limits.maximumCadenceMs }),
+  });
+}
+
+function snapshotTrackResponseSubscriptionLimits(limits: TrackResponseSubscriptionLimits): TrackResponseSubscriptionLimits {
+  return Object.freeze({
+    ...(limits.maximumHandles === undefined ? {} : { maximumHandles: limits.maximumHandles }),
+    ...(limits.maximumJobs === undefined ? {} : { maximumJobs: limits.maximumJobs }),
+    ...(limits.maximumRetainedBytes === undefined ? {} : { maximumRetainedBytes: limits.maximumRetainedBytes }),
+    ...(limits.maximumCaptureAttempts === undefined ? {} : { maximumCaptureAttempts: limits.maximumCaptureAttempts }),
+    ...(limits.maximumDeliveredBytesPerSecond === undefined ? {} : { maximumDeliveredBytesPerSecond: limits.maximumDeliveredBytesPerSecond }),
+    ...(limits.maximumCadenceMs === undefined ? {} : { maximumCadenceMs: limits.maximumCadenceMs }),
+  });
+}
+
+function snapshotSpectrumSubscriptionLimits(limits: SpectrumSubscriptionLimits): SpectrumSubscriptionLimits {
+  return Object.freeze({
+    ...(limits.maximumHandles === undefined ? {} : { maximumHandles: limits.maximumHandles }),
+    ...(limits.maximumRetainedBytes === undefined ? {} : { maximumRetainedBytes: limits.maximumRetainedBytes }),
+    ...(limits.maximumDeliveredBytesPerSecond === undefined ? {} : { maximumDeliveredBytesPerSecond: limits.maximumDeliveredBytesPerSecond }),
+    ...(limits.maximumCadenceMs === undefined ? {} : { maximumCadenceMs: limits.maximumCadenceMs }),
   });
 }
 

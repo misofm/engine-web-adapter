@@ -121,6 +121,39 @@ allocated by the raw host, so direct `session.host` calls no longer collide with
 console, meter, or telemetry operations. Prefer the typed adapter surfaces when
 possible.
 
+## Use the SDK Engine directly
+
+`session.engine` is a borrowed view of the same SDK Engine that owns the
+session's host, console, measurements, response queries, spectrum queries, and
+managed observation subscriptions. It is object-identical to the Engine used
+for playback; the adapter only retains `session.close()` as the aggregate close
+operation. Do not call `session.engine.close()` or start new work after closing
+the session.
+
+```ts
+const sdk = session.engine
+const stopMeters = await sdk.subscribeMeters((update) => {
+  for (const [trackId, meter] of update.tracks) draw(trackId, meter.peakLeft)
+})
+const response = await sdk.queryTrackResponse({
+  trackId: "kick",
+  grid: { kind: "linear", points: 256, minimumHz: 20, maximumHz: 20_000 },
+})
+const spectrum = await sdk.querySpectrum({
+  target: { kind: "output", outputId: "master" },
+})
+stopMeters()
+await session.close()
+```
+
+Pass SDK `spectrum`, `spectrumCollection`, and observation, response, or
+spectrum subscription limits in the open options when those capabilities are
+needed. The values are snapshotted before source preparation begins and are
+forwarded to this same Engine. The older `session.meters` and
+`session.telemetry` methods remain deprecated compatibility paths; their meter
+updates add only the legacy `peak` field while retaining the SDK generation,
+validity, loss, span, and nullable master gain-reduction fields.
+
 ## Deployment requirements
 
 Serve over HTTPS (or localhost) with cross-origin isolation enabled:

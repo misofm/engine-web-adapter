@@ -6,6 +6,17 @@ import type {
   BrowserEngine,
   Msb1RingCounters,
   PcmSourceChunk,
+  ObservationSubscriptionLimits,
+  SpectrumCollection,
+  SpectrumQuery,
+  SpectrumSubscriptionLimits,
+  TrackResponseSubscriptionLimits,
+} from "@misofm/engine/browser";
+import type {
+  MasterMeter as SdkMasterMeter,
+  MeterUpdate as SdkMeterUpdate,
+  TrackMeter as SdkTrackMeter,
+  TelemetryUpdate as SdkTelemetryUpdate,
 } from "@misofm/engine/browser";
 
 import type { AdapterAssetOverrides } from "./assets.js";
@@ -74,41 +85,26 @@ export interface EnginePump {
 }
 
 /** One track's decimated meter reading, already folded to what a meter draws. */
-export interface TrackMeter {
-  readonly peakLeft: number;
-  readonly peakRight: number;
+export type TrackMeter = SdkTrackMeter & {
   /** The greater of the two lanes: what a single meter bar shows. */
   readonly peak: number;
-  /** Non-negative gain reduction in decibels; `0` when nothing is observed. */
-  readonly gainReductionDb: number;
-}
+};
+
+/** The master meter with the legacy single-bar peak projection. */
+export type MasterMeter = SdkMasterMeter & {
+  /** The greater of the two lanes: what a single meter bar shows. */
+  readonly peak: number;
+};
 
 /** One decimated meter window, addressed by track id rather than by ordinal. */
-export interface MeterUpdate {
-  readonly sequence: bigint;
-  /** Complete windows folded into this update; normally `1`. */
-  readonly windows: number;
-  readonly firstSample: bigint;
-  readonly endSample: bigint;
+export type MeterUpdate = Omit<SdkMeterUpdate, "tracks" | "master"> & {
   /** Every track in the compiled session, keyed by its id. */
   readonly tracks: ReadonlyMap<string, TrackMeter>;
-  readonly master: TrackMeter;
-}
+  readonly master: MasterMeter;
+};
 
 /** One windowed render-telemetry reading. */
-export interface TelemetryUpdate {
-  readonly sequence: bigint;
-  readonly blocks: number;
-  /** Render time as a percentage of the block budget over the window. */
-  readonly cpuPercent: number;
-  readonly peakBlockMs: number;
-  readonly meanBlockMs: number;
-  readonly budgetMs: number;
-  readonly deadlineMisses: number;
-  readonly resolutionMs: number;
-  /** `true` when the window measured exactly zero: the clock could not see the work. */
-  readonly belowResolution: boolean;
-}
+export type TelemetryUpdate = SdkTelemetryUpdate;
 
 /**
  * The session's live console.
@@ -156,6 +152,16 @@ export interface EngineWebSessionCommonOptions {
   readonly onError?: (error: EngineWebAdapterError) => void;
   /** Boot policy. Explicit `console` sizes override the adapter's defaults field by field. */
   readonly policy?: BrowserBootPolicy;
+  /** One SDK-prepared spectrum boundary forwarded to the session's Engine. */
+  readonly spectrum?: SpectrumQuery;
+  /** Several SDK-prepared spectrum boundaries owned by one managed selection. */
+  readonly spectrumCollection?: SpectrumCollection;
+  /** SDK bounds for resident observation subscriptions. */
+  readonly observationSubscriptionLimits?: ObservationSubscriptionLimits;
+  /** SDK bounds for managed live track-response subscriptions. */
+  readonly responseSubscriptionLimits?: TrackResponseSubscriptionLimits;
+  /** SDK bounds for managed spectrum subscriptions. */
+  readonly spectrumSubscriptionLimits?: SpectrumSubscriptionLimits;
   readonly assets?: AdapterAssetOverrides;
   readonly capabilityScope?: WebCapabilityScope;
   readonly store?: StemStore;
@@ -211,6 +217,11 @@ export interface EngineWebSession {
   readonly shape: SessionShape;
   readonly context: EngineAudioContext;
   /**
+   * The same SDK Engine that owns this session's host, controls and analyses.
+   * This view is borrowed: aggregate session close owns the Engine close.
+   */
+  readonly engine: SessionEngine;
+  /**
    * The raw Engine worklet host. Its host implementation allocates request
    * identifiers for every payload-only call, including calls made here.
    * Prefer `console`, `meters` and `telemetry` when their typed projections fit.
@@ -238,3 +249,6 @@ export interface EngineWebSession {
 
 /** Compile-time assertion that declarations use the Engine package's SourceSpec. */
 export type EngineSourceSpec = SourceSpec;
+
+/** The session's SDK Engine with aggregate close retained by `EngineWebSession`. */
+export type SessionEngine = Omit<BrowserEngine<EngineAudioContext>, "close">;
