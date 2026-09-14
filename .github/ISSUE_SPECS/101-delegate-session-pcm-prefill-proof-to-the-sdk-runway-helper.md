@@ -105,3 +105,19 @@ pending the combined #95 candidate and published dependency/provenance pins.
 The two SDK console-map opening-race tests belong to #95's correction
 `9666188`; they must be included in the final full suite. Metadata/lock still
 name SDK 0.2.4 at this review checkpoint; no published-adoption claim is made.
+
+
+## Combined candidate acceptance — 2026-09-14
+
+Fresh Astra MEDIUM independently accepts #101 in the combined adapter 0.5.7
+candidate at verification checkpoint `3746df9`: PASS. Registry SDK 0.2.5 is now
+pinned exactly; fresh normal-installed tarball resolves one SDK with the archive
+integrity recorded in #95. The full `npm run check` passes all 380 tests,
+including the formerly failing single-console opening-map races. Corrected
+packed-browser and publish-dry-run gates PASS, as do strict fresh-consumer types
+and imports. No #101 production fix was needed; SDK runway errors retain their
+cause/reason/source and aggregate opening/seek cleanup remains intact. Logs and
+candidate archive identity are recorded in #95's independent candidate review.
+This completes source/package candidate verification, not release completion:
+merged required CI and actual adapter 0.5.7 publication/attestation and issue
+synchronization remain required before claiming published adoption or closure.
