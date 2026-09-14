@@ -78,3 +78,30 @@ reproducing without this patch under SDK 0.2.5; raw identification is being
 collected and full integration acceptance must resolve them. Focused success
 is not full-suite or registry acceptance. Root checkpoints this bounded source
 tranche before independent Astra MEDIUM review and latest-main integration.
+
+## Independent attempt 1 source review
+
+Fresh Astra MEDIUM independently reviewed source checkpoint `37697f2` (including
+implementation `74b66c9`) against the installed SDK 0.2.5 helper contract.
+Source-scope verdict: PASS. No production-code correction was needed. Opening
+passes source totals/rings, frame zero and generation one; seek passes the
+acknowledged target/generation after awaiting producer seek and feed
+`prepareSeek`. Both omit `minimumFrames` and retain the two-second timeout.
+Context transitions, serialized transport, diagnostics and terminal cleanup
+remain at their existing seams. Only `PcmRunwayError` is translated; its original
+object is retained as cause, mismatch retains source ID, timeout retains its
+separate reason, and other SDK/abort errors retain their cause chain.
+
+The verifier strengthened existing mismatch/deadline tests to assert completed
+pump/feed/host/context/lease cleanup and distinguish feed preparation timeout
+from SDK runway timeout. Build, test compilation, lint and format checks PASS;
+15 focused session tests PASS, including full-generation runway, tail/EOF,
+prepare ordering, running restoration, cancellation and terminal cleanup.
+Logs: `/tmp/miso-796-audit/verify-adapter101-{build,test-compile,focused,lint,format}.log`.
+
+This is one attempt-1 source verdict, not final package acceptance. Full
+`npm run check`, packed-browser, publish-dry-run and fresh-consumer gates remain
+pending the combined #95 candidate and published dependency/provenance pins.
+The two SDK console-map opening-race tests belong to #95's correction
+`9666188`; they must be included in the final full suite. Metadata/lock still
+name SDK 0.2.4 at this review checkpoint; no published-adoption claim is made.
