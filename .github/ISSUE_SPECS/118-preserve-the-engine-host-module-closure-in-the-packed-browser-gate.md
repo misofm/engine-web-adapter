@@ -39,3 +39,7 @@ Local acceptance on Node `22.23.2`, npm `10.9.8`, and Chromium `153.0.8010.12`:
 - `git diff --check`: PASS. Generated `.adapter-71-evidence/` was removed; final status contains only this issue spec and `scripts/browser-packed.mjs`.
 
 Verdict: **PASS** for the smallest packed-browser harness correction. Root retains ownership of checkpointing, remote delivery, review, and release sequencing.
+
+### Fresh Sol HIGH adversarial review
+
+PASS on frozen commit `2e982947d752a66e04b427066de6ebe79cabe003`. The reviewer confirmed exact two-path scope, the installed/current Engine host's only two relative companions, authoritative `BUNDLED_ENGINE_FILES` names, manifest-hashed directory construction, and byte-identical host/ABI/prepared-control output in both ordinary and indexed builds. Ordinary Chromium 153 passed full playback/control and observed the companion requests with correct JavaScript handling; indexed-sparse Chromium passed its complete matrix; both reported zero request and console failures. `npm run check` passed 380 tests, package policy remained 247 files/474766 bytes, dry-run package SHA1 remained `39cb19c1f312af81c9905d4f50811107d093d3ee`, and the worktree was clean. No blocker remains for remote delivery.
