@@ -27,3 +27,16 @@ Fresh Astra XHIGH scope and adversarial review approved this second slice. One f
 ## Evidence
 
 Starting source is synchronized adapter main `4dd1cefbe20842892ce96b45da929b6cc3b69144`. The primary checkout remains on unrelated research branch `research/77-lossless-delivery` and is untouched. Public adapter 0.5.9 pins engine 0.3.0; live registry lookup returns parsed E404 for adapter 0.5.10. No adapter source, package or external publication has changed.
+
+### Luna round 1 implementation tranche
+
+Frozen adapter `0.5.10` to exact `@misofm/engine@0.4.0`, with provenance bound to
+source `89288333961713b3adaea0ad3050fcbb5e35d748` and archive SHA256
+`5ca46401c29b8206cea348be811ad30623c43807dbe1b33935d57534185e2744`.
+Updated only the release identity/provenance surfaces listed above; codec `0.1.1`,
+safe baselines, copied-source attribution, runtime/API, and publisher semantics
+remain unchanged. `npm ci --ignore-scripts` PASS; focused package policy PASS
+(`247` files, `474766` bytes); focused foundation identity PASS (`7/7`); full
+`npm run check` PASS (`380/380` tests, package policy `247` files/`474766`
+bytes); `npm run publish:dry-run` PASS (`0.5.10`, `247` files). No publication,
+browser qualification, or GitHub state change was performed in this tranche.
