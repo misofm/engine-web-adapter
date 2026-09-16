@@ -97,3 +97,9 @@ This is a coherent attempt-1 checkpoint. No commit, push, pull request, workflow
 dispatch, publication, or GitHub state change was performed. The ordinary packed
 browser failure and required macOS OPFS/Chromium/WebKit qualification remain root
 delivery/review gates.
+
+### Harness recovery and rebased candidate
+
+Issue #118 isolated the pre-existing packed-consumer closure failure from this identity-only release. PR #119 merged its reviewed harness correction to adapter main as `f835cff1d94321d8d7b74bf4cdb0bdf0d4792b90` after macOS Chromium/WebKit OPFS run `35160391206` passed. The #117 commits were rebased onto that synchronized main without conflicts; release identities and package bytes did not change.
+
+On the rebased candidate, the formerly blocked ordinary packed Chromium 153 gate now passes complete playback/control/seek/fault handling with 15 observed assets and zero request or console failures. The indexed-sparse Chromium gate also passes its full cold/warm/serial/concurrent/all-silent/tail/worker matrix with zero request or console failures. A fresh candidate pack retains exactly the accepted attempt-1 identity: 247 files, 474,772 bytes, SHA-256 `ee2ed1a0a3fb81e8275a9cbefd5d1d932a77ecb08f7fb1946edb905493be6e7a`, shasum `4a46b3ea465e1c205c502319211dd867f20ee273`, and integrity `sha512-jUKaUSlhFvSH/1X6vDMxs2tkcEjl7zpEdYcj9cwOogv6QvQPHd2XH3Wx4A2ppwdTVDILCW/LvJl+AhkCyxzapA==`. The candidate is ready for fresh release review.
