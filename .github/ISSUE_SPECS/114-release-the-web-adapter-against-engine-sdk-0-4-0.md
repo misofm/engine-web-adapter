@@ -1,0 +1,29 @@
+# Release the web adapter against engine SDK 0.4.0
+
+## Product outcome
+
+Publish one immutable dependency-only `@misofm/engine-web-adapter` release that pins the verified public `@misofm/engine@0.4.0` package. This lets the app resolve one physical SDK containing engine #844 and the accepted ordinary-host observation closure. The adapter already lends callers the same SDK engine; no runtime wrapper, codec, storage, cache, control, or protected-EQ behavior changes are required.
+
+Engine 0.4.0 is public from source `89288333961713b3adaea0ad3050fcbb5e35d748`. Its registry archive SHA256 is `5ca46401c29b8206cea348be811ad30623c43807dbe1b33935d57534185e2744`, npm integrity is `sha512-UZVdQrqJWUZVd07F0OkW3kCFeUrjMDc4ZM2/eEq83NHG2EMwvfxrjyRIWpyDNRWGSW9kPsQMAp2xHzbnLssymw==`, and verify-only workflow 35084369532 passed after the single publish request's delayed propagation.
+
+## Bounded implementation
+
+Freeze unused adapter patch 0.5.10 after live registry absence proof. One Luna MAX tranche may update only this issue spec, `package.json`, `package-lock.json`, `.github/workflows/npm-publish.yml`, `src/provenance.ts`, identity-only assertions in `scripts/check-package.mjs` and `tests/foundation.test.ts`, plus exact dependency/release prose in `README.md` and `NOTICE`. Preserve historical `safeBaselines` and copied-source attribution.
+
+No production TypeScript/runtime, API, decoder, codec 0.1.1, OPFS/cache, Worker/AudioWorklet, test harness, generated binary, or publisher redesign. The adapter contract remains compatible; the release patch changes its exact engine dependency and authenticated provenance only.
+
+## Objective gates and delivery
+
+Run locked install, full `npm run check`, `npm run publish:dry-run`, and existing packed indexed-sparse browser proof with the pinned browser toolchain. Prove an ordinary fresh tarball consumer can import runtime and TypeScript public entries with exactly one installed engine 0.4.0. Fresh Astra MEDIUM must PASS the frozen candidate. Required macOS packed OPFS/Chromium/WebKit CI must pass before merge.
+
+Hold the accepted merged adapter main SHA unchanged through the existing OIDC publish workflow and any verify-only recovery. Publish once, independently compare registry archive to the reviewed tarball, verify exact engine dependency/provenance, one SDK resolution, public imports/types, and trusted source/workflow attestation. Only then synchronize evidence and close this issue. App adoption starts only from verified public engine and adapter identities.
+
+This is ordinary-host adoption. It does not claim combined protected/ordinary preparation, protected-EQ coexistence, or repair of app fixture #231.
+
+## Workflow
+
+Fresh Astra XHIGH scope and adversarial review approved this second slice. One fresh Luna MAX owns the bounded dependency/provenance tranche; after two unsatisfactory Luna rounds escalate once to Sol HIGH, then Astra XHIGH. Root owns checkpoints, GitHub delivery, publication and evidence synchronization.
+
+## Evidence
+
+Starting source is synchronized adapter main `4dd1cefbe20842892ce96b45da929b6cc3b69144`. The primary checkout remains on unrelated research branch `research/77-lossless-delivery` and is untouched. Public adapter 0.5.9 pins engine 0.3.0; live registry lookup returns parsed E404 for adapter 0.5.10. No adapter source, package or external publication has changed.
