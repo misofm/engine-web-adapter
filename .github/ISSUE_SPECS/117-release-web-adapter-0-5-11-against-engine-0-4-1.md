@@ -107,3 +107,9 @@ On the rebased candidate, the formerly blocked ordinary packed Chromium 153 gate
 ### Fresh Sol HIGH release review
 
 PASS on frozen commit `edd61a8`. The reviewer confirmed the exact nine-path identity/evidence scope; public Engine 0.4.1 registry/source/provenance and lock consistency; 380/380 tests; the frozen 247-file candidate under npm 10.9.8 and 11.19.0; fresh root/stems/assets imports; strict TypeScript; exactly one physical Engine 0.4.1; and clean ordinary/indexed Chromium 153 browser gates. The workflow retains exact-main SHA, parsed-E404, OIDC-only, immutable-version, and verify-only recovery guards. Merged #118 macOS Chromium/WebKit qualification is green. No blocker remains before PR CI and registry delivery.
+
+## Registry delivery evidence
+
+PR #120 passed required macOS Chromium/WebKit OPFS qualification run `35160987337` and merged the frozen candidate to `main` as `ec8c7657cb3724154b099127abeb655dc9c0f576`. Exact-main OIDC publish run `35161151152` installed pinned toolchains, passed all package checks, observed parsed E404, published once, and passed public registry dependency/import/signature/provenance verification.
+
+The public `@misofm/engine-web-adapter@0.5.11` archive is 474,772 bytes with 247 files, SHA-256 `ee2ed1a0a3fb81e8275a9cbefd5d1d932a77ecb08f7fb1946edb905493be6e7a`, shasum `4a46b3ea465e1c205c502319211dd867f20ee273`, and integrity `sha512-jUKaUSlhFvSH/1X6vDMxs2tkcEjl7zpEdYcj9cwOogv6QvQPHd2XH3Wx4A2ppwdTVDILCW/LvJl+AhkCyxzapA==`. The SHA-256 equals the reviewed candidate exactly. An independent fresh registry consumer imported the root, `/stems`, and `/assets`; resolved exactly one physical Engine package; and confirmed adapter 0.5.11 declares and installs exactly Engine 0.4.1. The release is public, immutable, verified, and ready for app adoption.
