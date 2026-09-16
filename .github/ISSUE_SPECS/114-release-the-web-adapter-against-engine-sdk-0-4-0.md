@@ -40,3 +40,29 @@ remain unchanged. `npm ci --ignore-scripts` PASS; focused package policy PASS
 `npm run check` PASS (`380/380` tests, package policy `247` files/`474766`
 bytes); `npm run publish:dry-run` PASS (`0.5.10`, `247` files). No publication,
 browser qualification, or GitHub state change was performed in this tranche.
+
+
+### Root qualification and independent candidate review
+
+Root checkpointed the identity-only tranche at
+`29c84f0e12df1212e8fb686549460af9eb914418`. The packed indexed-sparse
+Chromium gate passed with Chromium `151.0.7922.34`, including cold ingest,
+warm verified reuse, three concurrent warm workers, serial/concurrent cold
+paths, exact sparse windows, clean worker termination, and no request or
+console errors. The retained package archive is
+`misofm-engine-web-adapter-0.5.10.tgz`: SHA256
+`d87a8f59b322e84fb4bfa1770b41803ce800bea52501c474ddc398ffc226bf7f`,
+SHA1 `39cb19c1f312af81c9905d4f50811107d093d3ee`, npm integrity
+`sha512-ZzVf9FsEK3tJXZo8zxcWQlVgp3/0omvvJhvQDnyqdYDFjcHfQ1kPZkob4qrHJ6zz61hHq3dwswWDoTQGcnO95A==`,
+`247` files, `474766` packed bytes, and `2636641` unpacked bytes.
+
+A fresh consumer installed only that archive, imported the package root,
+`/stems`, and `/assets`, passed strict TypeScript declaration checking with
+`skipLibCheck: false`, and proved exactly one physical
+`@misofm/engine@0.4.0`. Fresh Astra MEDIUM adversarial review independently
+verified the complete diff, public Engine archive and lock integrity, all 247
+candidate archive files, foundation tests (`7/7`), strict consumer imports and
+types, one-engine resolution, and provenance. Verdict: **PASS**, with no
+candidate blockers. Remaining delivery gates are the required macOS packed
+OPFS/Chromium/WebKit CI, immutable OIDC publication, registry/archive and
+attestation verification, then remote issue synchronization and closure.
