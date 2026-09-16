@@ -66,3 +66,26 @@ types, one-engine resolution, and provenance. Verdict: **PASS**, with no
 candidate blockers. Remaining delivery gates are the required macOS packed
 OPFS/Chromium/WebKit CI, immutable OIDC publication, registry/archive and
 attestation verification, then remote issue synchronization and closure.
+
+
+### Published release and registry acceptance
+
+PR #115 merged the accepted candidate to immutable main SHA
+`75201e0728b5ce67eeba1a2230d013e835578845` after required macOS packed OPFS,
+Chromium, and WebKit qualification passed (run `35085931638`). Single OIDC
+publication run `35086137654` succeeded against that exact SHA; the prepublish
+registry guard observed parsed E404, and no second publish was attempted.
+
+The public `@misofm/engine-web-adapter@0.5.10` registry archive is byte-equal
+to the reviewed candidate: SHA256
+`d87a8f59b322e84fb4bfa1770b41803ce800bea52501c474ddc398ffc226bf7f`,
+SHA1 `39cb19c1f312af81c9905d4f50811107d093d3ee`, npm integrity
+`sha512-ZzVf9FsEK3tJXZo8zxcWQlVgp3/0omvvJhvQDnyqdYDFjcHfQ1kPZkob4qrHJ6zz61hHq3dwswWDoTQGcnO95A==`,
+247 files and 2636641 unpacked bytes. A fresh registry consumer imported all
+three public entry points, resolved exactly one physical Engine 0.4.0, and
+matched the accepted adapter provenance. npm 11.19.0 signature audit passed:
+13 verified registry signatures and 7 verified attestations. The package and
+SLSA v1 subjects bind adapter 0.5.10 and its SHA512 to repository
+`misofm/engine-web-adapter`, workflow `.github/workflows/npm-publish.yml`, main
+ref, source SHA `75201e0728b5ce67eeba1a2230d013e835578845`, and publication run
+`35086137654`. All product, remote, publication, and registry gates pass.
