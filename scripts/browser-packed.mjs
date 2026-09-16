@@ -159,6 +159,47 @@ WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
 })();
 `);
 await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
+await writeFile(join(consumer, "vite.config.mjs"), `
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { BUNDLED_ENGINE_ASSETS, BUNDLED_ENGINE_FILES } from "@misofm/engine/assets";
+
+const manifestSha256 = createHash("sha256")
+  .update(readFileSync(BUNDLED_ENGINE_ASSETS.manifest))
+  .digest("hex");
+const hostDirectory = "assets/engine-" + manifestSha256;
+const hostClosure = new Set([
+  BUNDLED_ENGINE_FILES.hostModule,
+  BUNDLED_ENGINE_FILES.abiLayout,
+]);
+
+export default {
+  build: {
+    rollupOptions: {
+      output: {
+        assetFileNames: (asset) => hostClosure.has(asset.name ?? "")
+          ? hostDirectory + "/[name][extname]"
+          : "assets/[name]-[hash][extname]",
+      },
+    },
+  },
+  plugins: [{
+    name: "packed-engine-host-closure",
+    generateBundle(_, bundle) {
+      for (const fileName of hostClosure) {
+        if (!Object.values(bundle).some((entry) => entry.type === "asset" && entry.name === fileName)) {
+          throw new Error("Vite did not emit Engine host asset " + fileName);
+        }
+      }
+      this.emitFile({
+        type: "asset",
+        fileName: hostDirectory + "/" + BUNDLED_ENGINE_FILES.preparedControl,
+        source: readFileSync(new URL(BUNDLED_ENGINE_FILES.preparedControl, BUNDLED_ENGINE_ASSETS.hostModule)),
+      });
+    },
+  }],
+};
+`);
 await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><script type="module" src="/src/main.ts"></script>\n');
 await mkdir(join(consumer, "src"));
 await writeFile(join(consumer, "src", "main.ts"), indexedSparse
@@ -380,6 +421,8 @@ try {
   assert.ok(requested.some(([path, mime]) => path.includes("pcm-pump-worker") && mime.includes("javascript")), "pump Worker asset not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("feed-worklet") && mime.includes("javascript")), "feed worklet asset not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("audio-worklet-host") && mime.includes("javascript")), "Engine host asset not observed");
+  assert.ok(requested.some(([path, mime]) => path.endsWith("/prepared-control.js") && mime.includes("javascript")), "Engine prepared-control companion not observed");
+  assert.ok(requested.some(([path]) => path.endsWith("/miso-engine-v1-abi-layout.json")), "Engine ABI-layout companion not observed");
   assert.ok(requested.some(([path, mime]) => path.includes("audio-worklet-") && !path.includes("host") && mime.includes("javascript")), "Engine worklet asset not observed");
   console.log(JSON.stringify({ profile: profile.name, origin: `http://127.0.0.1:${address.port}`, ...result.result,
     assets: requested.filter(([path]) => /\.(?:js|wasm)$/u.test(path)).length, root, requestFailures, consoleErrors }));
