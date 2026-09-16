@@ -42,3 +42,58 @@ Record candidate hashes, CI/review results, merged SHA, workflow IDs, registry m
 ## Workflow
 
 A Sol owner scopes and implements this launch release at the requested effort. A fresh Sol adversarially verifies the frozen candidate. Root owns the checkpoint, pull request, immutable publication, registry acceptance, evidence synchronization, and issue closure.
+
+## Evidence
+
+### Attempt 1 implementation tranche — 2026-09-16 UTC
+
+The Engine precondition is satisfied by public `@misofm/engine@0.4.1`: source/merged
+main SHA `1f754cb415e5f39123333c526c75110e33ad24df`, registry archive SHA256
+`251ba94b46cfc648ff867a1191e3d28e1cf18b910fc651c0c87de3d18111a7bc`, npm integrity
+`sha512-hTRdb1SOyRngbnte21QwaSMiPZ1Y90FgXkehSDG2Hk37hBZQ2qtgIZL0H2s1NtpgZ+8pd4AsmhdLneBjj6IgOw==`,
+and shasum `dedf9cf506205b628e1966b0fa08b8cd7c387523`. Engine qualification run
+`35158339020` and verify run `35158837207` passed. The prepublication registry
+lookup for adapter `0.5.11` returned parsed E404.
+
+The identity-only candidate updates adapter `0.5.10 -> 0.5.11`, pins exactly
+Engine `0.4.1`, updates the lockfile to the public Engine tarball/integrity, and
+binds provenance, package assertions, workflow guards, README, and NOTICE to the
+Engine source/archive above. Codec `0.1.1`, Effect, hash-wasm, toolchain pins,
+safe baselines, copied-source attribution, exports, runtime TypeScript, browser
+harnesses, and publisher semantics are unchanged. Changed paths are exactly:
+`.github/workflows/npm-publish.yml`, `NOTICE`, `README.md`, `package-lock.json`,
+`package.json`, `scripts/check-package.mjs`, `src/provenance.ts`, and
+`tests/foundation.test.ts`.
+
+The local gates used Node `v22.23.2`, npm `10.9.8`, and the public npm registry:
+
+- `npm ci --ignore-scripts`: PASS; 31 packages added, 0 vulnerabilities.
+- `npm run check`: PASS; 380 tests passed, 0 failed; source policy 56 files;
+  decoder policy 75,923 bytes with fixed 2 MiB memory; package policy 247 files,
+  474,772 bytes.
+- `npm run publish:dry-run`: PASS; adapter `0.5.11`, 247 files, 474,772-byte
+  package, 2,636,641-byte unpacked size, shasum
+  `4a46b3ea465e1c205c502319211dd867f20ee273`.
+- `node scripts/browser-packed.mjs --indexed-sparse` with Chromium
+  `151.0.7922.34`: PASS; cold, warm, concurrent, sparse-gap, worker cleanup,
+  and MIME/request assertions passed with no request failures or console errors.
+- `npm run test:browser` with the same Chromium: FAIL before playback. The packed
+  page requests the hashed Engine host module, but the harness's static server
+  returns 404 for its relative `prepared-control.js` asset, so Engine host startup
+  rejects with `session.open`/`BrowserBootError`. The failure reproduces on two
+  runs; the candidate source/runtime was not changed to hide it. A bare run
+  without `CHROME_EXECUTABLE` also stops at the documented missing-Chrome check.
+
+A fresh consumer installed the exact candidate tarball
+`misofm-engine-web-adapter-0.5.11.tgz` and passed runtime imports for `.`,
+`/stems`, and `/assets`; strict TypeScript checking with `skipLibCheck: false`;
+and one-engine resolution. Candidate archive identity is SHA256
+`ee2ed1a0a3fb81e8275a9cbefd5d1d932a77ecb08f7fb1946edb905493be6e7a`, shasum
+`4a46b3ea465e1c205c502319211dd867f20ee273`, 247 files, and 2,636,641 unpacked
+bytes. The consumer reported one physical `node_modules/@misofm/engine`, version
+`0.4.1`, with adapter `0.5.11` depending on exactly `0.4.1`.
+
+This is a coherent attempt-1 checkpoint. No commit, push, pull request, workflow
+dispatch, publication, or GitHub state change was performed. The ordinary packed
+browser failure and required macOS OPFS/Chromium/WebKit qualification remain root
+delivery/review gates.

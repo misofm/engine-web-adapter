@@ -1,7 +1,7 @@
 # @misofm/engine-web-adapter
 
 Headless, framework-neutral browser session hosting for
-`@misofm/engine@0.4.0`. Version 0.5 identifies canonical PCM with BLAKE3-256 and streams standards-compliant native FLAC
+`@misofm/engine@0.4.1`. Version 0.5 identifies canonical PCM with BLAKE3-256 and streams standards-compliant native FLAC
 through bounded HTTP ranges and a one-stem universal `@misofm/codec@0.1.1`
 Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
@@ -10,15 +10,15 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.5.10 @misofm/engine@0.4.0
+npm install @misofm/engine-web-adapter@0.5.11 @misofm/engine@0.4.1
 ```
 
-The package is ESM-only and remains pinned to exactly Engine `0.4.0` and
+The package is ESM-only and remains pinned to exactly Engine `0.4.1` and
 `@misofm/codec` `0.1.1`. The codec currently supports Node `>=22.23.2 <23`
 and Bun `>=1.4.2 <1.5`; browser consumers use the bundled public codec asset.
-The integration uses the published Engine 0.4.0 archive
-from commit `89288333961713b3adaea0ad3050fcbb5e35d748`, SHA256
-`5ca46401c29b8206cea348be811ad30623c43807dbe1b33935d57534185e2744`.
+The integration uses the published Engine 0.4.1 archive
+from commit `1f754cb415e5f39123333c526c75110e33ad24df`, SHA256
+`251ba94b46cfc648ff867a1191e3d28e1cf18b910fc651c0c87de3d18111a7bc`.
 This release adds indexed full-response stem acquisition: active FLAC chunks are
 decoded once into verified sparse PCM, and timeline gaps are generated as zeroes
 when the Engine reads them. The existing native-FLAC path remains available.
