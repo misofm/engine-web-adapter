@@ -49,6 +49,14 @@ The first browser invocations failed before launch because `CHROME_EXECUTABLE` w
 
 PASS at frozen clean checkpoint `d350547`, with no blockers. The reviewer independently confirmed the exact nine permitted paths; no runtime, asset, unrelated dependency or publisher-semantic changes; every candidate archive hash/count; frozen-tree payload equality; fresh public imports; strict TypeScript; exact provenance; one physical Engine 0.4.2; byte-for-byte Engine payload equality with the public archive; accepted signature/SLSA evidence; and the public H256 retained-publication behavior. Foundation tests passed 7/7 from the repository root. The recorded first foundation invocation used the clean consumer as its working directory and failed cwd-dependent assertions; the correct repository-root invocation passed without a source or archive change. Prior 380/380 tests and both successful browser logs were inspected. Exact-main, parsed-E404, OIDC-only, serialized publication and verify-only recovery controls remain intact. PR macOS OPFS and Chromium/WebKit qualification remains before publication.
 
+## Public delivery evidence
+
+PR #123 passed the required macOS OPFS qualification for Chromium and WebKit in run 35173287696 and merged as exact `main` commit `f8ae7b7884198660d20fd499eeedcdf25ad5c361`. A final parsed registry lookup confirmed adapter 0.5.12 was unused. The single publish dispatch, run 35173419809, checked out that exact SHA, reran the complete qualification, observed parsed E404, published once through OIDC, and passed public registry dependency, import and signature/attestation verification.
+
+Independent public verification under `/tmp/adapter-0512-registry-verify-20260917/` confirms adapter 0.5.12 is public and `latest`. The public archive is byte-identical to the reviewed candidate: 474,775 bytes, 247 files, and the same SHA-1, SHA-256 and SHA-512 recorded above. A clean install imports root, `/stems`, `/assets` and `/package.json`; strict TypeScript with `skipLibCheck: false` passes; exactly one physical Engine 0.4.2 resolves; Engine payload/provenance matches the authenticated public archive and source commit; and `npm audit signatures --include-attestations` reports seven verified packages with no invalid or missing entries. Adapter SLSA provenance binds source `f8ae7b7884198660d20fd499eeedcdf25ad5c361` to publication run 35173419809; Engine provenance binds source `13351fe71c7d4594e5ff6ea170c2839514cb243e` to publication run 35172001155.
+
+The adapter release contract is complete. App issue `misofm/app#262` owns exact package adoption, the packaged H256 continuity/decay trace and testnet deployment.
+
 ## Objective gates
 
 1. Under Node 22.23.2, run `npm ci --ignore-scripts` and `npm run check`.
