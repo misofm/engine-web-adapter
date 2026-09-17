@@ -10,7 +10,13 @@ Starting source is synchronized adapter `main` at `cdda801342663c74ba88471604b6f
 
 Do not begin implementation until public Engine 0.4.2 is independently verified. Record its source SHA, qualification/publish/verify run IDs, registry archive URL, shasum, SHA-256, SHA-512/integrity, file count and unpacked size. Require fresh public imports, strict types and CLI; `npm audit signatures --include-attestations`; SLSA provenance bound to `misofm/engine`, `.github/workflows/npm-publish.yml`, `refs/heads/main`, the accepted source SHA and original publication run; payload equivalence with the reviewed candidate; and a public-package H256 proof where a ready/available publication remains ready/available with the same result identity after a later nonpublishing pending read. A parsed registry lookup must also confirm adapter 0.5.12 is unused.
 
-As of 2026-09-17 01:42 UTC, both Engine 0.4.2 and adapter 0.5.12 returned parsed E404. Engine publication is the current blocker.
+As of 2026-09-17 01:42 UTC, Engine 0.4.2 and adapter 0.5.12 returned parsed E404. Engine 0.4.2 is now public and the adapter 0.5.12 lookup remains parsed E404.
+
+## Engine 0.4.2 verification record
+
+The public Engine 0.4.2 release was independently verified before this adapter tranche. The accepted source is `misofm/engine` commit `13351fe71c7d4594e5ff6ea170c2839514cb243e`. Qualification run `35171757674` passed. The single publication step in run `35172001155` succeeded, after which that run timed out waiting for registry propagation; publication was not retried. Verify-only recovery run `35172167003` passed once npm converged. The registry archive is `https://registry.npmjs.org/@misofm/engine/-/engine-0.4.2.tgz` with shasum `bf17c31d80129264bcc8d885b27818b7f8958c9b`, SHA-256 `8f28af09f1fb6f31295e82ba9cb97350cb2f56be21e1db1c5bb028d9e128880d`, and SHA-512/integrity `sha512-+wx0YgvvaDeKO50pPY4uHuNdAMMJOyrVf0fm3Hxazve1+w1YvJXD+wQkQeA06D06nOciXuoNydohe4Xo27F2Zg==`. The public package contains 98 files, is 1,331,339 bytes packed, and has an unpacked size of 5,460,488 bytes.
+
+Fresh public root, `/browser`, `/assets`, and CLI imports, strict TypeScript, signature/attestation verification, SLSA provenance binding to `misofm/engine`, `.github/workflows/npm-publish.yml`, `refs/heads/main`, the accepted source SHA and the original publication run, candidate payload equivalence, and the public H256 coalescing proof passed. A parsed registry lookup confirms `@misofm/engine-web-adapter@0.5.12` is unused.
 
 ## Smallest bounded implementation
 
@@ -26,6 +32,10 @@ Change only this issue spec and these eight release surfaces:
 - `NOTICE`: Engine 0.4.2 identity, source SHA and archive SHA-256.
 
 Preserve codec 0.1.1, Effect, hash-wasm, toolchains, unrelated dependency integrities, safe baselines, copied-source attribution, exports, generated assets, browser scripts and publisher semantics. Do not edit runtime TypeScript, APIs, workers, AudioWorklet code, DSP, codec/decoder, storage/cache, binary assets or test harness behavior.
+
+Implementation record: the adapter release tranche updates only package identity, the exact Engine 0.4.2 dependency, registry-generated lock metadata, release guards, and the recorded Engine provenance/source/archive identities across the eight authorized release surfaces. Runtime TypeScript, APIs, workers, AudioWorklet code, DSP, codec/decoder, storage/cache, binary assets, and test harness behavior remain unchanged.
+
+Fast tranche validation passed under Node `v22.23.2` and npm `10.9.8`: `npm ci --ignore-scripts`, format check, TypeScript typecheck, `git diff --check`, and an exact-path/literal audit. The audit found exactly the issue spec plus the eight authorized release surfaces and verified the lockfile's registry URL, Engine 0.4.2 version, and published integrity.
 
 ## Objective gates
 
