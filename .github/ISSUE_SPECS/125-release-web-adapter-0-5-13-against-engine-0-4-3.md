@@ -43,6 +43,10 @@ A clean consumer imported root, `/stems`, `/assets`, and `/package.json`; passed
 
 Chrome for Testing 151.0.7922.34 with Playwright Core 1.62.1 passed both local browser gates against the same package source. `npm run test:browser` and `node scripts/browser-packed.mjs --indexed-sparse` completed with zero request failures or console errors; injected reject/stall/crash cases terminated cleanly, and every packed sparse worker terminated without an error. Logs are retained under `/tmp/adapter-0513-browser-2vcxVs/`. The browser run observed evidence-only checkpoint `bc52bff`; its only delta from the packed implementation checkpoint is this issue record, which is outside the npm payload.
 
+## Fresh Astra medium review
+
+PASS at clean checkpoint `bdb3c03`, with no implementation blocker. The reviewer independently confirmed exactly nine authorized paths and release-literal-only implementation changes, with no runtime, harness, asset, export, toolchain, or unrelated lockfile delta. All 247 candidate files, sizes, and hashes matched the checkout and retained consumer. All 98 installed Engine files matched a fresh public Engine archive; one physical Engine 0.4.3 resolved; provenance and Worklet identities matched. Independent foundation tests passed 7/7, package policy passed, strict consumer TypeScript and all four imports passed, and both browser logs were accepted. Publisher exact-main, parsed-E404, serialized OIDC publication, immutable version, and verify-only recovery controls remain intact. The reviewer classifies this as the simplest dependency-only carrier with no workaround or bandaid. PR macOS OPFS and Chromium/WebKit qualification remains before delivery.
+
 ## Immutable delivery
 
 Merge only the reviewed candidate after PR qualification. Freeze exact main, repeat parsed E404, and dispatch the adapter publisher once. Preserve exact-main checkout, full qualification, OIDC-only publication, serialized concurrency, immutable-version refusal, and verify-only recovery. If publication may have occurred but a later check fails, never retry publish; inspect the registry and use verify mode only.
