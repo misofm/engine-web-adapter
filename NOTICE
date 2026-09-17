@@ -1,10 +1,10 @@
 @misofm/engine-web-adapter
 Copyright 2026 Miso
 
-This product depends on @misofm/engine@0.4.2. The reviewed integration archive
+This product depends on @misofm/engine@0.4.3. The reviewed integration archive
 was packed from misofm/engine commit
-13351fe71c7d4594e5ff6ea170c2839514cb243e with SHA256
-8f28af09f1fb6f31295e82ba9cb97350cb2f56be21e1db1c5bb028d9e128880d.
+a3d71148e4144a396aa1ceb7fb83b6e671a0eced with SHA256
+0b81dc9cec57d89703e42da5da592f5cb450ffec71a980ea0c4a00517cd294a0.
 This records reviewed source/archive identity, not registry publication.
 
 The transport SHA-256 implementation and verified-store/session-gate invariants
