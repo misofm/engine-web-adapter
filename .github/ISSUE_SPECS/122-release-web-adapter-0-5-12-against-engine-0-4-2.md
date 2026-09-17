@@ -37,6 +37,14 @@ Implementation record: the adapter release tranche updates only package identity
 
 Fast tranche validation passed under Node `v22.23.2` and npm `10.9.8`: `npm ci --ignore-scripts`, format check, TypeScript typecheck, `git diff --check`, and an exact-path/literal audit. The audit found exactly the issue spec plus the eight authorized release surfaces and verified the lockfile's registry URL, Engine 0.4.2 version, and published integrity.
 
+## Candidate qualification record
+
+Frozen checkpoint `f85fb6dc5ab550268b1690754cb7f0b94b218c61` passed the complete `npm run check` suite (380 tests), `npm run publish:dry-run`, fresh install, package policy and clean-consumer verification under Node 22.23.2. npm 11.19.0 packed exactly one 474,775-byte, 247-file candidate at `/tmp/adapter-0512-candidate-20260917/misofm-engine-web-adapter-0.5.12.tgz`: shasum `c2436ee1d2226e741eeda9e8ff3b10dee1977267`, SHA-256 `65ff94fde2799d379fcece2dd4c9c8e2872c0bac753ae9fac63c7cf2d71a6f95`, SHA-512 `53cae9c10f9aa110d08dde0180aaa3f6677599c9bc6a8425a78a1696721558aade1d7cfc1bb99c4a2a313eddbdda7aee974746f44ea50dbb85c8a99b63e7de20`, and integrity `sha512-U8rpwQ+aoRDQjd4BgKqj9md1mcm8aoQlp4oWlnIVWKreHXz8G7mcSioxPt292nrul0dG9E6lDbuFyKmbY+feIA==`.
+
+The clean consumer imports root, `/stems`, `/assets` and `/package.json`; strict TypeScript with `skipLibCheck: false` passes; one physical Engine 0.4.2 is installed; its payload equals the independently verified public Engine archive; and built `ADAPTER_PROVENANCE` exactly identifies Engine 0.4.2, source `13351fe71c7d4594e5ff6ea170c2839514cb243e` and archive SHA-256 `8f28af09f1fb6f31295e82ba9cb97350cb2f56be21e1db1c5bb028d9e128880d`.
+
+The first browser invocations failed before launch because `CHROME_EXECUTABLE` was unset; this consumed Luna's two allowed rounds and was classified as infrastructure-only. One bounded Sol high escalation used the matching executable `/home/bl/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome` (Chrome for Testing 153.0.8010.12). Both `npm run test:browser` and `node scripts/browser-packed.mjs --indexed-sparse` then passed with no request failures or console errors and all workers terminated. No source, harness, archive or package correction was made. Logs are retained under `/tmp/adapter-0512-qualification-20260917/`, `/tmp/adapter-0512-test-browser.log` and `/tmp/adapter-0512-browser-packed-indexed-sparse.log`.
+
 ## Objective gates
 
 1. Under Node 22.23.2, run `npm ci --ignore-scripts` and `npm run check`.
