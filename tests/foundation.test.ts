@@ -18,11 +18,11 @@ test("foundation is pinned to the exact public Engine release", async () => {
   assert.equal(ADAPTER_PROVENANCE.engine.package, `@misofm/engine@${packageJson.dependencies["@misofm/engine"]}`);
   assert.equal(
     ADAPTER_PROVENANCE.engine.commit,
-    "13351fe71c7d4594e5ff6ea170c2839514cb243e",
+    "a3d71148e4144a396aa1ceb7fb83b6e671a0eced",
   );
   assert.equal(
     ADAPTER_PROVENANCE.engine.archiveSha256,
-    "8f28af09f1fb6f31295e82ba9cb97350cb2f56be21e1db1c5bb028d9e128880d",
+    "0b81dc9cec57d89703e42da5da592f5cb450ffec71a980ea0c4a00517cd294a0",
   );
   assert.equal(ADAPTER_PROVENANCE.safeBaselines.stemStore, "bd7f330a9773ce43bb077f0e6d5c8fc30fe9e27c");
 });
