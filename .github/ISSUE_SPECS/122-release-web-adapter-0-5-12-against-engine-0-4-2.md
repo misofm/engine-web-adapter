@@ -45,6 +45,10 @@ The clean consumer imports root, `/stems`, `/assets` and `/package.json`; strict
 
 The first browser invocations failed before launch because `CHROME_EXECUTABLE` was unset; this consumed Luna's two allowed rounds and was classified as infrastructure-only. One bounded Sol high escalation used the matching executable `/home/bl/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome` (Chrome for Testing 153.0.8010.12). Both `npm run test:browser` and `node scripts/browser-packed.mjs --indexed-sparse` then passed with no request failures or console errors and all workers terminated. No source, harness, archive or package correction was made. Logs are retained under `/tmp/adapter-0512-qualification-20260917/`, `/tmp/adapter-0512-test-browser.log` and `/tmp/adapter-0512-browser-packed-indexed-sparse.log`.
 
+## Fresh Astra medium review
+
+PASS at frozen clean checkpoint `d350547`, with no blockers. The reviewer independently confirmed the exact nine permitted paths; no runtime, asset, unrelated dependency or publisher-semantic changes; every candidate archive hash/count; frozen-tree payload equality; fresh public imports; strict TypeScript; exact provenance; one physical Engine 0.4.2; byte-for-byte Engine payload equality with the public archive; accepted signature/SLSA evidence; and the public H256 retained-publication behavior. Foundation tests passed 7/7 from the repository root. The recorded first foundation invocation used the clean consumer as its working directory and failed cwd-dependent assertions; the correct repository-root invocation passed without a source or archive change. Prior 380/380 tests and both successful browser logs were inspected. Exact-main, parsed-E404, OIDC-only, serialized publication and verify-only recovery controls remain intact. PR macOS OPFS and Chromium/WebKit qualification remains before publication.
+
 ## Objective gates
 
 1. Under Node 22.23.2, run `npm ci --ignore-scripts` and `npm run check`.
