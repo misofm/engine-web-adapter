@@ -33,6 +33,14 @@ Preserve codec 0.1.1, Effect, hash-wasm, toolchains, unrelated dependency integr
 4. Require fresh Astra medium review of exact paths/literals, candidate bytes, one-Engine resolution, public archive equality, publisher controls, and absence of runtime changes.
 5. Require the PR Packed OPFS qualification workflow to pass macOS OPFS and indexed-sparse Chromium/WebKit on the reviewed SHA.
 
+## Candidate qualification record
+
+Frozen implementation checkpoint `ab7d6fc347802bf4ed51bb5ea3daf87db717bf6f` changes exactly the eight authorized metadata and provenance surfaces. `npm run check` passed 380/380 tests, `npm run publish:dry-run` passed, and package policy retained the expected 247-file shape with no source or test leakage.
+
+npm 11.19.0 packed one retained candidate at `/tmp/miso-adapter-125-candidate-5GqE8G/misofm-engine-web-adapter-0.5.13.tgz`: 474,756 packed bytes, 2,636,641 unpacked bytes, SHA-1 `63936972cf3cabd6e56689046281ad0803a6b8ff`, SHA-256 `277bbf301b1535cbbb8f3d33dd1bb43c3d6419b7c54dfb4722d419d5131981a9`, SHA-512 `e3c1d9a7fb26b8bff26be34dd8e31b8303a66f14f10d4d7494d0ce2f2230e9d2565109aa8462ae4eda811aef8262776ab05c600192a1a2a47332c056657195b7`, and integrity `sha512-48HZp/smuL/ya+NN2OMbgwOmbxTxDU10lNDOLyIw6dJWUQmqhGKuTtqBGu+CYndqsFxgAZKhoqRzMsBWZXGVtw==`.
+
+A clean consumer imported root, `/stems`, `/assets`, and `/package.json`; passed strict TypeScript with `skipLibCheck: false`; resolved exactly one physical Engine 0.4.3; matched all 98 installed Engine files to a fresh public archive; matched `ADAPTER_PROVENANCE` to the accepted Engine package, source SHA, and archive SHA-256; and retained the accepted Worklet SHA-256. The temporary consumer's first strict compile selected `ES2022` and failed on Effect's `AsyncDisposable` declarations; selecting the package-supported `ESNext` library passed without a source or candidate change. Logs and structured evidence are retained under `/tmp/miso-adapter-125-qualify-3cSzRC/`.
+
 ## Immutable delivery
 
 Merge only the reviewed candidate after PR qualification. Freeze exact main, repeat parsed E404, and dispatch the adapter publisher once. Preserve exact-main checkout, full qualification, OIDC-only publication, serialized concurrency, immutable-version refusal, and verify-only recovery. If publication may have occurred but a later check fails, never retry publish; inspect the registry and use verify mode only.
