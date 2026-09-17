@@ -60,3 +60,11 @@ Stop without publishing if public Engine 0.4.3 differs from the identities above
 ## Workflow
 
 Sol supplied this bounded brief. One Luna max agent gets at most two rounds to implement the eight metadata surfaces. Escalate unsatisfied implementation to Sol high for one round, then Astra xhigh. A fresh Astra medium reviewer verifies the frozen candidate. Root owns checkpoints, PR delivery, the single publication dispatch, registry verification, evidence synchronization and closure.
+
+## Public delivery evidence
+
+PR #126 passed required Packed OPFS qualification run 35185412757 on macOS for Chromium and WebKit, then merged as exact `main` SHA `955f10befb5e6ef4172255d95e5865ae307509d4`. The single publish dispatch, run 35185586132, checked out that SHA, reran the full qualification, observed parsed E404, published through OIDC once, and passed public registry dependency, import, signature, and attestation verification.
+
+Independent `npm pack @misofm/engine-web-adapter@0.5.13` produced a byte-identical copy of the reviewed candidate: 247 files, 474,756 packed bytes, SHA-1 `63936972cf3cabd6e56689046281ad0803a6b8ff`, SHA-256 `277bbf301b1535cbbb8f3d33dd1bb43c3d6419b7c54dfb4722d419d5131981a9`, and integrity `sha512-48HZp/smuL/ya+NN2OMbgwOmbxTxDU10lNDOLyIw6dJWUQmqhGKuTtqBGu+CYndqsFxgAZKhoqRzMsBWZXGVtw==`. An immediate independent install briefly observed npm's package read path before version resolution had converged and returned `ETARGET`; publication was not retried. A new clean consumer after convergence imported root, `/stems`, and `/assets`, resolved adapter 0.5.13 and exactly one Engine 0.4.3 with the accepted provenance, and reported 12 verified registry signatures plus seven verified attestations. Registry `latest`, dependency, shasum, and integrity all match the reviewed release.
+
+The adapter release contract is complete. App issue `misofm/app#267` owns adoption of the two public packages, the final spectrum-path audit, app qualification, and testnet deployment.
