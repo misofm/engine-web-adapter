@@ -1,0 +1,837 @@
+{
+  "format": "issue77-round2-timing-v1",
+  "trials": [
+    {
+      "trial": 1,
+      "order": [
+        "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+        "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+        "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+        "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+      ],
+      "modeOrder": [
+        "flac",
+        "rans",
+        "rice"
+      ],
+      "modes": {
+        "flac": {
+          "order": [
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.25052257895004004,
+                "userSeconds": 0.16,
+                "systemSeconds": 0.0,
+                "peakRssKiB": 2816,
+                "chunkCount": 6,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.29681903996970505,
+                "userSeconds": 0.19,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 2816,
+                "chunkCount": 7,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.1245652650250122,
+                "userSeconds": 0.07,
+                "systemSeconds": 0.0,
+                "peakRssKiB": 2816,
+                "chunkCount": 4,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.16534072998911142,
+                "userSeconds": 0.11,
+                "systemSeconds": 0.01,
+                "peakRssKiB": 2816,
+                "chunkCount": 4,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            }
+          ],
+          "wallSeconds": 0.8372476139338687,
+          "userSeconds": 0.53,
+          "systemSeconds": 0.03,
+          "peakRssKiB": 2816
+        },
+        "rans": {
+          "order": [
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7083514269907027,
+                "userSeconds": 0.67,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8351741780061275,
+                "userSeconds": 0.78,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.26254305406473577,
+                "userSeconds": 0.23,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.42459491500630975,
+                "userSeconds": 0.38,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            }
+          ],
+          "wallSeconds": 2.2306635740678757,
+          "userSeconds": 2.06,
+          "systemSeconds": 0.13,
+          "peakRssKiB": 4864
+        },
+        "rice": {
+          "order": [
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.6766587169840932,
+                "userSeconds": 0.63,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8452628869563341,
+                "userSeconds": 0.79,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.253942076000385,
+                "userSeconds": 0.22,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.3967010540654883,
+                "userSeconds": 0.36,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-1/rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            }
+          ],
+          "wallSeconds": 2.1725647340063006,
+          "userSeconds": 2.0,
+          "systemSeconds": 0.13,
+          "peakRssKiB": 4864
+        }
+      },
+      "hashVerificationInsideTimedInterval": false
+    },
+    {
+      "trial": 2,
+      "order": [
+        "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+        "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+        "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+        "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+      ],
+      "modeOrder": [
+        "flac",
+        "rans",
+        "rice"
+      ],
+      "modes": {
+        "flac": {
+          "order": [
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.12611371197272092,
+                "userSeconds": 0.07,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 2816,
+                "chunkCount": 4,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.16487512399908155,
+                "userSeconds": 0.11,
+                "systemSeconds": 0.0,
+                "peakRssKiB": 2816,
+                "chunkCount": 4,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.2535417249891907,
+                "userSeconds": 0.2,
+                "systemSeconds": 0.0,
+                "peakRssKiB": 2816,
+                "chunkCount": 6,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.29843131895177066,
+                "userSeconds": 0.19999999999999998,
+                "systemSeconds": 0.01,
+                "peakRssKiB": 2816,
+                "chunkCount": 7,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            }
+          ],
+          "wallSeconds": 0.8429618799127638,
+          "userSeconds": 0.58,
+          "systemSeconds": 0.03,
+          "peakRssKiB": 2816
+        },
+        "rans": {
+          "order": [
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.26445378991775215,
+                "userSeconds": 0.24,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.4273441379191354,
+                "userSeconds": 0.39,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.706278403988108,
+                "userSeconds": 0.66,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8340601910604164,
+                "userSeconds": 0.78,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            }
+          ],
+          "wallSeconds": 2.232136522885412,
+          "userSeconds": 2.0700000000000003,
+          "systemSeconds": 0.12,
+          "peakRssKiB": 4864
+        },
+        "rice": {
+          "order": [
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.2560351099818945,
+                "userSeconds": 0.22,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.3991196969291195,
+                "userSeconds": 0.37,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.6842895710142329,
+                "userSeconds": 0.63,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8311253160936758,
+                "userSeconds": 0.78,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-2/rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            }
+          ],
+          "wallSeconds": 2.1705696940189227,
+          "userSeconds": 2.0,
+          "systemSeconds": 0.12,
+          "peakRssKiB": 4864
+        }
+      },
+      "hashVerificationInsideTimedInterval": false
+    },
+    {
+      "trial": 3,
+      "order": [
+        "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+        "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+        "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+        "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+      ],
+      "modeOrder": [
+        "flac",
+        "rans",
+        "rice"
+      ],
+      "modes": {
+        "flac": {
+          "order": [
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.16341885295696557,
+                "userSeconds": 0.1,
+                "systemSeconds": 0.01,
+                "peakRssKiB": 2816,
+                "chunkCount": 4,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.2981523990165442,
+                "userSeconds": 0.19,
+                "systemSeconds": 0.0,
+                "peakRssKiB": 2816,
+                "chunkCount": 7,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.25373242900241166,
+                "userSeconds": 0.16999999999999998,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 2816,
+                "chunkCount": 6,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.12653667700942606,
+                "userSeconds": 0.06,
+                "systemSeconds": 0.01,
+                "peakRssKiB": 2816,
+                "chunkCount": 4,
+                "timedCommand": "serial flac decode per manifest chunk",
+                "hashVerificationInsideTimedInterval": false
+              }
+            }
+          ],
+          "wallSeconds": 0.8418403579853475,
+          "userSeconds": 0.52,
+          "systemSeconds": 0.04,
+          "peakRssKiB": 2816
+        },
+        "rans": {
+          "order": [
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.428355343057774,
+                "userSeconds": 0.39,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rans/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8366922109853476,
+                "userSeconds": 0.79,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rans/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.7102822350570932,
+                "userSeconds": 0.66,
+                "systemSeconds": 0.04,
+                "peakRssKiB": 4864,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rans/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.26637963601388037,
+                "userSeconds": 0.23,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/rans.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rans/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            }
+          ],
+          "wallSeconds": 2.241709425114095,
+          "userSeconds": 2.0700000000000003,
+          "systemSeconds": 0.11,
+          "peakRssKiB": 4864
+        },
+        "rice": {
+          "order": [
+            "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+            "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+            "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+            "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+          ],
+          "stems": [
+            {
+              "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+              "bytes": 29314446,
+              "sha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+              "measurement": {
+                "wallSeconds": 0.3980194249888882,
+                "userSeconds": 0.36,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rice/8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "bytes": 50994552,
+              "sha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+              "measurement": {
+                "wallSeconds": 0.8188913769554347,
+                "userSeconds": 0.76,
+                "systemSeconds": 0.05,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rice/68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+              "bytes": 40238736,
+              "sha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+              "measurement": {
+                "wallSeconds": 0.6814772610086948,
+                "userSeconds": 0.64,
+                "systemSeconds": 0.03,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rice/fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            },
+            {
+              "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+              "bytes": 25258248,
+              "sha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+              "measurement": {
+                "wallSeconds": 0.2558219759957865,
+                "userSeconds": 0.22,
+                "systemSeconds": 0.02,
+                "peakRssKiB": 4608,
+                "timedCommand": [
+                  "/data/issue-77-lossless/iterations/round-02/round2-helper",
+                  "decode",
+                  "/data/issue-77-lossless/iterations/round-02/final-pilot3/pilot/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1/rice.ent",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.raw",
+                  "-",
+                  "/data/issue-77-lossless/iterations/round-02/timing-final5/trial-3/rice/ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1.json"
+                ],
+                "hashVerificationInsideTimedInterval": false
+              }
+            }
+          ],
+          "wallSeconds": 2.154210038948804,
+          "userSeconds": 1.98,
+          "systemSeconds": 0.13,
+          "peakRssKiB": 4608
+        }
+      },
+      "hashVerificationInsideTimedInterval": false
+    }
+  ],
+  "helper": "/data/issue-77-lossless/iterations/round-02/round2-helper",
+  "flac": "/data/issue-77-lossless/tooling/flac-build/src/flac/flac",
+  "pilotWork": "/data/issue-77-lossless/iterations/round-02/final-pilot3",
+  "corpus": "/data/issue-77-lossless/run-02",
+  "warmCompressedInput": true,
+  "auditDisabledForCustom": true,
+  "hashVerificationInsideTimedInterval": false
+}

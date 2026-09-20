@@ -1,0 +1,1161 @@
+{
+  "format": "issue77-round1-native-metrics-v1",
+  "fullRunResultsSha256": "4be5229e3eec13f819ca8d2926b59271a60278f5d3a69726e23df0a05ac300fd",
+  "elapsedWallSeconds": 11.331643807934597,
+  "workerConcurrency": 4,
+  "note": "Summed child wall time under concurrent corpus analysis; not serial preparation latency. RSS is native child process maximum, excluding wrapper and filesystem cache.",
+  "stems": [
+    {
+      "identity": "sha256:03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.16757227294147015,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1640161129180342,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15449622902087867,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1508533329470083,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.4541121169459075,
+        "userSeconds": 0.41,
+        "systemSeconds": 0.03,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:18a73d7d7a47ec6ccd306235bb921dc8760ecce468b0cb5b4860ef94b898bba6",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.1596384890144691,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.18197132693603635,
+          "userSeconds": 0.17,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16312981699593365,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17817668209318072,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.18269876204431057,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15241653996054083,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.0663151410408318,
+          "userSeconds": 0.05,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.7594489390030503,
+        "userSeconds": 0.7,
+        "systemSeconds": 0.05,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:1d0544c63bf19bcc8d8b663d73fb9b206f9d107d52f7729ead8fce52aaa9be71",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.16716029995586723,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.13627310702577233,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.21642028004862368,
+        "userSeconds": 0.2,
+        "systemSeconds": 0.01,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:2726b0d1370fdf4924bc2a3509533c4fbb914a9ff45c54e7b010be71a4adfb76",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.17459406203124672,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16288160299882293,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1766053099418059,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.08718361996579915,
+          "userSeconds": 0.08,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.43556633102707565,
+        "userSeconds": 0.4,
+        "systemSeconds": 0.02,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.14706850796937943,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17735964595340192,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.18098331498913467,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1801381059922278,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.12134929397143424,
+          "userSeconds": 0.11,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.5762172300601378,
+        "userSeconds": 0.52,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:2bf5cb8199b9d347a6a94d10c52b770148efda9073069e4aeeafaa866030a846",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.159285977948457,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.11698400403838605,
+          "userSeconds": 0.1,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1396991889923811,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1696614510146901,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.029295232030563056,
+          "userSeconds": 0.02,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.4543603489873931,
+        "userSeconds": 0.4,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:2dd061241fa7fe3128289427e108ee63501f4ed77c7208f1b37ff49fa6ccff0b",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.15710085909813643,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1532994310837239,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.11734481097664684,
+          "userSeconds": 0.1,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.3157867440022528,
+        "userSeconds": 0.29,
+        "systemSeconds": 0.02,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:361eb2581ace51a5a34c59d83c06ebe6dad73300115db995e6c0692fb4061ae3",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.13128323596902192,
+          "userSeconds": 0.11,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1217013840796426,
+          "userSeconds": 0.11,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.11651258601341397,
+          "userSeconds": 0.1,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.11023620702326298,
+          "userSeconds": 0.09,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.38657789491117,
+        "userSeconds": 0.35,
+        "systemSeconds": 0.02,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:3d60f314574aed4bfafde8b53df7e0e555f367325ba6daad6ec8db9c4dee48c6",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.14580662606749684,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1551237649982795,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16652449895627797,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1381715510506183,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.4642395490081981,
+        "userSeconds": 0.42,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:43413b8b197ba8a6be8b706e5173fb5246f4c60c414557dc552d9c65239f9340",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.1774092410923913,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.07070521800778806,
+          "userSeconds": 0.06,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.17665901291184127,
+        "userSeconds": 0.16,
+        "systemSeconds": 0.01,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:462c511e3c244e805eeaf8c592c2cf35b8e9e9fab0d3074aad52e7304e6572f6",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.15276620700024068,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16149847104679793,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16646257194224745,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1691953749395907,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17161897802725434,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15287226799409837,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.06618546391837299,
+          "userSeconds": 0.05,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.7509912479436025,
+        "userSeconds": 0.69,
+        "systemSeconds": 0.05,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.1660459979902953,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16054447495844215,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16240690101403743,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16981068591121584,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16659396106842905,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15397967700846493,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.06694834597874433,
+          "userSeconds": 0.05,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.7374212729046121,
+        "userSeconds": 0.68,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:75e819632163ccc65f63fde122cea33b199b559c931ebf68b14b5f8c72520629",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.15133816795423627,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1572039150632918,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.18047170189674944,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.12354959407821298,
+          "userSeconds": 0.11,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.4555804340634495,
+        "userSeconds": 0.42,
+        "systemSeconds": 0.03,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:76f8d36d4b2b6ed2efc19418250feaac1fe1868fd919c4c03a6e6f66e3e3f926",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.1674026909749955,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.07301790092606097,
+          "userSeconds": 0.06,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.1631372799165547,
+        "userSeconds": 0.14,
+        "systemSeconds": 0.01,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:820926ccc8557b4cdf81d0c19933f1115dc371d5b53e46ddedb2a87bf4e4e197",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.16859636397566646,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16060258401557803,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.23522490996401757,
+        "userSeconds": 0.21,
+        "systemSeconds": 0.01,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:83cc4bfabbda2bb1b0b9fda8bfc7307d190844be9e01cd8ed53b2b904369b147",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.1522235230077058,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16969867201987654,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16970923298504204,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17045631411019713,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1765001699095592,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1446236140327528,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.6894683490972966,
+        "userSeconds": 0.64,
+        "systemSeconds": 0.03,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:8b374c1219541d61371b2eacf78d1ddd01acf4e9e7422b369044f7c1df5475e1",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.15549888904206455,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1643709490308538,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1720433869631961,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15708941698540002,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.18329834402538836,
+          "userSeconds": 0.17,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15195058402605355,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.06665366608649492,
+          "userSeconds": 0.06,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.756636597099714,
+        "userSeconds": 0.69,
+        "systemSeconds": 0.05,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.14106860605534166,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.13981348602101207,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15238811599556357,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.10898322204593569,
+          "userSeconds": 0.09,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.3922815640689805,
+        "userSeconds": 0.35,
+        "systemSeconds": 0.03,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:9184f49ee35fa748ecf4d898eb06058d2f499b8348b80736c5c252a99fe36b98",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.1451732600107789,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1429968469310552,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15142667607869953,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.05664701503701508,
+          "userSeconds": 0.05,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.3740292750298977,
+        "userSeconds": 0.33,
+        "systemSeconds": 0.03,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:9a57207ac802bad426435d920b77048ba9dd391797c6a462444c6e375716d36f",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.15700145799200982,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15342638199217618,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15886354399845004,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.011774777085520327,
+          "userSeconds": 0.0,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.3579797809943557,
+        "userSeconds": 0.32,
+        "systemSeconds": 0.03,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:b613c11eea1c43c0a0fed317bea191d09146b818c4fe8e7a781cec1061b781f1",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.15982013498432934,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.025718341930769384,
+          "userSeconds": 0.02,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.13019460497889668,
+        "userSeconds": 0.11,
+        "systemSeconds": 0.01,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.08363291993737221,
+          "userSeconds": 0.07,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1258636190323159,
+          "userSeconds": 0.11,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.08915822894778103,
+          "userSeconds": 0.08,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.016587127931416035,
+          "userSeconds": 0.01,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.2606880769599229,
+        "userSeconds": 0.23,
+        "systemSeconds": 0.02,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.17133217107038945,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1754367050016299,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1749836029484868,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17592879303265363,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.12410395801998675,
+          "userSeconds": 0.11,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.5812628659186885,
+        "userSeconds": 0.53,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:d2a9ac32d38219a1dbe387f10ae417abb86101f4366683d2e68270ca1b8b5224",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.16330218501389027,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15280705399345607,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.16537307703401893,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1554902819916606,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1648466349579394,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.09402944298926741,
+          "userSeconds": 0.08,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.641285679070279,
+        "userSeconds": 0.59,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:d60d7992ce0ac81666b6e13b3ae7064ab5c1aad701a026619d78cfb725386d4d",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.1458250709110871,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1728223490063101,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17477494606282562,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17424200102686882,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17519206006545573,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.02032525499816984,
+          "userSeconds": 0.01,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.6564123969292268,
+        "userSeconds": 0.6,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:dbb6eda6ecc56c418428f6b41d0b4872948d5be58e6089ecacb538b188dd7a74",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.1733137039700523,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.07982960902154446,
+          "userSeconds": 0.07,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.17484701296780258,
+        "userSeconds": 0.16,
+        "systemSeconds": 0.0,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.15852660208474845,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15890398109331727,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15615838405210525,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15947550896089524,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.10962190793361515,
+          "userSeconds": 0.1,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.5729334689676762,
+        "userSeconds": 0.52,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 1792
+      }
+    },
+    {
+      "identity": "sha256:f797073413ecf7782ec9e767bb4645034e8293b52c86cd888c920b33427c0d59",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.157994220033288,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1569151149597019,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15945179399568588,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15466534299775958,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15024403505958617,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.1476104810135439,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.06511721096467227,
+          "userSeconds": 0.05,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.7131543150171638,
+        "userSeconds": 0.65,
+        "systemSeconds": 0.05,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:fc78916013c03b9827b97fe5d422b260b2926d7bd7159c9b8c967e2a49edeef3",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.17747924500145018,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17876712698489428,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17389939993154258,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.18329205096233636,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17201239697169513,
+          "userSeconds": 0.15,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15168802405241877,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.06780957605224103,
+          "userSeconds": 0.06,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.8299112570239231,
+        "userSeconds": 0.78,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 2048
+      }
+    },
+    {
+      "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+      "extractProcesses": [
+        {
+          "wallSeconds": 0.19145993096753955,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.17903673998080194,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.18014615098945796,
+          "userSeconds": 0.16,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.18897778599057347,
+          "userSeconds": 0.17,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.15791372605599463,
+          "userSeconds": 0.14,
+          "systemSeconds": 0.01,
+          "peakRssKiB": 2560
+        },
+        {
+          "wallSeconds": 0.008196936105377972,
+          "userSeconds": 0.0,
+          "systemSeconds": 0.0,
+          "peakRssKiB": 2560
+        }
+      ],
+      "decodeProcess": {
+        "wallSeconds": 0.6222773209447041,
+        "userSeconds": 0.57,
+        "systemSeconds": 0.04,
+        "peakRssKiB": 2048
+      }
+    }
+  ]
+}

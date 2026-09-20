@@ -1,0 +1,236 @@
+{
+  "format": "issue77-round4-evidence-hashes-v2",
+  "createdUtc": "2026-09-12T17:57:42Z",
+  "pathBases": {
+    "repo": "/home/bl/misofm/engine-web-adapter",
+    "evidence": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence",
+    "scratch": "/data/issue-77-lossless/iterations/round-04",
+    "tooling": "/data/issue-77-lossless/tooling"
+  },
+  "files": {
+    "full-freeze.json": {
+      "base": "evidence",
+      "relativePath": "full-freeze.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/full-freeze.json",
+      "bytes": 13684,
+      "sha256": "90c58280523562a118522f42e832d9889db47b9f5ff3b8aad611a6ca50619624"
+    },
+    "full-per-session.csv": {
+      "base": "evidence",
+      "relativePath": "full-per-session.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/full-per-session.csv",
+      "bytes": 294,
+      "sha256": "0ff9dbbec09b44dd5268774874c5ac159493c0fb1c5be05b66643f91bda3ad13"
+    },
+    "full-per-stem.csv": {
+      "base": "evidence",
+      "relativePath": "full-per-stem.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/full-per-stem.csv",
+      "bytes": 11678,
+      "sha256": "f3149cfbccfad9f3d047549c5670f8c898699304e538306ae27bab2577a8662c"
+    },
+    "full-results.json": {
+      "base": "evidence",
+      "relativePath": "full-results.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/full-results.json",
+      "bytes": 379221,
+      "sha256": "9f4452056a6ac93a4a76f3d2820c5a2c224ad987ea08f01c5a55f4b8412b3056"
+    },
+    "full-root-verification.json": {
+      "base": "evidence",
+      "relativePath": "full-root-verification.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/full-root-verification.json",
+      "bytes": 73375,
+      "sha256": "72f8792671a093f78fa244ff029af35ba4d3c649841d11ad470cb30661498f75"
+    },
+    "native-opt.json": {
+      "base": "evidence",
+      "relativePath": "native-opt.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/native-opt.json",
+      "bytes": 716,
+      "sha256": "9d24b7377285fbb23c3e64cfcb05a8481e3b3b140c87eb229133c49b86c245f3"
+    },
+    "native-san.json": {
+      "base": "evidence",
+      "relativePath": "native-san.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/native-san.json",
+      "bytes": 797,
+      "sha256": "1dc6dd05484ddc663bf9918097f22c78846c4f4fe44793b881878710f25bad31"
+    },
+    "pilot-freeze.json": {
+      "base": "evidence",
+      "relativePath": "pilot-freeze.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/pilot-freeze.json",
+      "bytes": 13570,
+      "sha256": "0cd46282ec8a5f58a0f5a54a479c1991a193e18c00ff044b5e2d9fdd5b052219"
+    },
+    "pilot-per-session.csv": {
+      "base": "evidence",
+      "relativePath": "pilot-per-session.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/pilot-per-session.csv",
+      "bytes": 373,
+      "sha256": "fcc8fbe487d6e5727d3eb5d8a2df220b267c953afd69a262fb0dd39c91ceadc8"
+    },
+    "pilot-per-stem.csv": {
+      "base": "evidence",
+      "relativePath": "pilot-per-stem.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/pilot-per-stem.csv",
+      "bytes": 2323,
+      "sha256": "59bbd62106aae3c5aa4adbde56a6d540c370c6481ec056777410f610fa1fc3af"
+    },
+    "pilot-results.json": {
+      "base": "evidence",
+      "relativePath": "pilot-results.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/pilot-results.json",
+      "bytes": 79210,
+      "sha256": "d3872fd71c3bf6f73769d90650ccfebb847251f0c13b7a81ac9ce6e063b6d273"
+    },
+    "pilot-root-verification.json": {
+      "base": "evidence",
+      "relativePath": "pilot-root-verification.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/pilot-root-verification.json",
+      "bytes": 15025,
+      "sha256": "e8043ea247dfbc75cb49a8506a58c2191691ef560327b448ff58c54d177e133a"
+    },
+    "research/077-lossless-delivery/iterations/round-04-report.md": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04-report.md",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-report.md",
+      "bytes": 4502,
+      "sha256": "1ded7e2cbc4c3559f89f498b460cb69a9b4fac285043588ae6c8eccaeecf4b2b"
+    },
+    "research/077-lossless-delivery/iterations/round-04-scope.md": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04-scope.md",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-scope.md",
+      "bytes": 12550,
+      "sha256": "af7374ebd0ecc0fb7d9598be2faacd1610c4e8d3b7721894467945eb19a05138"
+    },
+    "research/077-lossless-delivery/iterations/round-04/REPRODUCTION.md": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04/REPRODUCTION.md",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/REPRODUCTION.md",
+      "bytes": 5424,
+      "sha256": "9cf296c93e035066f5074b041a007eda9664c39c80a11c2e39350a4cc1c5ba47"
+    },
+    "research/077-lossless-delivery/iterations/round-04/native/round4.c": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04/native/round4.c",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/native/round4.c",
+      "bytes": 40986,
+      "sha256": "ff24a34a4baa96efb3a24d995cbb4fc52253f183381cec3106e1fa2b61288033"
+    },
+    "research/077-lossless-delivery/iterations/round-04/native/round4_spatial_driver.c": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04/native/round4_spatial_driver.c",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/native/round4_spatial_driver.c",
+      "bytes": 18122,
+      "sha256": "fbef4f93dc4450df6f633abb80a4e2e0dcccd29cd8c5449c314fb0bbfb509d54"
+    },
+    "research/077-lossless-delivery/iterations/round-04/root_audit.py": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04/root_audit.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/root_audit.py",
+      "bytes": 12404,
+      "sha256": "7f62efd79fd1d0bde628b23aaf6a700c313d6e7925835e0c68486b360e6c2b71"
+    },
+    "research/077-lossless-delivery/iterations/round-04/round4.py": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04/round4.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/round4.py",
+      "bytes": 31527,
+      "sha256": "f386c3262647a2416fa58371e525a02341d26a9989a83159e0c55e4004dbb40c"
+    },
+    "research/077-lossless-delivery/iterations/round-04/test_native.py": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04/test_native.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/test_native.py",
+      "bytes": 10320,
+      "sha256": "afecc96428c343bcda7b96ae29f63b7d2e514bf263cb90e3155b8a6ebd6d5c7e"
+    },
+    "research/077-lossless-delivery/iterations/round-04/test_spatial.py": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04/test_spatial.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/test_spatial.py",
+      "bytes": 19417,
+      "sha256": "65c6d19c56dc0c3b640c583b47e7c414b68d82229b7211fd4014f23f4d78ab40"
+    },
+    "research/077-lossless-delivery/iterations/round-04/timing.py": {
+      "base": "repo",
+      "relativePath": "research/077-lossless-delivery/iterations/round-04/timing.py",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04/timing.py",
+      "bytes": 33812,
+      "sha256": "a6acf023caa6d25d23002135b5f6ae7913c78dfaaa74d5c5c677e5d5d5fd34e1"
+    },
+    "sanitized-freeze.json": {
+      "base": "evidence",
+      "relativePath": "sanitized-freeze.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/sanitized-freeze.json",
+      "bytes": 13747,
+      "sha256": "a6d49df774770ee416173c7479d74b6237e8b7eda3ed9ef7502c8abc1f52a75e"
+    },
+    "sanitized-per-session.csv": {
+      "base": "evidence",
+      "relativePath": "sanitized-per-session.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/sanitized-per-session.csv",
+      "bytes": 185,
+      "sha256": "5abf13f51b3748963e976007e2c04e2f363d2b39464407d25d20360bdfdcf024"
+    },
+    "sanitized-per-stem.csv": {
+      "base": "evidence",
+      "relativePath": "sanitized-per-stem.csv",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/sanitized-per-stem.csv",
+      "bytes": 1043,
+      "sha256": "658f4930acd7680eb0f9cf0b7fadbde045b70a78dadc8515c664bde7f282f98f"
+    },
+    "sanitized-results.json": {
+      "base": "evidence",
+      "relativePath": "sanitized-results.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/sanitized-results.json",
+      "bytes": 28944,
+      "sha256": "7927061d911f299fc7883e025af2201938b4fb7306b04cca22ddf130dec7064c"
+    },
+    "sanitized-root-verification.json": {
+      "base": "evidence",
+      "relativePath": "sanitized-root-verification.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/sanitized-root-verification.json",
+      "bytes": 5874,
+      "sha256": "d4862a3cd6e2dd4d7ac0d45ac2004abc995f50c91b48b2bc4be82ece86544e34"
+    },
+    "selection.json": {
+      "base": "evidence",
+      "relativePath": "selection.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/selection.json",
+      "bytes": 647,
+      "sha256": "3e970e7927644dffafead4f4e6a671b04a9f0d6a0419b0fc09fb4647bf71f43b"
+    },
+    "spatial-opt.json": {
+      "base": "evidence",
+      "relativePath": "spatial-opt.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/spatial-opt.json",
+      "bytes": 1549,
+      "sha256": "f173e323898928bb5c527acff32f23e1bed059ae5780425e93c78ca36bd8de3b"
+    },
+    "spatial-san.json": {
+      "base": "evidence",
+      "relativePath": "spatial-san.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/spatial-san.json",
+      "bytes": 1612,
+      "sha256": "e47458dd7069341c7e37361bb051b729816366790872f80dff1dfbaa7322a443"
+    },
+    "timing-freeze.json": {
+      "base": "evidence",
+      "relativePath": "timing-freeze.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/timing-freeze.json",
+      "bytes": 16987,
+      "sha256": "6a289c9a9e467092176ab2cb68ec19eb830abca010f1810abb35925bdfbf64b5"
+    },
+    "timing.json": {
+      "base": "evidence",
+      "relativePath": "timing.json",
+      "path": "/home/bl/misofm/engine-web-adapter/research/077-lossless-delivery/iterations/round-04-evidence/timing.json",
+      "bytes": 106817,
+      "sha256": "c2c19cd5690a4bdee94df55dd97aebc6ee99d85f8be5a73055a5fae28cf7a0b0"
+    }
+  }
+}

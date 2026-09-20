@@ -1,0 +1,31 @@
+{
+  "format": "issue77-round1-root-extractor-corruption-v1",
+  "helperSha256": "77b7ed521662833ae32d4a68a08c4047c4f405065657dfe409d0db2196359331",
+  "sourceSha256": "273ddb0221004529dd7de8d3edd28c7cbd4933df5017bfc0f82f1cef6e4e7b6a",
+  "cases": [
+    {
+      "case": "truncated",
+      "exitCode": 2,
+      "noRecordArtifact": true,
+      "stderr": "round1: decoder error FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC\nround1: extraction failed for /data/issue-77-lossless/iterations/round-01/tmppovs5ty_/truncated.flac (FLAC__STREAM_DECODER_UNINITIALIZED)\n"
+    },
+    {
+      "case": "trailing",
+      "exitCode": 2,
+      "noRecordArtifact": true,
+      "stderr": "round1: decoder error FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC\nround1: extraction failed for /data/issue-77-lossless/iterations/round-01/tmppovs5ty_/trailing.flac (FLAC__STREAM_DECODER_UNINITIALIZED)\n"
+    },
+    {
+      "case": "frame-bit-corruption",
+      "exitCode": 2,
+      "noRecordArtifact": true,
+      "stderr": "round1: decoder error FLAC__STREAM_DECODER_ERROR_STATUS_FRAME_CRC_MISMATCH\nround1: decoder error FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC\nround1: callback PCM/model validation failed\nround1: extraction failed for /data/issue-77-lossless/iterations/round-01/tmppovs5ty_/frame-bit-corruption.flac (FLAC__STREAM_DECODER_ABORTED)\n"
+    },
+    {
+      "case": "bad-magic",
+      "exitCode": 2,
+      "noRecordArtifact": true,
+      "stderr": "round1: decoder error FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC\nround1: decoder error FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC\nround1: callback PCM/model validation failed\nround1: extraction failed for /data/issue-77-lossless/iterations/round-01/tmppovs5ty_/bad-magic.flac (FLAC__STREAM_DECODER_ABORTED)\n"
+    }
+  ]
+}

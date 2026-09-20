@@ -1,0 +1,43 @@
+{
+  "format": "issue77-server-prepare-plan-v1",
+  "scriptSha256": "837983dc0e04c4825638d3aee7a808337bc7597dcecc144a7165b937d21b8be4",
+  "runnerSha256": "3f13d5e24ade05c01c94936fefa204563b1a3d9e7f6ae83385dcce84cad1aa00",
+  "resultsSha256": "840f81d2b79dc1f2b5c19dc21318319e9275c2f22c9fc5a010f38a7de6a0b8bf",
+  "createdUtc": "2026-09-12T14:43:17Z",
+  "candidates": [
+    "published",
+    "flac8-30s",
+    "flac8e-30s",
+    "flac8e-concat",
+    "wavpackhhx6-concat"
+  ],
+  "trials": 3,
+  "workerConcurrency": 1,
+  "orderSeed": 77,
+  "order": [
+    [
+      "flac8-30s",
+      "flac8e-concat",
+      "published",
+      "wavpackhhx6-concat",
+      "flac8e-30s"
+    ],
+    [
+      "flac8e-concat",
+      "flac8e-30s",
+      "wavpackhhx6-concat",
+      "published",
+      "flac8-30s"
+    ],
+    [
+      "flac8e-concat",
+      "flac8e-30s",
+      "published",
+      "flac8-30s",
+      "wavpackhhx6-concat"
+    ]
+  ],
+  "cacheState": "Warm compressed-file page cache from preflight SHA-256; fresh output each trial; fsync before rename",
+  "scope": "Native preparation wall time includes decoder startup, pipe IO, canonical SHA-256 including synthesized gaps, sparse cache writes and fsync/rename. No network, browser or OPFS.",
+  "memoryScope": "Maximum native decoder process RSS only; excludes Python and filesystem cache"
+}

@@ -1,0 +1,74 @@
+{
+  "format": "issue77-round3-validation-v1",
+  "full": {
+    "actualFiles": 120,
+    "allChecksPassed": true,
+    "artifactCount": 120,
+    "rootVerification": "root-full-verification.json"
+  },
+  "independentOriginalAudit": "root-original-audit.json",
+  "integerReference": {
+    "driverSource": "iterations/round-03/native/round3_integer_driver.c",
+    "driverSourceSha256": "466ea081a95af51afd82d108ef82ab106445bf186d479d2f6d42a13e4a9b3cf8",
+    "exhaustiveKCases": 306,
+    "optimized": {
+      "diagnostics": false,
+      "helper": "/data/issue-77-lossless/iterations/round-03/integer-audit-opt/round3-integer",
+      "helperSha256": "f1aa3474e84857828fe9355dc7084633bfea142e275510eca2aebe80e4d4bde6",
+      "receipt": "integer-reference-opt.json",
+      "result": "pass"
+    },
+    "sanitized": {
+      "diagnostics": false,
+      "helper": "/data/issue-77-lossless/iterations/round-03/integer-audit-san/round3-integer-san",
+      "helperSha256": "2ef45917e4d4e7127565c78854df923c228a8b92bce001eafb3edae145fa054c",
+      "receipt": "integer-reference-san.json",
+      "result": "pass"
+    },
+    "nativeSource": "iterations/round-03/native/round3.c",
+    "nativeSourceSha256": "f1cb8f3b9f22266631c6dd3886cda935c7ae0a59c7852fc58c4b958f25feec03",
+    "testSource": "iterations/round-03/test_integer.py",
+    "testSourceSha256": "46571c7b88c300d85abc8708efd3b62595006c09328c6f0aee9421677bb02af2",
+    "stressPaths": [
+      "coefficientClamp",
+      "modularWrap",
+      "predictionClamp"
+    ],
+    "traceProfiles": 5,
+    "traceVectors": 95
+  },
+  "optimizedNativeTests": {
+    "command": "PYTHONDONTWRITEBYTECODE=1 python3 iterations/round-03/test_native.py --helper /data/issue-77-lossless/iterations/round-03/round3-helper",
+    "sanitizerDiagnostics": false,
+    "tests": "2/2 passed"
+  },
+  "pilot": {
+    "actualFiles": 40,
+    "allChecksPassed": true,
+    "artifactCount": 40,
+    "rootVerification": "root-pilot-verification.json"
+  },
+  "sanitizedNativeTests": {
+    "command": "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 PYTHONDONTWRITEBYTECODE=1 python3 iterations/round-03/test_native.py --helper /data/issue-77-lossless/iterations/round-03/round3-helper-san",
+    "sanitizerDiagnostics": false,
+    "tests": "2/2 passed"
+  },
+  "sanitizedPilot": {
+    "actualFiles": 8,
+    "allChecksPassed": true,
+    "artifactCount": 8,
+    "rootVerification": "root-sanitized-pilot-verification.json"
+  },
+  "timing": {
+    "auditDisabled": true,
+    "hashVerificationInsideTimedInterval": false,
+    "modes": [
+      "p0-rice",
+      "p0-rans",
+      "p3-rice",
+      "p3-rans",
+      "r2-rans"
+    ],
+    "trials": 3
+  }
+}

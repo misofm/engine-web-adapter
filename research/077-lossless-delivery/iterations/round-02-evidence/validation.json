@@ -1,0 +1,213 @@
+{
+  "format": "issue77-round2-validation-v1",
+  "source": {
+    "nativeSha256": "9dc86f2423fd7aba13e8a9e3058448dd36c0f6c53b144ec17f283cd4c88cf960",
+    "runnerSha256": "18348582d1301b95207aef977e2a108f7be35c0c3babc574a0272f8ae9189480",
+    "scopeSha256": "a86267983d2496c9dc569a5883ee57b445cc8bd0b904bba785d9e7f97fb41155",
+    "round1NativeDependencySha256": "9d90b5ed1eda3d58d3b5209fc9caeb48e04959760ddd8cc86e53c333a2de8f0a"
+  },
+  "helperSha256": "775efb84ae5638f5338152ae750e2ed6b3750555fa628ceea82811a9788ceb73",
+  "librarySha256": "a485b5d7e8f5cec078c954e8d8cc7ab02af4e5e172024a149ce6b6f941921026",
+  "inputs": {
+    "stemCount": 30,
+    "frameCount": 39562,
+    "controlBytes": 425415665,
+    "recordsRoot": "/data/issue-77-lossless/iterations/round-01/full-run3/full",
+    "corpus": "/data/issue-77-lossless/run-02",
+    "workerConcurrency": 4,
+    "recordReceipts": 30
+  },
+  "gates": {
+    "pilotStems": 4,
+    "pilotModes": 8,
+    "fullStems": 30,
+    "fullModeFiles": 60,
+    "fullRecordCount": 39562,
+    "pcmHashesVerified": 60,
+    "chunkHashSetsVerified": 60,
+    "canonicalHashesVerified": 60,
+    "auditTranscriptPairsVerified": 60,
+    "strictEncodedEofVerified": 60,
+    "frameAndFileAccountingVerified": 60,
+    "nativeFixtureTests": {
+      "optimized": 4,
+      "sanitized": 4
+    },
+    "sanitizedPilotModeFiles": 8,
+    "sanitizerDiagnostics": 0
+  },
+  "totals": {
+    "controlBytes": 425415665,
+    "riceBytes": 426056035,
+    "ransBytes": 423304009,
+    "riceMinusControlBytes": 640370,
+    "ransMinusRiceBytes": -2752026,
+    "ransMinusControlBytes": -2111656,
+    "riceMinusControlPercent": 0.15052807235014232,
+    "ransMinusRicePercent": -0.6459305288329054,
+    "ransMinusControlPercent": -0.4963747632565463,
+    "riceFrameBytes": 425976859,
+    "ransFrameBytes": 422847285,
+    "predictiveSubframes": 78087,
+    "riceTableBytes": 0,
+    "ransTableBytes": 377548,
+    "riceSideBytes": 4155758,
+    "ransSideBytes": 4155758,
+    "riceEntropyBytes": 420879909,
+    "ransEntropyBytes": 74421224,
+    "ransBypassBytes": 343329111,
+    "manifestBytes": 78216
+  },
+  "timing": {
+    "timingSha256": "a56338e2df9d5acaa83948bd20400290a321ede1df7049b65b3fc0fea689f409",
+    "timingFreezeSha256": "10021d9842afe5cb15d0164bbf43613f4baba6eb4c0362327881a04471881368",
+    "trialCount": 3,
+    "modes": [
+      "rice",
+      "rans",
+      "flac"
+    ],
+    "hashVerificationInsideTimedInterval": false,
+    "trials": [
+      {
+        "trial": 1,
+        "order": [
+          "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+          "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+          "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+          "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0"
+        ],
+        "modeOrder": [
+          "flac",
+          "rans",
+          "rice"
+        ],
+        "wallSeconds": {
+          "rice": 2.1725647340063006,
+          "rans": 2.2306635740678757,
+          "flac": 0.8372476139338687
+        },
+        "userSeconds": {
+          "rice": 2.0,
+          "rans": 2.06,
+          "flac": 0.53
+        },
+        "peakRssKiB": {
+          "rice": 4864,
+          "rans": 4864,
+          "flac": 2816
+        }
+      },
+      {
+        "trial": 2,
+        "order": [
+          "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+          "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+          "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+          "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f"
+        ],
+        "modeOrder": [
+          "flac",
+          "rans",
+          "rice"
+        ],
+        "wallSeconds": {
+          "rice": 2.1705696940189227,
+          "rans": 2.232136522885412,
+          "flac": 0.8429618799127638
+        },
+        "userSeconds": {
+          "rice": 2.0,
+          "rans": 2.0700000000000003,
+          "flac": 0.58
+        },
+        "peakRssKiB": {
+          "rice": 4864,
+          "rans": 4864,
+          "flac": 2816
+        }
+      },
+      {
+        "trial": 3,
+        "order": [
+          "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+          "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+          "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+          "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1"
+        ],
+        "modeOrder": [
+          "flac",
+          "rans",
+          "rice"
+        ],
+        "wallSeconds": {
+          "rice": 2.154210038948804,
+          "rans": 2.241709425114095,
+          "flac": 0.8418403579853475
+        },
+        "userSeconds": {
+          "rice": 1.98,
+          "rans": 2.0700000000000003,
+          "flac": 0.52
+        },
+        "peakRssKiB": {
+          "rice": 4608,
+          "rans": 4864,
+          "flac": 2816
+        }
+      }
+    ]
+  },
+  "evidenceFiles": {
+    "freeze.json": {
+      "bytes": 13135,
+      "sha256": "a89e22f202263fa7368e0ff03102f7ad590979d1b9f3be6afa4e2f57c55140a1"
+    },
+    "per-session.csv": {
+      "bytes": 190,
+      "sha256": "ac29a91d61d5323480f4ffe06677cbfc4dd00108ecde9eab60ca85f1b5fa9a20"
+    },
+    "per-stem.csv": {
+      "bytes": 15628,
+      "sha256": "ed8ce027be8a16edbc2c0c1d8808b7f730691841ad78a717066ff4ab12425eff"
+    },
+    "pilot-per-session.csv": {
+      "bytes": 181,
+      "sha256": "626e732adf39b2ab82bdcf9ef6864fbb44aa4147769f3b10f035952656296e11"
+    },
+    "pilot-per-stem.csv": {
+      "bytes": 2232,
+      "sha256": "411e7881a446fe6f855a82de8096a19c2e4661b3f7ffd9c266b0fdcbacc8259e"
+    },
+    "pilot-results.json": {
+      "bytes": 19581,
+      "sha256": "10993562612c885d6d6efbb7175078ad54a42f4848331128a9edda8ec77f7420"
+    },
+    "pilot-totals.csv": {
+      "bytes": 156,
+      "sha256": "93d3de8e08e62548b214d483d899a0d79ad91d23e91afb1ef9be6dff36201327"
+    },
+    "results.json": {
+      "bytes": 131899,
+      "sha256": "613890624a56ca2d0487aafa863557712c6ae0104e21514ce12be35409b514ca"
+    },
+    "timing-freeze.json": {
+      "bytes": 2898,
+      "sha256": "10021d9842afe5cb15d0164bbf43613f4baba6eb4c0362327881a04471881368"
+    },
+    "timing.json": {
+      "bytes": 43130,
+      "sha256": "a56338e2df9d5acaa83948bd20400290a321ede1df7049b65b3fc0fea689f409"
+    },
+    "totals.csv": {
+      "bytes": 163,
+      "sha256": "4e54b80c327695241f11e3372a2bf1dd909a137756096db08773ed026dc11999"
+    }
+  },
+  "sanitizer": {
+    "path": "/data/issue-77-lossless/iterations/round-02/round2-helper-san",
+    "sha256": "46cc5ad6a03be4b1f14f4f6d4e6520be5ea01fc63fadc38e3cbca136adfc8820",
+    "build": "gcc -std=c11 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Wconversion -Wshadow",
+    "pilotResults": "/data/issue-77-lossless/iterations/round-02/sanitized-pilot2/pilot-results.json"
+  }
+}

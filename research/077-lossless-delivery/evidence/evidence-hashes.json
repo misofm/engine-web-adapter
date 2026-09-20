@@ -1,0 +1,12 @@
+{
+  "files": {
+    "freeze.json": "621de3a6baedcde0edc82e0c5f20db2aaea6006c30a2b3f1719cd8efe482e4a1",
+    "per-session.csv": "845a6c861bdd857777761ce069d9d26b441ced4f288b5263c21f14bb49e287c3",
+    "per-stem.csv": "f19d7ee0d70d0653231621b2efd30cb5ba146a3c747815e9aa6d149983ccf0c3",
+    "prepare-plan.json": "90c1271dfc2c7b208646ba6de7d0940986bb63720030d0a01bcc704b18dc4347",
+    "prepare-results.json": "9f8a88047d9424622734e6dd595f974de1adf201e4d581e5800ac64b997a952a",
+    "results.json": "840f81d2b79dc1f2b5c19dc21318319e9275c2f22c9fc5a010f38a7de6a0b8bf",
+    "summary.json": "fb69d06edbe198b56ed0e156e2cb8e8dc1aa9b41a42ac9b519369a5d24a21c58",
+    "totals.csv": "1488f07c884e2c4c8d72af30f6924ba1b653ec8ebc20b7aa8e235ec26b577994"
+  }
+}

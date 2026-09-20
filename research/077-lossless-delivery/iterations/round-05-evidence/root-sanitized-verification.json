@@ -1,0 +1,405 @@
+{
+  "format": "issue77-round5-root-audit-v1",
+  "work": "/data/issue-77-lossless/iterations/round-05/sanitized-final2",
+  "runKind": "sanitized-pilot",
+  "scriptSha256": "30cfa31be59a0ffac1271facea12f4eaae1ba6932f4e8ed2cf78e6deef029dcc",
+  "resultsSha256": "704d6d5da66462bbffcb3d383e9076fdc32caa68a31ae553a7488bafc1b09568",
+  "freezeSha256": "9b302a0d87a81727a45130bebd7f96ff35733caf4d587e434c79f80d6a0d64d3",
+  "originalAuditReferenceSha256": "be636862f2fd7bfdab0791ad2bc84e6dce1b6c9af2bb650641fac442535db9d9",
+  "artifactCount": 16,
+  "chunkHashChecks": 84,
+  "framePlanChecks": 23736,
+  "allChecksPassed": true,
+  "elapsedSeconds": 7.387952549965121,
+  "completedUtc": "2026-09-12T19:00:47Z",
+  "stems": [
+    {
+      "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+      "artifacts": {
+        "p1-rice": {
+          "bytes": 26363940,
+          "sha256": "dc7249ce0b618365094f5d1de4acde838bf5408fdfe9a3544c511293e4f7ee0c",
+          "planSha256": "eb5b2de607bf68053ff027d4e142462a3307dd4e0f4810b88c8ab9b154785c74",
+          "originalAuditSha256": "ebb1a1f1668223eebad9d514d9b9b734e63dc8b16853a4c6cf3ed70c07feab08",
+          "codedAuditSha256": "322363963cad75fc8694ef1f03dc90aea84896a688aad65c768a2311d4bf24fe",
+          "canonicalPcmSha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+          "planCounters": {
+            "frameChecks": 2075,
+            "cheapFrames": 323,
+            "temporalFrames": 1450,
+            "stackedFrames": 302,
+            "firFrames": 1752,
+            "spatialFrames": 390,
+            "reference0Frames": 219,
+            "reference1Frames": 171,
+            "coefficientBytes": 3900,
+            "predictiveResiduals": 16966099,
+            "firResiduals": 14324829,
+            "firUpdates": 3580167,
+            "selectedRiceBytes": 26361988
+          }
+        },
+        "p1-rans": {
+          "bytes": 26277553,
+          "sha256": "6f1498120d9d4c3cc13f3c31811401bcfaa9538e25e1b1f28d9273c8b70a6786",
+          "planSha256": "eb5b2de607bf68053ff027d4e142462a3307dd4e0f4810b88c8ab9b154785c74",
+          "originalAuditSha256": "ebb1a1f1668223eebad9d514d9b9b734e63dc8b16853a4c6cf3ed70c07feab08",
+          "codedAuditSha256": "322363963cad75fc8694ef1f03dc90aea84896a688aad65c768a2311d4bf24fe",
+          "canonicalPcmSha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+          "planCounters": {
+            "frameChecks": 2075,
+            "cheapFrames": 323,
+            "temporalFrames": 1450,
+            "stackedFrames": 302,
+            "firFrames": 1752,
+            "spatialFrames": 390,
+            "reference0Frames": 219,
+            "reference1Frames": 171,
+            "coefficientBytes": 3900,
+            "predictiveResiduals": 16966099,
+            "firResiduals": 14324829,
+            "firUpdates": 3580167,
+            "selectedRiceBytes": 26361988
+          }
+        },
+        "p2-rice": {
+          "bytes": 26379206,
+          "sha256": "eaccbb840ec9e24c430357949409d411b62411fe806bd9f138fb644e66573b0d",
+          "planSha256": "d5aa0627e831700ba0a43ffe469eaffdbd84e67d665b7e6648be9c39ed346b6b",
+          "originalAuditSha256": "ebb1a1f1668223eebad9d514d9b9b734e63dc8b16853a4c6cf3ed70c07feab08",
+          "codedAuditSha256": "60d8212ce5a392269c617df5e4668c6f864536fac2ffe0236bc013fa5a0d5b82",
+          "canonicalPcmSha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+          "planCounters": {
+            "frameChecks": 2075,
+            "cheapFrames": 1395,
+            "temporalFrames": 553,
+            "stackedFrames": 127,
+            "firFrames": 680,
+            "spatialFrames": 414,
+            "reference0Frames": 236,
+            "reference1Frames": 178,
+            "coefficientBytes": 4140,
+            "predictiveResiduals": 16966099,
+            "firResiduals": 5559440,
+            "firUpdates": 1389510,
+            "selectedRiceBytes": 26377254
+          }
+        },
+        "p2-rans": {
+          "bytes": 26292550,
+          "sha256": "43f520c2356f6eb958805242a5bc34277464367c81e5a3a1693c5a56017cc82a",
+          "planSha256": "d5aa0627e831700ba0a43ffe469eaffdbd84e67d665b7e6648be9c39ed346b6b",
+          "originalAuditSha256": "ebb1a1f1668223eebad9d514d9b9b734e63dc8b16853a4c6cf3ed70c07feab08",
+          "codedAuditSha256": "60d8212ce5a392269c617df5e4668c6f864536fac2ffe0236bc013fa5a0d5b82",
+          "canonicalPcmSha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+          "planCounters": {
+            "frameChecks": 2075,
+            "cheapFrames": 1395,
+            "temporalFrames": 553,
+            "stackedFrames": 127,
+            "firFrames": 680,
+            "spatialFrames": 414,
+            "reference0Frames": 236,
+            "reference1Frames": 178,
+            "coefficientBytes": 4140,
+            "predictiveResiduals": 16966099,
+            "firResiduals": 5559440,
+            "firUpdates": 1389510,
+            "selectedRiceBytes": 26377254
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+      "artifacts": {
+        "p1-rice": {
+          "bytes": 11071547,
+          "sha256": "28d609768aae18aba009dd91ab0b502b006b55cf25fd5d90dc46ece7363c828d",
+          "planSha256": "7cc642a225ac93cd023bed91abcf00a16f338ad6abe629a8e80ecea7ea04d797",
+          "originalAuditSha256": "8d746f9b16776444803923bf40651b22493207571404bab61a9d4ba8c11eb432",
+          "codedAuditSha256": "cc8ec6d6e75034a7a381cef2a9d2f69f47c952af180ab71ae319f1a37afe1cf8",
+          "canonicalPcmSha256": "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+          "planCounters": {
+            "frameChecks": 1193,
+            "cheapFrames": 253,
+            "temporalFrames": 651,
+            "stackedFrames": 289,
+            "firFrames": 940,
+            "spatialFrames": 291,
+            "reference0Frames": 207,
+            "reference1Frames": 84,
+            "coefficientBytes": 2910,
+            "predictiveResiduals": 9692725,
+            "firResiduals": 7687239,
+            "firUpdates": 1921126,
+            "selectedRiceBytes": 11069852
+          }
+        },
+        "p1-rans": {
+          "bytes": 10943631,
+          "sha256": "373e1009c56107c19825c5a4b8f78ecb401a49ab14ed19bdcb4c427f0c43920c",
+          "planSha256": "7cc642a225ac93cd023bed91abcf00a16f338ad6abe629a8e80ecea7ea04d797",
+          "originalAuditSha256": "8d746f9b16776444803923bf40651b22493207571404bab61a9d4ba8c11eb432",
+          "codedAuditSha256": "cc8ec6d6e75034a7a381cef2a9d2f69f47c952af180ab71ae319f1a37afe1cf8",
+          "canonicalPcmSha256": "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+          "planCounters": {
+            "frameChecks": 1193,
+            "cheapFrames": 253,
+            "temporalFrames": 651,
+            "stackedFrames": 289,
+            "firFrames": 940,
+            "spatialFrames": 291,
+            "reference0Frames": 207,
+            "reference1Frames": 84,
+            "coefficientBytes": 2910,
+            "predictiveResiduals": 9692725,
+            "firResiduals": 7687239,
+            "firUpdates": 1921126,
+            "selectedRiceBytes": 11069852
+          }
+        },
+        "p2-rice": {
+          "bytes": 11072963,
+          "sha256": "fe1a49180e1d4c63f8191ce7cea58c32d9d1a97872b01b581976af7cb2a728e4",
+          "planSha256": "ef88838a85d242adae907f7c3f63a5ca9b7accc2f19b704b06151c88f0766034",
+          "originalAuditSha256": "8d746f9b16776444803923bf40651b22493207571404bab61a9d4ba8c11eb432",
+          "codedAuditSha256": "fe92ae64d95762d5b2760a597a92eadc34d7792c9eb1674aea9219102b07269d",
+          "canonicalPcmSha256": "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+          "planCounters": {
+            "frameChecks": 1193,
+            "cheapFrames": 326,
+            "temporalFrames": 579,
+            "stackedFrames": 288,
+            "firFrames": 867,
+            "spatialFrames": 291,
+            "reference0Frames": 207,
+            "reference1Frames": 84,
+            "coefficientBytes": 2910,
+            "predictiveResiduals": 9692725,
+            "firResiduals": 7090169,
+            "firUpdates": 1771923,
+            "selectedRiceBytes": 11071268
+          }
+        },
+        "p2-rans": {
+          "bytes": 10946886,
+          "sha256": "26db4cfb30e75360ebd51d52b17c4c0ebee5e308a506329cbef45ff37222a1b1",
+          "planSha256": "ef88838a85d242adae907f7c3f63a5ca9b7accc2f19b704b06151c88f0766034",
+          "originalAuditSha256": "8d746f9b16776444803923bf40651b22493207571404bab61a9d4ba8c11eb432",
+          "codedAuditSha256": "fe92ae64d95762d5b2760a597a92eadc34d7792c9eb1674aea9219102b07269d",
+          "canonicalPcmSha256": "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+          "planCounters": {
+            "frameChecks": 1193,
+            "cheapFrames": 326,
+            "temporalFrames": 579,
+            "stackedFrames": 288,
+            "firFrames": 867,
+            "spatialFrames": 291,
+            "reference0Frames": 207,
+            "reference1Frames": 84,
+            "coefficientBytes": 2910,
+            "predictiveResiduals": 9692725,
+            "firResiduals": 7090169,
+            "firUpdates": 1771923,
+            "selectedRiceBytes": 11071268
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+      "artifacts": {
+        "p1-rice": {
+          "bytes": 3815301,
+          "sha256": "07909d2ea04619247651675ce1890b49f98dfbad9451600004eac2092a80e647",
+          "planSha256": "a018084c5699af7c42061eb23f67094758bc7dcd97447328fec0fc6e42a7aac6",
+          "originalAuditSha256": "7ccf2e368a70314b080ff65c039af9aec6f4f8ef63561566f409b736039cc2ba",
+          "codedAuditSha256": "0474360a3b5cad6ec04b91d6dac6170390401d85e77696f6f24517cb639a884b",
+          "canonicalPcmSha256": "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+          "planCounters": {
+            "frameChecks": 1028,
+            "cheapFrames": 291,
+            "temporalFrames": 737,
+            "stackedFrames": 0,
+            "firFrames": 737,
+            "spatialFrames": 0,
+            "reference0Frames": 0,
+            "reference1Frames": 0,
+            "coefficientBytes": 0,
+            "predictiveResiduals": 5278694,
+            "firResiduals": 3663367,
+            "firUpdates": 915549,
+            "selectedRiceBytes": 3809348
+          }
+        },
+        "p1-rans": {
+          "bytes": 3750198,
+          "sha256": "49370a60eb3fdd2337909b6ee6388b42a5b39ff49c67eadc8e94b021b22188d6",
+          "planSha256": "a018084c5699af7c42061eb23f67094758bc7dcd97447328fec0fc6e42a7aac6",
+          "originalAuditSha256": "7ccf2e368a70314b080ff65c039af9aec6f4f8ef63561566f409b736039cc2ba",
+          "codedAuditSha256": "0474360a3b5cad6ec04b91d6dac6170390401d85e77696f6f24517cb639a884b",
+          "canonicalPcmSha256": "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+          "planCounters": {
+            "frameChecks": 1028,
+            "cheapFrames": 291,
+            "temporalFrames": 737,
+            "stackedFrames": 0,
+            "firFrames": 737,
+            "spatialFrames": 0,
+            "reference0Frames": 0,
+            "reference1Frames": 0,
+            "coefficientBytes": 0,
+            "predictiveResiduals": 5278694,
+            "firResiduals": 3663367,
+            "firUpdates": 915549,
+            "selectedRiceBytes": 3809348
+          }
+        },
+        "p2-rice": {
+          "bytes": 3818696,
+          "sha256": "3defcaf7cc4b2a8afcb30def1c155ce00dec694c8ad2af2a0c517ef19a239228",
+          "planSha256": "d0c6267b34d964e67c3d801d485382908556cb0ac43c1e983a0455c4da17b295",
+          "originalAuditSha256": "7ccf2e368a70314b080ff65c039af9aec6f4f8ef63561566f409b736039cc2ba",
+          "codedAuditSha256": "356d68b1ca6c1f89f533784d69247cc19c9baa1569ccc588969efdf5bed358ac",
+          "canonicalPcmSha256": "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+          "planCounters": {
+            "frameChecks": 1028,
+            "cheapFrames": 477,
+            "temporalFrames": 551,
+            "stackedFrames": 0,
+            "firFrames": 551,
+            "spatialFrames": 0,
+            "reference0Frames": 0,
+            "reference1Frames": 0,
+            "coefficientBytes": 0,
+            "predictiveResiduals": 5278694,
+            "firResiduals": 2710864,
+            "firUpdates": 677496,
+            "selectedRiceBytes": 3812743
+          }
+        },
+        "p2-rans": {
+          "bytes": 3752291,
+          "sha256": "e6b66e526444fe0a8d458beff2305437e62938faa79c562e0a9b91b2be13005d",
+          "planSha256": "d0c6267b34d964e67c3d801d485382908556cb0ac43c1e983a0455c4da17b295",
+          "originalAuditSha256": "7ccf2e368a70314b080ff65c039af9aec6f4f8ef63561566f409b736039cc2ba",
+          "codedAuditSha256": "356d68b1ca6c1f89f533784d69247cc19c9baa1569ccc588969efdf5bed358ac",
+          "canonicalPcmSha256": "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+          "planCounters": {
+            "frameChecks": 1028,
+            "cheapFrames": 477,
+            "temporalFrames": 551,
+            "stackedFrames": 0,
+            "firFrames": 551,
+            "spatialFrames": 0,
+            "reference0Frames": 0,
+            "reference1Frames": 0,
+            "coefficientBytes": 0,
+            "predictiveResiduals": 5278694,
+            "firResiduals": 2710864,
+            "firUpdates": 677496,
+            "selectedRiceBytes": 3812743
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+      "artifacts": {
+        "p1-rice": {
+          "bytes": 23999796,
+          "sha256": "28f1d0ace9a95355bb813143c8a03db9215723d77cc0dfaab85e91f7759a4644",
+          "planSha256": "b60ca818138d7fbca9d3dd5d86193185143757bcb29b694396dbf17234db5685",
+          "originalAuditSha256": "87f9ac44e0888d877fb5d447d0f0b528348ba829d02c9e9cc8d7efdf8006c825",
+          "codedAuditSha256": "a1783f4d18b443657e6d35ec2be9db20543c2c47dc0b0d0d8fb6f5ea72b40f62",
+          "canonicalPcmSha256": "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+          "planCounters": {
+            "frameChecks": 1638,
+            "cheapFrames": 124,
+            "temporalFrames": 1504,
+            "stackedFrames": 10,
+            "firFrames": 1514,
+            "spatialFrames": 11,
+            "reference0Frames": 4,
+            "reference1Frames": 7,
+            "coefficientBytes": 110,
+            "predictiveResiduals": 13341403,
+            "firResiduals": 12370174,
+            "firUpdates": 3091993,
+            "selectedRiceBytes": 23997203
+          }
+        },
+        "p1-rans": {
+          "bytes": 23923584,
+          "sha256": "f791f258f9bf325c1a76aabcdb4da77909f7c762f75336dc1fef1db01fa29f41",
+          "planSha256": "b60ca818138d7fbca9d3dd5d86193185143757bcb29b694396dbf17234db5685",
+          "originalAuditSha256": "87f9ac44e0888d877fb5d447d0f0b528348ba829d02c9e9cc8d7efdf8006c825",
+          "codedAuditSha256": "a1783f4d18b443657e6d35ec2be9db20543c2c47dc0b0d0d8fb6f5ea72b40f62",
+          "canonicalPcmSha256": "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+          "planCounters": {
+            "frameChecks": 1638,
+            "cheapFrames": 124,
+            "temporalFrames": 1504,
+            "stackedFrames": 10,
+            "firFrames": 1514,
+            "spatialFrames": 11,
+            "reference0Frames": 4,
+            "reference1Frames": 7,
+            "coefficientBytes": 110,
+            "predictiveResiduals": 13341403,
+            "firResiduals": 12370174,
+            "firUpdates": 3091993,
+            "selectedRiceBytes": 23997203
+          }
+        },
+        "p2-rice": {
+          "bytes": 24002262,
+          "sha256": "b1296bf26ef26add7b02f3db464571bf72da6d7adf96032b26f2174b66425a91",
+          "planSha256": "081a41f4547c6891428235fbbe3718f37322582dfc8671c351ff20082152d9bb",
+          "originalAuditSha256": "87f9ac44e0888d877fb5d447d0f0b528348ba829d02c9e9cc8d7efdf8006c825",
+          "codedAuditSha256": "2fe67f5c05363b4b7abba91adbe0659095195e1c49f381ad6a887e1d6d71ca96",
+          "canonicalPcmSha256": "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+          "planCounters": {
+            "frameChecks": 1638,
+            "cheapFrames": 252,
+            "temporalFrames": 1378,
+            "stackedFrames": 8,
+            "firFrames": 1386,
+            "spatialFrames": 12,
+            "reference0Frames": 5,
+            "reference1Frames": 7,
+            "coefficientBytes": 120,
+            "predictiveResiduals": 13341403,
+            "firResiduals": 11324152,
+            "firUpdates": 2830549,
+            "selectedRiceBytes": 23999669
+          }
+        },
+        "p2-rans": {
+          "bytes": 23925730,
+          "sha256": "9fcfda8a9aae9712ca72b4b11f9bf1e0923c521fef2103013c49d7691cfe3a16",
+          "planSha256": "081a41f4547c6891428235fbbe3718f37322582dfc8671c351ff20082152d9bb",
+          "originalAuditSha256": "87f9ac44e0888d877fb5d447d0f0b528348ba829d02c9e9cc8d7efdf8006c825",
+          "codedAuditSha256": "2fe67f5c05363b4b7abba91adbe0659095195e1c49f381ad6a887e1d6d71ca96",
+          "canonicalPcmSha256": "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+          "planCounters": {
+            "frameChecks": 1638,
+            "cheapFrames": 252,
+            "temporalFrames": 1378,
+            "stackedFrames": 8,
+            "firFrames": 1386,
+            "spatialFrames": 12,
+            "reference0Frames": 5,
+            "reference1Frames": 7,
+            "coefficientBytes": 120,
+            "predictiveResiduals": 13341403,
+            "firResiduals": 11324152,
+            "firUpdates": 2830549,
+            "selectedRiceBytes": 23999669
+          }
+        }
+      }
+    }
+  ]
+}

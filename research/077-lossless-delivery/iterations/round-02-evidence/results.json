@@ -1,0 +1,3868 @@
+{
+  "format": "issue77-round2-results-v1",
+  "freezeSha256": "a89e22f202263fa7368e0ff03102f7ad590979d1b9f3be6afa4e2f57c55140a1",
+  "pilot": false,
+  "stemCount": 30,
+  "elapsedSeconds": 22.323659459943883,
+  "controlBytes": 425415665,
+  "modeTotals": {
+    "rice": {
+      "mode": "rice",
+      "stemCount": 30,
+      "outputBytes": 426056035,
+      "recordCount": 39562,
+      "frameCount": 39562,
+      "predictiveSubframes": 78087,
+      "manifestBytes": 78216,
+      "tableBytes": 0,
+      "sideBytes": 4155758,
+      "entropyBytes": 420879909,
+      "bypassBytes": 0,
+      "frameBytes": 425976859,
+      "auditBytes": 1285321050,
+      "encodeWallSeconds": 14.954642037162557,
+      "encodeUserSeconds": 13.22,
+      "encodeSystemSeconds": 1.3800000000000001,
+      "encodePeakRssKiB": 4864,
+      "decodeWallSeconds": 19.326634922879748,
+      "decodeUserSeconds": 17.29,
+      "decodeSystemSeconds": 1.72,
+      "decodePeakRssKiB": 4864
+    },
+    "rans": {
+      "mode": "rans",
+      "stemCount": 30,
+      "outputBytes": 423304009,
+      "recordCount": 39562,
+      "frameCount": 39562,
+      "predictiveSubframes": 78087,
+      "manifestBytes": 78216,
+      "tableBytes": 377548,
+      "sideBytes": 4155758,
+      "entropyBytes": 74421224,
+      "bypassBytes": 343329111,
+      "frameBytes": 422847285,
+      "auditBytes": 1285321050,
+      "encodeWallSeconds": 16.00730764993932,
+      "encodeUserSeconds": 14.08,
+      "encodeSystemSeconds": 1.56,
+      "encodePeakRssKiB": 4864,
+      "decodeWallSeconds": 19.746322448248975,
+      "decodeUserSeconds": 17.6,
+      "decodeSystemSeconds": 1.8,
+      "decodePeakRssKiB": 4864
+    }
+  },
+  "sessions": [
+    {
+      "recordingRef": "r1",
+      "stemCount": 8,
+      "controlBytes": 90604822,
+      "riceBytes": 90763896,
+      "ransBytes": 89919089
+    },
+    {
+      "recordingRef": "r2",
+      "stemCount": 8,
+      "controlBytes": 68302183,
+      "riceBytes": 68411573,
+      "ransBytes": 67746362
+    },
+    {
+      "recordingRef": "r3",
+      "stemCount": 6,
+      "controlBytes": 106716345,
+      "riceBytes": 106856041,
+      "ransBytes": 106376643
+    },
+    {
+      "recordingRef": "r4",
+      "stemCount": 8,
+      "controlBytes": 159792315,
+      "riceBytes": 160024525,
+      "ransBytes": 159261915
+    }
+  ],
+  "stems": [
+    {
+      "identity": "sha256:03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2",
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "drums"
+      ],
+      "activeFrames": 5131869,
+      "activePcmBytes": 30791214,
+      "canonicalPcmSha256": "03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2",
+      "packedPcmSha256": "46717aa54515dc6a959bda84cc32d1b89ff5130bd29283a8f67e64cd48fdd0d5",
+      "rsdBytes": 41245061,
+      "rsdSha256": "9429a9a771ff2cbb4dd0403dff0dd80a478754b2ad2c1b29eb6f0f19528d02c8",
+      "manifestBytes": 4765,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 16044712,
+          "outputSha256": "0a9b1ae0301df2ee7bb1b5552ea71f8b8f54a7de56531b05b80f1d636cfd9519",
+          "auditSha256": "5a874efaf1429a17970fe1ebde05a6c8affb88702044f19f07ddee2dd5a7565d",
+          "auditBytes": 41028836,
+          "recordCount": 1253,
+          "frameCount": 1253,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1253,
+            "frameCount": 1253,
+            "predictiveSubframes": 2488,
+            "manifestBytes": 4765,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 143991,
+            "entropyBytes": 15865996,
+            "bypassBytes": 0,
+            "frameBytes": 16039915,
+            "fileBytes": 16044712,
+            "auditBytes": 41028836,
+            "inputRecordCount": 1253
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1253,
+            "frameCount": 1253,
+            "predictiveSubframes": 2488,
+            "manifestBytes": 4765,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 143991,
+            "entropyBytes": 15865996,
+            "bypassBytes": 0,
+            "frameBytes": 16039915,
+            "fileBytes": 16044712,
+            "auditBytes": 41028836,
+            "inputRecordCount": 1253
+          },
+          "encode": {
+            "wallSeconds": 0.5142707390477881,
+            "userSeconds": 0.46,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.6312066019745544,
+            "userSeconds": 0.57,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 15968184,
+          "outputSha256": "e84e42ad495cd845cfa92d4ab9bb9eef22316ccd1120b1b958c4eb7be5eef049",
+          "auditSha256": "5a874efaf1429a17970fe1ebde05a6c8affb88702044f19f07ddee2dd5a7565d",
+          "auditBytes": 41028836,
+          "recordCount": 1253,
+          "frameCount": 1253,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1253,
+            "frameCount": 1253,
+            "predictiveSubframes": 2488,
+            "manifestBytes": 4765,
+            "tableCount": 455,
+            "tableBytes": 16835,
+            "sideBytes": 143991,
+            "entropyBytes": 2396374,
+            "bypassBytes": 13376259,
+            "frameBytes": 15946552,
+            "fileBytes": 15968184,
+            "auditBytes": 41028836,
+            "inputRecordCount": 1253
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1253,
+            "frameCount": 1253,
+            "predictiveSubframes": 2488,
+            "manifestBytes": 4765,
+            "tableCount": 455,
+            "tableBytes": 16835,
+            "sideBytes": 143991,
+            "entropyBytes": 2396374,
+            "bypassBytes": 13376259,
+            "frameBytes": 15946552,
+            "fileBytes": 15968184,
+            "auditBytes": 41028836,
+            "inputRecordCount": 1253
+          },
+          "encode": {
+            "wallSeconds": 0.5458830459974706,
+            "userSeconds": 0.48,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.6569864619523287,
+            "userSeconds": 0.6,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:18a73d7d7a47ec6ccd306235bb921dc8760ecce468b0cb5b4860ef94b898bba6",
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "drums"
+      ],
+      "activeFrames": 8499092,
+      "activePcmBytes": 50994552,
+      "canonicalPcmSha256": "18a73d7d7a47ec6ccd306235bb921dc8760ecce468b0cb5b4860ef94b898bba6",
+      "packedPcmSha256": "18a73d7d7a47ec6ccd306235bb921dc8760ecce468b0cb5b4860ef94b898bba6",
+      "rsdBytes": 68522532,
+      "rsdSha256": "994df485c6a66ecc91660b338034f4175a4e1970b66eeab3b2b001d6e57b886d",
+      "manifestBytes": 1920,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 24901106,
+          "outputSha256": "29ff5a9b9fb245b47e12106d233e9235a06f9fab97a38a55b1c10af07dfa168e",
+          "auditSha256": "435ec0f868945c45afbace13205d4b1a277450349411753b25410e30e8c6f2f8",
+          "auditBytes": 68307596,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 209201,
+            "entropyBytes": 24640153,
+            "bypassBytes": 0,
+            "frameBytes": 24899154,
+            "fileBytes": 24901106,
+            "auditBytes": 68307596,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 209201,
+            "entropyBytes": 24640153,
+            "bypassBytes": 0,
+            "frameBytes": 24899154,
+            "fileBytes": 24901106,
+            "auditBytes": 68307596,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.8457068140851334,
+            "userSeconds": 0.76,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 1.0565516049973667,
+            "userSeconds": 0.94,
+            "systemSeconds": 0.11,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 24800719,
+          "outputSha256": "826402c6a1cbf6e5d099b50e07afb096169f3d77d93e582f872c41d15ea732ba",
+          "auditSha256": "435ec0f868945c45afbace13205d4b1a277450349411753b25410e30e8c6f2f8",
+          "auditBytes": 68307596,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 355,
+            "tableBytes": 13135,
+            "sideBytes": 209201,
+            "entropyBytes": 4076639,
+            "bypassBytes": 20449992,
+            "frameBytes": 24785632,
+            "fileBytes": 24800719,
+            "auditBytes": 68307596,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 355,
+            "tableBytes": 13135,
+            "sideBytes": 209201,
+            "entropyBytes": 4076639,
+            "bypassBytes": 20449992,
+            "frameBytes": 24785632,
+            "fileBytes": 24800719,
+            "auditBytes": 68307596,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.8771276579936966,
+            "userSeconds": 0.78,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4608
+          },
+          "decode": {
+            "wallSeconds": 1.0763144640950486,
+            "userSeconds": 0.98,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:1d0544c63bf19bcc8d8b663d73fb9b206f9d107d52f7729ead8fce52aaa9be71",
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "chorus-vox"
+      ],
+      "activeFrames": 2502460,
+      "activePcmBytes": 15014760,
+      "canonicalPcmSha256": "1d0544c63bf19bcc8d8b663d73fb9b206f9d107d52f7729ead8fce52aaa9be71",
+      "packedPcmSha256": "33a55c3924a85985d1c113b73c02e9b23dc4972b7385e9a7c25dd9f1274da018",
+      "rsdBytes": 19578023,
+      "rsdSha256": "db89de35759ffcb92ab4d99c36fdc78e344410fe24ddab4418ce17acc9ed46b6",
+      "manifestBytes": 2023,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 8078716,
+          "outputSha256": "8df80479be506fb509eb6feba4e035b90435d2cbdb8695a5d1d8de4cd738f774",
+          "auditSha256": "ef150a7ad089ba0ea7693bce738c9fadbad3cbd02448178e205cd67b9b40e423",
+          "auditBytes": 19492956,
+          "recordCount": 611,
+          "frameCount": 611,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 611,
+            "frameCount": 611,
+            "predictiveSubframes": 1183,
+            "manifestBytes": 2023,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 65404,
+            "entropyBytes": 7996905,
+            "bypassBytes": 0,
+            "frameBytes": 8076661,
+            "fileBytes": 8078716,
+            "auditBytes": 19492956,
+            "inputRecordCount": 611
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 611,
+            "frameCount": 611,
+            "predictiveSubframes": 1183,
+            "manifestBytes": 2023,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 65404,
+            "entropyBytes": 7996905,
+            "bypassBytes": 0,
+            "frameBytes": 8076661,
+            "fileBytes": 8078716,
+            "auditBytes": 19492956,
+            "inputRecordCount": 611
+          },
+          "encode": {
+            "wallSeconds": 0.24540463695302606,
+            "userSeconds": 0.21,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.2984832130605355,
+            "userSeconds": 0.26,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 8030476,
+          "outputSha256": "d13e5023e27b4f4cd16ee12d9196bebdb6207848ab9ff58ef8300098fe708023",
+          "auditSha256": "ef150a7ad089ba0ea7693bce738c9fadbad3cbd02448178e205cd67b9b40e423",
+          "auditBytes": 19492956,
+          "recordCount": 611,
+          "frameCount": 611,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 611,
+            "frameCount": 611,
+            "predictiveSubframes": 1183,
+            "manifestBytes": 2023,
+            "tableCount": 365,
+            "tableBytes": 13505,
+            "sideBytes": 65404,
+            "entropyBytes": 1094340,
+            "bypassBytes": 6840820,
+            "frameBytes": 8014916,
+            "fileBytes": 8030476,
+            "auditBytes": 19492956,
+            "inputRecordCount": 611
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 611,
+            "frameCount": 611,
+            "predictiveSubframes": 1183,
+            "manifestBytes": 2023,
+            "tableCount": 365,
+            "tableBytes": 13505,
+            "sideBytes": 65404,
+            "entropyBytes": 1094340,
+            "bypassBytes": 6840820,
+            "frameBytes": 8014916,
+            "fileBytes": 8030476,
+            "auditBytes": 19492956,
+            "inputRecordCount": 611
+          },
+          "encode": {
+            "wallSeconds": 0.2674288369016722,
+            "userSeconds": 0.23,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.3126860710326582,
+            "userSeconds": 0.28,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:2726b0d1370fdf4924bc2a3509533c4fbb914a9ff45c54e7b010be71a4adfb76",
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "fx"
+      ],
+      "activeFrames": 4599874,
+      "activePcmBytes": 27599244,
+      "canonicalPcmSha256": "2726b0d1370fdf4924bc2a3509533c4fbb914a9ff45c54e7b010be71a4adfb76",
+      "packedPcmSha256": "020567c537877ca482b7104eb9532edc1cf4cc5c5ddef1c1f3348d608cf26e80",
+      "rsdBytes": 37029464,
+      "rsdSha256": "82afeee2dd5d8ab365dbf652764266173087a51f10c3b8e3f9d209c50f1b5443",
+      "manifestBytes": 1928,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 14081138,
+          "outputSha256": "34923f35cc8ec735bd4a5f05240ff7362791b07bd3ee429a780f69da4a9c7288",
+          "auditSha256": "1eb812f77bfb0272c75c6140c1a25f2cd969d7dba81292f5fda5f482c5847b11",
+          "auditBytes": 36952504,
+          "recordCount": 1124,
+          "frameCount": 1124,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1124,
+            "frameCount": 1124,
+            "predictiveSubframes": 2246,
+            "manifestBytes": 1928,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 129987,
+            "entropyBytes": 13922231,
+            "bypassBytes": 0,
+            "frameBytes": 14079178,
+            "fileBytes": 14081138,
+            "auditBytes": 36952504,
+            "inputRecordCount": 1124
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1124,
+            "frameCount": 1124,
+            "predictiveSubframes": 2246,
+            "manifestBytes": 1928,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 129987,
+            "entropyBytes": 13922231,
+            "bypassBytes": 0,
+            "frameBytes": 14079178,
+            "fileBytes": 14081138,
+            "auditBytes": 36952504,
+            "inputRecordCount": 1124
+          },
+          "encode": {
+            "wallSeconds": 0.448333473992534,
+            "userSeconds": 0.4,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.5821151160635054,
+            "userSeconds": 0.53,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 14024468,
+          "outputSha256": "a77f5259f60063ea0396e929fbe65b9aa0a1df895a3fa6e9da47f234676ec4dd",
+          "auditSha256": "1eb812f77bfb0272c75c6140c1a25f2cd969d7dba81292f5fda5f482c5847b11",
+          "auditBytes": 36952504,
+          "recordCount": 1124,
+          "frameCount": 1124,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1124,
+            "frameCount": 1124,
+            "predictiveSubframes": 2246,
+            "manifestBytes": 1928,
+            "tableCount": 424,
+            "tableBytes": 15688,
+            "sideBytes": 129987,
+            "entropyBytes": 2177674,
+            "bypassBytes": 11672199,
+            "frameBytes": 14006820,
+            "fileBytes": 14024468,
+            "auditBytes": 36952504,
+            "inputRecordCount": 1124
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1124,
+            "frameCount": 1124,
+            "predictiveSubframes": 2246,
+            "manifestBytes": 1928,
+            "tableCount": 424,
+            "tableBytes": 15688,
+            "sideBytes": 129987,
+            "entropyBytes": 2177674,
+            "bypassBytes": 11672199,
+            "frameBytes": 14006820,
+            "fileBytes": 14024468,
+            "auditBytes": 36952504,
+            "inputRecordCount": 1124
+          },
+          "encode": {
+            "wallSeconds": 0.4821744420332834,
+            "userSeconds": 0.43,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.5924898290541023,
+            "userSeconds": 0.53,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac",
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "lead-vox"
+      ],
+      "activeFrames": 6207923,
+      "activePcmBytes": 37247538,
+      "canonicalPcmSha256": "27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac",
+      "packedPcmSha256": "27c2485abef9b9791cf127b08108e9982383fdbf7736095f8411647e5b82a7ac",
+      "rsdBytes": 50086250,
+      "rsdSha256": "1640f05c01aca50776a92e83a3d2b4d9d3cd55a645d2de38af0105ae250d142b",
+      "manifestBytes": 1442,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 19499109,
+          "outputSha256": "ad75d8a0beb7fee66bd2632148fb38056bc233046a0ceb9a70a5999a3ef364a0",
+          "auditSha256": "16e082a99b5f3f7e37af2efb454df25c6237f28296616ef50a61c1258fdd1f77",
+          "auditBytes": 49923038,
+          "recordCount": 1516,
+          "frameCount": 1516,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1442,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 184140,
+            "entropyBytes": 19277111,
+            "bypassBytes": 0,
+            "frameBytes": 19497635,
+            "fileBytes": 19499109,
+            "auditBytes": 49923038,
+            "inputRecordCount": 1516
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1442,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 184140,
+            "entropyBytes": 19277111,
+            "bypassBytes": 0,
+            "frameBytes": 19497635,
+            "fileBytes": 19499109,
+            "auditBytes": 49923038,
+            "inputRecordCount": 1516
+          },
+          "encode": {
+            "wallSeconds": 0.6198305250145495,
+            "userSeconds": 0.55,
+            "systemSeconds": 0.06,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.7853372779209167,
+            "userSeconds": 0.71,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 19448693,
+          "outputSha256": "c1174df35eaf85a5470a6c2660d7bf01abfe320327b9aff85ed50dc5026cc038",
+          "auditSha256": "16e082a99b5f3f7e37af2efb454df25c6237f28296616ef50a61c1258fdd1f77",
+          "auditBytes": 49923038,
+          "recordCount": 1516,
+          "frameCount": 1516,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1442,
+            "tableCount": 330,
+            "tableBytes": 12210,
+            "sideBytes": 184140,
+            "entropyBytes": 3004556,
+            "bypassBytes": 16209929,
+            "frameBytes": 19435009,
+            "fileBytes": 19448693,
+            "auditBytes": 49923038,
+            "inputRecordCount": 1516
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1442,
+            "tableCount": 330,
+            "tableBytes": 12210,
+            "sideBytes": 184140,
+            "entropyBytes": 3004556,
+            "bypassBytes": 16209929,
+            "frameBytes": 19435009,
+            "fileBytes": 19448693,
+            "auditBytes": 49923038,
+            "inputRecordCount": 1516
+          },
+          "encode": {
+            "wallSeconds": 0.6650140070123598,
+            "userSeconds": 0.58,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.7995418090140447,
+            "userSeconds": 0.73,
+            "systemSeconds": 0.06,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:2bf5cb8199b9d347a6a94d10c52b770148efda9073069e4aeeafaa866030a846",
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "fx"
+      ],
+      "activeFrames": 5499800,
+      "activePcmBytes": 32998800,
+      "canonicalPcmSha256": "2bf5cb8199b9d347a6a94d10c52b770148efda9073069e4aeeafaa866030a846",
+      "packedPcmSha256": "8f4ac7a4b1871e362ee142c47468060ec737d60eeaaf7c2d230adc854a760f25",
+      "rsdBytes": 44156270,
+      "rsdSha256": "67b323478a2f3ad659a8563d46a09f7b4e560c0d58d25fd25336f2d1c1f314b3",
+      "manifestBytes": 4050,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 11385237,
+          "outputSha256": "899f7c0a98acbfbd1b33f467cb3d5bdcaee8a3c9396039445596831f0c316dc1",
+          "auditSha256": "9391aabb375c03e44df5bc8331e50f29193b51e75c52b68d956a5915ad3c2042",
+          "auditBytes": 44022914,
+          "recordCount": 1343,
+          "frameCount": 1343,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1343,
+            "frameCount": 1343,
+            "predictiveSubframes": 2676,
+            "manifestBytes": 4050,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 124106,
+            "entropyBytes": 11224897,
+            "bypassBytes": 0,
+            "frameBytes": 11381155,
+            "fileBytes": 11385237,
+            "auditBytes": 44022914,
+            "inputRecordCount": 1343
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1343,
+            "frameCount": 1343,
+            "predictiveSubframes": 2676,
+            "manifestBytes": 4050,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 124106,
+            "entropyBytes": 11224897,
+            "bypassBytes": 0,
+            "frameBytes": 11381155,
+            "fileBytes": 11385237,
+            "auditBytes": 44022914,
+            "inputRecordCount": 1343
+          },
+          "encode": {
+            "wallSeconds": 0.4515139050781727,
+            "userSeconds": 0.4,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.5927602720912546,
+            "userSeconds": 0.53,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 11156496,
+          "outputSha256": "11a2e338d19641744a1d85a69ef34b22d2020d5112dcad40d798a932bed53142",
+          "auditSha256": "9391aabb375c03e44df5bc8331e50f29193b51e75c52b68d956a5915ad3c2042",
+          "auditBytes": 44022914,
+          "recordCount": 1343,
+          "frameCount": 1343,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1343,
+            "frameCount": 1343,
+            "predictiveSubframes": 2676,
+            "manifestBytes": 4050,
+            "tableCount": 430,
+            "tableBytes": 15910,
+            "sideBytes": 124106,
+            "entropyBytes": 2178167,
+            "bypassBytes": 8802079,
+            "frameBytes": 11136504,
+            "fileBytes": 11156496,
+            "auditBytes": 44022914,
+            "inputRecordCount": 1343
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1343,
+            "frameCount": 1343,
+            "predictiveSubframes": 2676,
+            "manifestBytes": 4050,
+            "tableCount": 430,
+            "tableBytes": 15910,
+            "sideBytes": 124106,
+            "entropyBytes": 2178167,
+            "bypassBytes": 8802079,
+            "frameBytes": 11136504,
+            "fileBytes": 11156496,
+            "auditBytes": 44022914,
+            "inputRecordCount": 1343
+          },
+          "encode": {
+            "wallSeconds": 0.49858905805740505,
+            "userSeconds": 0.44,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.6249890530016273,
+            "userSeconds": 0.54,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:2dd061241fa7fe3128289427e108ee63501f4ed77c7208f1b37ff49fa6ccff0b",
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "bass"
+      ],
+      "activeFrames": 3578160,
+      "activePcmBytes": 21468960,
+      "canonicalPcmSha256": "2dd061241fa7fe3128289427e108ee63501f4ed77c7208f1b37ff49fa6ccff0b",
+      "packedPcmSha256": "7362b4c1c1c359177a1a403f3c7406203249252782c899b50316c0b02663f85a",
+      "rsdBytes": 28996554,
+      "rsdSha256": "3b67fe4c61b5eea61e5a85c331360dc521d534c05eb91da7af5963e4bc8ed891",
+      "manifestBytes": 1170,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 8215089,
+          "outputSha256": "b4d5eacd146591a7c282214a0723917230c7f42aea4435e64a3746a27ab22e16",
+          "auditSha256": "dbdb241f48dc7a3e7fc1e69a128088c6a13c438421a68b6420662a1db53a3948",
+          "auditBytes": 28836160,
+          "recordCount": 874,
+          "frameCount": 874,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 874,
+            "frameCount": 874,
+            "predictiveSubframes": 1748,
+            "manifestBytes": 1170,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 117374,
+            "entropyBytes": 8075537,
+            "bypassBytes": 0,
+            "frameBytes": 8213887,
+            "fileBytes": 8215089,
+            "auditBytes": 28836160,
+            "inputRecordCount": 874
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 874,
+            "frameCount": 874,
+            "predictiveSubframes": 1748,
+            "manifestBytes": 1170,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 117374,
+            "entropyBytes": 8075537,
+            "bypassBytes": 0,
+            "frameBytes": 8213887,
+            "fileBytes": 8215089,
+            "auditBytes": 28836160,
+            "inputRecordCount": 874
+          },
+          "encode": {
+            "wallSeconds": 0.3280603280290961,
+            "userSeconds": 0.28,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.4281568781007081,
+            "userSeconds": 0.38,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 8174883,
+          "outputSha256": "c55d7508476cb2426ba158c78d6053d7beaf94b10bf826ab46e5e410ca3e116d",
+          "auditSha256": "dbdb241f48dc7a3e7fc1e69a128088c6a13c438421a68b6420662a1db53a3948",
+          "auditBytes": 28836160,
+          "recordCount": 874,
+          "frameCount": 874,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 874,
+            "frameCount": 874,
+            "predictiveSubframes": 1748,
+            "manifestBytes": 1170,
+            "tableCount": 430,
+            "tableBytes": 15910,
+            "sideBytes": 117374,
+            "entropyBytes": 1698266,
+            "bypassBytes": 6321155,
+            "frameBytes": 8157771,
+            "fileBytes": 8174883,
+            "auditBytes": 28836160,
+            "inputRecordCount": 874
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 874,
+            "frameCount": 874,
+            "predictiveSubframes": 1748,
+            "manifestBytes": 1170,
+            "tableCount": 430,
+            "tableBytes": 15910,
+            "sideBytes": 117374,
+            "entropyBytes": 1698266,
+            "bypassBytes": 6321155,
+            "frameBytes": 8157771,
+            "fileBytes": 8174883,
+            "auditBytes": 28836160,
+            "inputRecordCount": 874
+          },
+          "encode": {
+            "wallSeconds": 0.34621951496228576,
+            "userSeconds": 0.29,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.4347148380475119,
+            "userSeconds": 0.38,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:361eb2581ace51a5a34c59d83c06ebe6dad73300115db995e6c0692fb4061ae3",
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "vocal-fx"
+      ],
+      "activeFrames": 5026881,
+      "activePcmBytes": 30161286,
+      "canonicalPcmSha256": "361eb2581ace51a5a34c59d83c06ebe6dad73300115db995e6c0692fb4061ae3",
+      "packedPcmSha256": "9978444097df420978c80c26bf4c612e6adccbea86d5c6dc52ab3fcb407f5cdc",
+      "rsdBytes": 38812382,
+      "rsdSha256": "ad4b39650874de5b174ee2709ac2c0ce15538f76504492e48e3ab2f30c1af369",
+      "manifestBytes": 6110,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 3764844,
+          "outputSha256": "b00499758524dd2b126f211a1b76a1a53914d6335d842724e35579b9848c3053",
+          "auditSha256": "cb1781dadcd55034ac0e40b1636d96943d3777fa55878c01db2454f8a8e478d1",
+          "auditBytes": 38711674,
+          "recordCount": 1228,
+          "frameCount": 1228,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1228,
+            "frameCount": 1228,
+            "predictiveSubframes": 2356,
+            "manifestBytes": 6110,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 89306,
+            "entropyBytes": 3640724,
+            "bypassBytes": 0,
+            "frameBytes": 3758702,
+            "fileBytes": 3764844,
+            "auditBytes": 38711674,
+            "inputRecordCount": 1228
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1228,
+            "frameCount": 1228,
+            "predictiveSubframes": 2356,
+            "manifestBytes": 6110,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 89306,
+            "entropyBytes": 3640724,
+            "bypassBytes": 0,
+            "frameBytes": 3758702,
+            "fileBytes": 3764844,
+            "auditBytes": 38711674,
+            "inputRecordCount": 1228
+          },
+          "encode": {
+            "wallSeconds": 0.31178169907070696,
+            "userSeconds": 0.27,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.4899267229484394,
+            "userSeconds": 0.43,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 3506582,
+          "outputSha256": "0f2507839fdf329513a4f4af12d9cfd669e26758f736a4d1a1c4033621fdca5e",
+          "auditSha256": "cb1781dadcd55034ac0e40b1636d96943d3777fa55878c01db2454f8a8e478d1",
+          "auditBytes": 38711674,
+          "recordCount": 1228,
+          "frameCount": 1228,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1228,
+            "frameCount": 1228,
+            "predictiveSubframes": 2356,
+            "manifestBytes": 6110,
+            "tableCount": 235,
+            "tableBytes": 8695,
+            "sideBytes": 89306,
+            "entropyBytes": 1742128,
+            "bypassBytes": 1631639,
+            "frameBytes": 3491745,
+            "fileBytes": 3506582,
+            "auditBytes": 38711674,
+            "inputRecordCount": 1228
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1228,
+            "frameCount": 1228,
+            "predictiveSubframes": 2356,
+            "manifestBytes": 6110,
+            "tableCount": 235,
+            "tableBytes": 8695,
+            "sideBytes": 89306,
+            "entropyBytes": 1742128,
+            "bypassBytes": 1631639,
+            "frameBytes": 3491745,
+            "fileBytes": 3506582,
+            "auditBytes": 38711674,
+            "inputRecordCount": 1228
+          },
+          "encode": {
+            "wallSeconds": 0.35927020804956555,
+            "userSeconds": 0.31,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.48177369800396264,
+            "userSeconds": 0.42,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:3d60f314574aed4bfafde8b53df7e0e555f367325ba6daad6ec8db9c4dee48c6",
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "drums"
+      ],
+      "activeFrames": 5016609,
+      "activePcmBytes": 30099654,
+      "canonicalPcmSha256": "3d60f314574aed4bfafde8b53df7e0e555f367325ba6daad6ec8db9c4dee48c6",
+      "packedPcmSha256": "1f6bef51e7d0b61e8d4a01daaefe22808a34d6d5addeec9f0e1f10c0df5ec0fc",
+      "rsdBytes": 40583653,
+      "rsdSha256": "2f43fb166ad75769414b95b51302773edf58fd6fdff7137dd92f88927f76a70d",
+      "manifestBytes": 1473,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 12261433,
+          "outputSha256": "e6d9a4b26568b9609d71812b8a944f06688f41bcd0c324a0845f089e2a231c64",
+          "auditSha256": "fc8ec6bf8e21379ee9d886769d5a81f873a2ab75f36b7c42f991d0aa1a0c499d",
+          "auditBytes": 40390070,
+          "recordCount": 1225,
+          "frameCount": 1225,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1225,
+            "frameCount": 1225,
+            "predictiveSubframes": 2450,
+            "manifestBytes": 1473,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 147859,
+            "entropyBytes": 12082669,
+            "bypassBytes": 0,
+            "frameBytes": 12259928,
+            "fileBytes": 12261433,
+            "auditBytes": 40390070,
+            "inputRecordCount": 1225
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1225,
+            "frameCount": 1225,
+            "predictiveSubframes": 2450,
+            "manifestBytes": 1473,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 147859,
+            "entropyBytes": 12082669,
+            "bypassBytes": 0,
+            "frameBytes": 12259928,
+            "fileBytes": 12261433,
+            "auditBytes": 40390070,
+            "inputRecordCount": 1225
+          },
+          "encode": {
+            "wallSeconds": 0.4655670590000227,
+            "userSeconds": 0.42,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.5982799669727683,
+            "userSeconds": 0.54,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 12159715,
+          "outputSha256": "a0dbf3a7212cad8a8704b4aef1969bb4d9d312b0ba0993daf8a556caa6a4f196",
+          "auditSha256": "fc8ec6bf8e21379ee9d886769d5a81f873a2ab75f36b7c42f991d0aa1a0c499d",
+          "auditBytes": 40390070,
+          "recordCount": 1225,
+          "frameCount": 1225,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1225,
+            "frameCount": 1225,
+            "predictiveSubframes": 2450,
+            "manifestBytes": 1473,
+            "tableCount": 428,
+            "tableBytes": 15836,
+            "sideBytes": 147859,
+            "entropyBytes": 2417982,
+            "bypassBytes": 9547133,
+            "frameBytes": 12142374,
+            "fileBytes": 12159715,
+            "auditBytes": 40390070,
+            "inputRecordCount": 1225
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1225,
+            "frameCount": 1225,
+            "predictiveSubframes": 2450,
+            "manifestBytes": 1473,
+            "tableCount": 428,
+            "tableBytes": 15836,
+            "sideBytes": 147859,
+            "entropyBytes": 2417982,
+            "bypassBytes": 9547133,
+            "frameBytes": 12142374,
+            "fileBytes": 12159715,
+            "auditBytes": 40390070,
+            "inputRecordCount": 1225
+          },
+          "encode": {
+            "wallSeconds": 0.4901169170625508,
+            "userSeconds": 0.44,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.616908436990343,
+            "userSeconds": 0.53,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:43413b8b197ba8a6be8b706e5173fb5246f4c60c414557dc552d9c65239f9340",
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "intro"
+      ],
+      "activeFrames": 1837531,
+      "activePcmBytes": 11025186,
+      "canonicalPcmSha256": "43413b8b197ba8a6be8b706e5173fb5246f4c60c414557dc552d9c65239f9340",
+      "packedPcmSha256": "d4fe9ba665f6ed7e66341d6309da40763b0e967c15f148c5ac830ecb2218de57",
+      "rsdBytes": 14743546,
+      "rsdSha256": "d1b76328d82db6c6d5990453e466b0288a1e8d98d2f563a4e55942a211910a90",
+      "manifestBytes": 1166,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 6436729,
+          "outputSha256": "2b047fcc06941a889901276b41b1c50cd00a55c9bfbe97557f55c691c875e90a",
+          "auditSha256": "8c0d59295e6cc201eb76122161fb68d432d82e4f445f4aebdc8dd5eaf54b6945",
+          "auditBytes": 14712204,
+          "recordCount": 449,
+          "frameCount": 449,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 449,
+            "frameCount": 449,
+            "predictiveSubframes": 894,
+            "manifestBytes": 1166,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 55721,
+            "entropyBytes": 6369066,
+            "bypassBytes": 0,
+            "frameBytes": 6435531,
+            "fileBytes": 6436729,
+            "auditBytes": 14712204,
+            "inputRecordCount": 449
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 449,
+            "frameCount": 449,
+            "predictiveSubframes": 894,
+            "manifestBytes": 1166,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 55721,
+            "entropyBytes": 6369066,
+            "bypassBytes": 0,
+            "frameBytes": 6435531,
+            "fileBytes": 6436729,
+            "auditBytes": 14712204,
+            "inputRecordCount": 449
+          },
+          "encode": {
+            "wallSeconds": 0.1916276109404862,
+            "userSeconds": 0.17,
+            "systemSeconds": 0.01,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.24175948998890817,
+            "userSeconds": 0.21,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 6426168,
+          "outputSha256": "d004c3c59ede31ff5a33dc3f391bfdbddd7e475671cbd4ef3f574dcd64344cef",
+          "auditSha256": "8c0d59295e6cc201eb76122161fb68d432d82e4f445f4aebdc8dd5eaf54b6945",
+          "auditBytes": 14712204,
+          "recordCount": 449,
+          "frameCount": 449,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 449,
+            "frameCount": 449,
+            "predictiveSubframes": 894,
+            "manifestBytes": 1166,
+            "tableCount": 249,
+            "tableBytes": 9213,
+            "sideBytes": 55721,
+            "entropyBytes": 882591,
+            "bypassBytes": 5466701,
+            "frameBytes": 6415757,
+            "fileBytes": 6426168,
+            "auditBytes": 14712204,
+            "inputRecordCount": 449
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 449,
+            "frameCount": 449,
+            "predictiveSubframes": 894,
+            "manifestBytes": 1166,
+            "tableCount": 249,
+            "tableBytes": 9213,
+            "sideBytes": 55721,
+            "entropyBytes": 882591,
+            "bypassBytes": 5466701,
+            "frameBytes": 6415757,
+            "fileBytes": 6426168,
+            "auditBytes": 14712204,
+            "inputRecordCount": 449
+          },
+          "encode": {
+            "wallSeconds": 0.2057310789823532,
+            "userSeconds": 0.18,
+            "systemSeconds": 0.01,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.24777405499480665,
+            "userSeconds": 0.22,
+            "systemSeconds": 0.01,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:462c511e3c244e805eeaf8c592c2cf35b8e9e9fab0d3074aad52e7304e6572f6",
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "bv_s"
+      ],
+      "activeFrames": 8499092,
+      "activePcmBytes": 50994552,
+      "canonicalPcmSha256": "462c511e3c244e805eeaf8c592c2cf35b8e9e9fab0d3074aad52e7304e6572f6",
+      "packedPcmSha256": "462c511e3c244e805eeaf8c592c2cf35b8e9e9fab0d3074aad52e7304e6572f6",
+      "rsdBytes": 68370068,
+      "rsdSha256": "00642163cf6e47e7190916756ad9eff45cd37eaa08bb045befa0c23fedb91067",
+      "manifestBytes": 1920,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 22194928,
+          "outputSha256": "f9327f68b0a0cb65caa41334b9220cdef845eb0871475e207a37d1f1ca81bb51",
+          "auditSha256": "740c4b92bd72c7cf461e737b527a6c5cad160fe660fc27b16bcedd1c5c1c8e46",
+          "auditBytes": 68233452,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 188851,
+            "entropyBytes": 21954325,
+            "bypassBytes": 0,
+            "frameBytes": 22192976,
+            "fileBytes": 22194928,
+            "auditBytes": 68233452,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 188851,
+            "entropyBytes": 21954325,
+            "bypassBytes": 0,
+            "frameBytes": 22192976,
+            "fileBytes": 22194928,
+            "auditBytes": 68233452,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.7880640629446134,
+            "userSeconds": 0.7,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 1.0318253429140896,
+            "userSeconds": 0.92,
+            "systemSeconds": 0.1,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 22086416,
+          "outputSha256": "72998d4bf4f12c26bb945ccd6d11c8db8efb100e2e6418f4ebbde99f339cac08",
+          "auditSha256": "740c4b92bd72c7cf461e737b527a6c5cad160fe660fc27b16bcedd1c5c1c8e46",
+          "auditBytes": 68233452,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 310,
+            "tableBytes": 11470,
+            "sideBytes": 188851,
+            "entropyBytes": 4139651,
+            "bypassBytes": 17694692,
+            "frameBytes": 22072994,
+            "fileBytes": 22086416,
+            "auditBytes": 68233452,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 310,
+            "tableBytes": 11470,
+            "sideBytes": 188851,
+            "entropyBytes": 4139651,
+            "bypassBytes": 17694692,
+            "frameBytes": 22072994,
+            "fileBytes": 22086416,
+            "auditBytes": 68233452,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.8414856429444626,
+            "userSeconds": 0.74,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 1.0384421159978956,
+            "userSeconds": 0.94,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "synth"
+      ],
+      "activeFrames": 8499092,
+      "activePcmBytes": 50994552,
+      "canonicalPcmSha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+      "packedPcmSha256": "68f41fc0dfa18e77e77ab99f931dc647d9b1c3d60afd981f9b4917c85986532f",
+      "rsdBytes": 68427712,
+      "rsdSha256": "8c0fca8b5b5facc18631333fe6e2726e6b3418a35173570a6f68115afe4fdc4b",
+      "manifestBytes": 1920,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 26458594,
+          "outputSha256": "619c1b3ff6642ad8b55b4b759dd68621c8ca70746cc518caea75dbeca1c8b71d",
+          "auditSha256": "e0ee4bf0a3696e1be95143d1732808a98123b59c0004ef3316280efa62ff85be",
+          "auditBytes": 68260810,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 194811,
+            "entropyBytes": 26212031,
+            "bypassBytes": 0,
+            "frameBytes": 26456642,
+            "fileBytes": 26458594,
+            "auditBytes": 68260810,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 194811,
+            "entropyBytes": 26212031,
+            "bypassBytes": 0,
+            "frameBytes": 26456642,
+            "fileBytes": 26458594,
+            "auditBytes": 68260810,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.8346569871064276,
+            "userSeconds": 0.75,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 1.0445649059256539,
+            "userSeconds": 0.94,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 26367729,
+          "outputSha256": "d66f2d3f02618f099fd7202852a90722e17384b6bce70bb51fa3bc3e09d7fcbd",
+          "auditSha256": "e0ee4bf0a3696e1be95143d1732808a98123b59c0004ef3316280efa62ff85be",
+          "auditBytes": 68260810,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 314,
+            "tableBytes": 11618,
+            "sideBytes": 194811,
+            "entropyBytes": 4143597,
+            "bypassBytes": 21965951,
+            "frameBytes": 26354159,
+            "fileBytes": 26367729,
+            "auditBytes": 68260810,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 314,
+            "tableBytes": 11618,
+            "sideBytes": 194811,
+            "entropyBytes": 4143597,
+            "bypassBytes": 21965951,
+            "frameBytes": 26354159,
+            "fileBytes": 26367729,
+            "auditBytes": 68260810,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.8984899510396644,
+            "userSeconds": 0.8,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 1.0600451959762722,
+            "userSeconds": 0.93,
+            "systemSeconds": 0.11,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:75e819632163ccc65f63fde122cea33b199b559c931ebf68b14b5f8c72520629",
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "fx"
+      ],
+      "activeFrames": 5015796,
+      "activePcmBytes": 30094776,
+      "canonicalPcmSha256": "75e819632163ccc65f63fde122cea33b199b559c931ebf68b14b5f8c72520629",
+      "packedPcmSha256": "450c94e2ea560ed71903c040eda2ae4a669cf6d3d109d69a88ed5d64df3e751e",
+      "rsdBytes": 40357480,
+      "rsdSha256": "dfbe56425860b634509efdd8edd7749782eefed5992077eceee421fd9a289f28",
+      "manifestBytes": 1608,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 11514806,
+          "outputSha256": "94258d9a26fa14c2c6ae3f5dc5b289f91e745337e24de5fd820d0b3c75e26866",
+          "auditSha256": "e0111370343f2528777e716dd38a2521d2b337ec402770e2474be1d74d78a8e5",
+          "auditBytes": 40279696,
+          "recordCount": 1225,
+          "frameCount": 1225,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1225,
+            "frameCount": 1225,
+            "predictiveSubframes": 2450,
+            "manifestBytes": 1608,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 128580,
+            "entropyBytes": 11355186,
+            "bypassBytes": 0,
+            "frameBytes": 11513166,
+            "fileBytes": 11514806,
+            "auditBytes": 40279696,
+            "inputRecordCount": 1225
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1225,
+            "frameCount": 1225,
+            "predictiveSubframes": 2450,
+            "manifestBytes": 1608,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 128580,
+            "entropyBytes": 11355186,
+            "bypassBytes": 0,
+            "frameBytes": 11513166,
+            "fileBytes": 11514806,
+            "auditBytes": 40279696,
+            "inputRecordCount": 1225
+          },
+          "encode": {
+            "wallSeconds": 0.43927677103783935,
+            "userSeconds": 0.39,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.596727013005875,
+            "userSeconds": 0.53,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 11389867,
+          "outputSha256": "a10dbbfbd62f5773c00d4435ed3d03560790b6709af224886537a911b43cb092",
+          "auditSha256": "e0111370343f2528777e716dd38a2521d2b337ec402770e2474be1d74d78a8e5",
+          "auditBytes": 40279696,
+          "recordCount": 1225,
+          "frameCount": 1225,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1225,
+            "frameCount": 1225,
+            "predictiveSubframes": 2450,
+            "manifestBytes": 1608,
+            "tableCount": 395,
+            "tableBytes": 14615,
+            "sideBytes": 128580,
+            "entropyBytes": 2401018,
+            "bypassBytes": 8814614,
+            "frameBytes": 11373612,
+            "fileBytes": 11389867,
+            "auditBytes": 40279696,
+            "inputRecordCount": 1225
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1225,
+            "frameCount": 1225,
+            "predictiveSubframes": 2450,
+            "manifestBytes": 1608,
+            "tableCount": 395,
+            "tableBytes": 14615,
+            "sideBytes": 128580,
+            "entropyBytes": 2401018,
+            "bypassBytes": 8814614,
+            "frameBytes": 11373612,
+            "fileBytes": 11389867,
+            "auditBytes": 40279696,
+            "inputRecordCount": 1225
+          },
+          "encode": {
+            "wallSeconds": 0.4720120650017634,
+            "userSeconds": 0.41,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.6063870770158246,
+            "userSeconds": 0.53,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:76f8d36d4b2b6ed2efc19418250feaac1fe1868fd919c4c03a6e6f66e3e3f926",
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "outro-fx"
+      ],
+      "activeFrames": 1905102,
+      "activePcmBytes": 11430612,
+      "canonicalPcmSha256": "76f8d36d4b2b6ed2efc19418250feaac1fe1868fd919c4c03a6e6f66e3e3f926",
+      "packedPcmSha256": "9f52c6b427a226a161e222c2ff68e63f969ec63986850085285f8ac5c92c4a78",
+      "rsdBytes": 15319280,
+      "rsdSha256": "18fb590d9f00833002b11f3a8412ab7c49033b2dd8159a4009c1afbd060c335b",
+      "manifestBytes": 732,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 7070984,
+          "outputSha256": "141c0e9ba41adf7e43b6487a080ef3046dd0a00089cb307c368e92d9bc9059f7",
+          "auditSha256": "7ac0742ee5cce2efb955d43323f356760531f6d9d3d49b45cd71ca3a4b4c492d",
+          "auditBytes": 15289996,
+          "recordCount": 466,
+          "frameCount": 466,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 466,
+            "frameCount": 466,
+            "predictiveSubframes": 932,
+            "manifestBytes": 732,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 38071,
+            "entropyBytes": 7020965,
+            "bypassBytes": 0,
+            "frameBytes": 7070220,
+            "fileBytes": 7070984,
+            "auditBytes": 15289996,
+            "inputRecordCount": 466
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 466,
+            "frameCount": 466,
+            "predictiveSubframes": 932,
+            "manifestBytes": 732,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 38071,
+            "entropyBytes": 7020965,
+            "bypassBytes": 0,
+            "frameBytes": 7070220,
+            "fileBytes": 7070984,
+            "auditBytes": 15289996,
+            "inputRecordCount": 466
+          },
+          "encode": {
+            "wallSeconds": 0.202094289008528,
+            "userSeconds": 0.18,
+            "systemSeconds": 0.01,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.23963073000777513,
+            "userSeconds": 0.22,
+            "systemSeconds": 0.01,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 7060534,
+          "outputSha256": "63ca7b2a9b7e8d9e90f27db87106781c2634ce1348b604b58c28a61864aeb459",
+          "auditSha256": "7ac0742ee5cce2efb955d43323f356760531f6d9d3d49b45cd71ca3a4b4c492d",
+          "auditBytes": 15289996,
+          "recordCount": 466,
+          "frameCount": 466,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 466,
+            "frameCount": 466,
+            "predictiveSubframes": 932,
+            "manifestBytes": 732,
+            "tableCount": 319,
+            "tableBytes": 11803,
+            "sideBytes": 38071,
+            "entropyBytes": 931804,
+            "bypassBytes": 6066908,
+            "frameBytes": 7047967,
+            "fileBytes": 7060534,
+            "auditBytes": 15289996,
+            "inputRecordCount": 466
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 466,
+            "frameCount": 466,
+            "predictiveSubframes": 932,
+            "manifestBytes": 732,
+            "tableCount": 319,
+            "tableBytes": 11803,
+            "sideBytes": 38071,
+            "entropyBytes": 931804,
+            "bypassBytes": 6066908,
+            "frameBytes": 7047967,
+            "fileBytes": 7060534,
+            "auditBytes": 15289996,
+            "inputRecordCount": 466
+          },
+          "encode": {
+            "wallSeconds": 0.21818983904086053,
+            "userSeconds": 0.19,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4608
+          },
+          "decode": {
+            "wallSeconds": 0.24646052694879472,
+            "userSeconds": 0.21,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:820926ccc8557b4cdf81d0c19933f1115dc371d5b53e46ddedb2a87bf4e4e197",
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "synth"
+      ],
+      "activeFrames": 2524590,
+      "activePcmBytes": 15147540,
+      "canonicalPcmSha256": "820926ccc8557b4cdf81d0c19933f1115dc371d5b53e46ddedb2a87bf4e4e197",
+      "packedPcmSha256": "02357c206ee57ac7edadb4d2d1866d30a094f1d53009cbd4e5fb3cd5086b9ee9",
+      "rsdBytes": 20385645,
+      "rsdSha256": "633ad00bb280ec7c2edb490dbb9b1ca6b6d6d307e063844611f3ca796e3e6fc1",
+      "manifestBytes": 1897,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 7665648,
+          "outputSha256": "3f2a1b48ed42371b58561e321794a779f95dc0a1721e0b07cebbe42624b7a833",
+          "auditSha256": "232c7f3c8afd0208598bff6aa2cc8f1b1d06f1fe7787068312afb10a2cdbc4ed",
+          "auditBytes": 20251930,
+          "recordCount": 617,
+          "frameCount": 617,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 617,
+            "frameCount": 617,
+            "predictiveSubframes": 1226,
+            "manifestBytes": 1897,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 97871,
+            "entropyBytes": 7551104,
+            "bypassBytes": 0,
+            "frameBytes": 7663719,
+            "fileBytes": 7665648,
+            "auditBytes": 20251930,
+            "inputRecordCount": 617
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 617,
+            "frameCount": 617,
+            "predictiveSubframes": 1226,
+            "manifestBytes": 1897,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 97871,
+            "entropyBytes": 7551104,
+            "bypassBytes": 0,
+            "frameBytes": 7663719,
+            "fileBytes": 7665648,
+            "auditBytes": 20251930,
+            "inputRecordCount": 617
+          },
+          "encode": {
+            "wallSeconds": 0.25277230702340603,
+            "userSeconds": 0.23,
+            "systemSeconds": 0.01,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.31668358808383346,
+            "userSeconds": 0.28,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 7619166,
+          "outputSha256": "501de9f47cf82169fa8f7a76fbe8c78dc58bf29dc6fade6c90e7d104643fe350",
+          "auditSha256": "232c7f3c8afd0208598bff6aa2cc8f1b1d06f1fe7787068312afb10a2cdbc4ed",
+          "auditBytes": 20251930,
+          "recordCount": 617,
+          "frameCount": 617,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 617,
+            "frameCount": 617,
+            "predictiveSubframes": 1226,
+            "manifestBytes": 1897,
+            "tableCount": 299,
+            "tableBytes": 11063,
+            "sideBytes": 97871,
+            "entropyBytes": 1150659,
+            "bypassBytes": 6342900,
+            "frameBytes": 7606174,
+            "fileBytes": 7619166,
+            "auditBytes": 20251930,
+            "inputRecordCount": 617
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 617,
+            "frameCount": 617,
+            "predictiveSubframes": 1226,
+            "manifestBytes": 1897,
+            "tableCount": 299,
+            "tableBytes": 11063,
+            "sideBytes": 97871,
+            "entropyBytes": 1150659,
+            "bypassBytes": 6342900,
+            "frameBytes": 7606174,
+            "fileBytes": 7619166,
+            "auditBytes": 20251930,
+            "inputRecordCount": 617
+          },
+          "encode": {
+            "wallSeconds": 0.26868974801618606,
+            "userSeconds": 0.23,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.33630301302764565,
+            "userSeconds": 0.3,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:83cc4bfabbda2bb1b0b9fda8bfc7307d190844be9e01cd8ed53b2b904369b147",
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "bv_s"
+      ],
+      "activeFrames": 7717500,
+      "activePcmBytes": 46305000,
+      "canonicalPcmSha256": "83cc4bfabbda2bb1b0b9fda8bfc7307d190844be9e01cd8ed53b2b904369b147",
+      "packedPcmSha256": "83cc4bfabbda2bb1b0b9fda8bfc7307d190844be9e01cd8ed53b2b904369b147",
+      "rsdBytes": 62147546,
+      "rsdSha256": "fec817278267ac469b6b8759dae95c2ca663f944b227d61b558ce803e05888f1",
+      "manifestBytes": 1682,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 26808296,
+          "outputSha256": "204a81862e0a113b9d1bd2e15451cb21169628b5577994900aececb5a448e0c3",
+          "auditSha256": "103b244092b883252f1c82cd1df4bf697a887318c52c6d87d5d157c9167f4d6a",
+          "auditBytes": 61997984,
+          "recordCount": 1885,
+          "frameCount": 1885,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1885,
+            "frameCount": 1885,
+            "predictiveSubframes": 3770,
+            "manifestBytes": 1682,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 196222,
+            "entropyBytes": 26565120,
+            "bypassBytes": 0,
+            "frameBytes": 26806582,
+            "fileBytes": 26808296,
+            "auditBytes": 61997984,
+            "inputRecordCount": 1885
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1885,
+            "frameCount": 1885,
+            "predictiveSubframes": 3770,
+            "manifestBytes": 1682,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 196222,
+            "entropyBytes": 26565120,
+            "bypassBytes": 0,
+            "frameBytes": 26806582,
+            "fileBytes": 26808296,
+            "auditBytes": 61997984,
+            "inputRecordCount": 1885
+          },
+          "encode": {
+            "wallSeconds": 0.793510744930245,
+            "userSeconds": 0.7,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.9669451059307903,
+            "userSeconds": 0.87,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 26720929,
+          "outputSha256": "ca9c35b3cbbc7624f82ab37a272a8c9764fab37a8340d0fa8195a7a32f59c1aa",
+          "auditSha256": "103b244092b883252f1c82cd1df4bf697a887318c52c6d87d5d157c9167f4d6a",
+          "auditBytes": 61997984,
+          "recordCount": 1885,
+          "frameCount": 1885,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1885,
+            "frameCount": 1885,
+            "predictiveSubframes": 3770,
+            "manifestBytes": 1682,
+            "tableCount": 384,
+            "tableBytes": 14208,
+            "sideBytes": 196222,
+            "entropyBytes": 3658345,
+            "bypassBytes": 22805200,
+            "frameBytes": 26705007,
+            "fileBytes": 26720929,
+            "auditBytes": 61997984,
+            "inputRecordCount": 1885
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1885,
+            "frameCount": 1885,
+            "predictiveSubframes": 3770,
+            "manifestBytes": 1682,
+            "tableCount": 384,
+            "tableBytes": 14208,
+            "sideBytes": 196222,
+            "entropyBytes": 3658345,
+            "bypassBytes": 22805200,
+            "frameBytes": 26705007,
+            "fileBytes": 26720929,
+            "auditBytes": 61997984,
+            "inputRecordCount": 1885
+          },
+          "encode": {
+            "wallSeconds": 0.8480857099639252,
+            "userSeconds": 0.76,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.993079419946298,
+            "userSeconds": 0.9,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:8b374c1219541d61371b2eacf78d1ddd01acf4e9e7422b369044f7c1df5475e1",
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "vocal-fx"
+      ],
+      "activeFrames": 8499092,
+      "activePcmBytes": 50994552,
+      "canonicalPcmSha256": "8b374c1219541d61371b2eacf78d1ddd01acf4e9e7422b369044f7c1df5475e1",
+      "packedPcmSha256": "8b374c1219541d61371b2eacf78d1ddd01acf4e9e7422b369044f7c1df5475e1",
+      "rsdBytes": 68509104,
+      "rsdSha256": "e8bad8f11a24174d03a2445773c8cafb20411018be001d9a12598d57290a8027",
+      "manifestBytes": 1920,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 21917394,
+          "outputSha256": "0713291bcba8deff889cdf73ccc6d578667750595259101ed37c580a9a3d85ac",
+          "auditSha256": "e47d0a0db63e315e19f45ae63380064263ad8e3edc46d64d9e344bc09377ffce",
+          "auditBytes": 68299542,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 202059,
+            "entropyBytes": 21663583,
+            "bypassBytes": 0,
+            "frameBytes": 21915442,
+            "fileBytes": 21917394,
+            "auditBytes": 68299542,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 202059,
+            "entropyBytes": 21663583,
+            "bypassBytes": 0,
+            "frameBytes": 21915442,
+            "fileBytes": 21917394,
+            "auditBytes": 68299542,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.7887094509787858,
+            "userSeconds": 0.7,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 1.0302636929554865,
+            "userSeconds": 0.92,
+            "systemSeconds": 0.1,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 21801218,
+          "outputSha256": "bf2f28baf2e8bf95c5aed49f7328de38160942bfceb45336b518c399817fd38f",
+          "auditSha256": "e47d0a0db63e315e19f45ae63380064263ad8e3edc46d64d9e344bc09377ffce",
+          "auditBytes": 68299542,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 287,
+            "tableBytes": 10619,
+            "sideBytes": 202059,
+            "entropyBytes": 4041943,
+            "bypassBytes": 17494845,
+            "frameBytes": 21788647,
+            "fileBytes": 21801218,
+            "auditBytes": 68299542,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 287,
+            "tableBytes": 10619,
+            "sideBytes": 202059,
+            "entropyBytes": 4041943,
+            "bypassBytes": 17494845,
+            "frameBytes": 21788647,
+            "fileBytes": 21801218,
+            "auditBytes": 68299542,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.8415591039229184,
+            "userSeconds": 0.75,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 1.0420067809754983,
+            "userSeconds": 0.94,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "drums"
+      ],
+      "activeFrames": 4885741,
+      "activePcmBytes": 29314446,
+      "canonicalPcmSha256": "8faf64b1ebce116931951541fcb35fd000fc9b5f929ae15e47c30ae8666b76a0",
+      "packedPcmSha256": "0ca042a0bc933cff5deeb4ac1405edbc684255b39a994efc85fa3b0207fd2452",
+      "rsdBytes": 39251387,
+      "rsdSha256": "672471d636c36cd7ea355861028188ec095d097fa888a210ab7a8bfd752ec3a6",
+      "manifestBytes": 1663,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 11265871,
+          "outputSha256": "21cb19a3575dae29efff46b7aa00301508a15ae9c9376d2a324ffe9215308c45",
+          "auditSha256": "f909da654e05b2c39de0efb0d85fa5330c603d42724d277d318c8b40efd3f8ff",
+          "auditBytes": 39057662,
+          "recordCount": 1193,
+          "frameCount": 1193,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1193,
+            "frameCount": 1193,
+            "predictiveSubframes": 2370,
+            "manifestBytes": 1663,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 117434,
+            "entropyBytes": 11118238,
+            "bypassBytes": 0,
+            "frameBytes": 11264176,
+            "fileBytes": 11265871,
+            "auditBytes": 39057662,
+            "inputRecordCount": 1193
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1193,
+            "frameCount": 1193,
+            "predictiveSubframes": 2370,
+            "manifestBytes": 1663,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 117434,
+            "entropyBytes": 11118238,
+            "bypassBytes": 0,
+            "frameBytes": 11264176,
+            "fileBytes": 11265871,
+            "auditBytes": 39057662,
+            "inputRecordCount": 1193
+          },
+          "encode": {
+            "wallSeconds": 0.42831502901390195,
+            "userSeconds": 0.38,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.5241198019357398,
+            "userSeconds": 0.48,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 11124805,
+          "outputSha256": "910525693fd487dcc8d95a7b290c6007511eb05a59fc16545f7a63ca56ad66e1",
+          "auditSha256": "f909da654e05b2c39de0efb0d85fa5330c603d42724d277d318c8b40efd3f8ff",
+          "auditBytes": 39057662,
+          "recordCount": 1193,
+          "frameCount": 1193,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1193,
+            "frameCount": 1193,
+            "predictiveSubframes": 2370,
+            "manifestBytes": 1663,
+            "tableCount": 455,
+            "tableBytes": 16835,
+            "sideBytes": 117434,
+            "entropyBytes": 2090921,
+            "bypassBytes": 8869416,
+            "frameBytes": 11106275,
+            "fileBytes": 11124805,
+            "auditBytes": 39057662,
+            "inputRecordCount": 1193
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1193,
+            "frameCount": 1193,
+            "predictiveSubframes": 2370,
+            "manifestBytes": 1663,
+            "tableCount": 455,
+            "tableBytes": 16835,
+            "sideBytes": 117434,
+            "entropyBytes": 2090921,
+            "bypassBytes": 8869416,
+            "frameBytes": 11106275,
+            "fileBytes": 11124805,
+            "auditBytes": 39057662,
+            "inputRecordCount": 1193
+          },
+          "encode": {
+            "wallSeconds": 0.46197343000676483,
+            "userSeconds": 0.4,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.5537262030411512,
+            "userSeconds": 0.48,
+            "systemSeconds": 0.06,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:9184f49ee35fa748ecf4d898eb06058d2f499b8348b80736c5c252a99fe36b98",
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "fx"
+      ],
+      "activeFrames": 4497117,
+      "activePcmBytes": 26982702,
+      "canonicalPcmSha256": "9184f49ee35fa748ecf4d898eb06058d2f499b8348b80736c5c252a99fe36b98",
+      "packedPcmSha256": "370188363cdf34eb5b18a4d17cc80a61da22dfa1a0f152c80cbca357fcaddbef",
+      "rsdBytes": 35676288,
+      "rsdSha256": "acd47d90e567fa4823bd2024ca50272cd635a96d9f189c4091c3a42ed03482a4",
+      "manifestBytes": 11736,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 8631252,
+          "outputSha256": "92831e28558087c41a11cb95e5d0ca37c5aba7b61442967a2d8338cb06f2d113",
+          "auditSha256": "0f22ba259652eba07062b94e6a11fa10b904a612a4b517d8f820eb57910a9059",
+          "auditBytes": 35589202,
+          "recordCount": 1098,
+          "frameCount": 1098,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1098,
+            "frameCount": 1098,
+            "predictiveSubframes": 2165,
+            "manifestBytes": 11736,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 86897,
+            "entropyBytes": 8506483,
+            "bypassBytes": 0,
+            "frameBytes": 8619484,
+            "fileBytes": 8631252,
+            "auditBytes": 35589202,
+            "inputRecordCount": 1098
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1098,
+            "frameCount": 1098,
+            "predictiveSubframes": 2165,
+            "manifestBytes": 11736,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 86897,
+            "entropyBytes": 8506483,
+            "bypassBytes": 0,
+            "frameBytes": 8619484,
+            "fileBytes": 8631252,
+            "auditBytes": 35589202,
+            "inputRecordCount": 1098
+          },
+          "encode": {
+            "wallSeconds": 0.36074661696329713,
+            "userSeconds": 0.3,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.48010403104126453,
+            "userSeconds": 0.42,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 8430202,
+          "outputSha256": "2b7dfd796180db24213c1694639e6038480079a551c28fe8c45b69a1e126f9d7",
+          "auditSha256": "0f22ba259652eba07062b94e6a11fa10b904a612a4b517d8f820eb57910a9059",
+          "auditBytes": 35589202,
+          "recordCount": 1098,
+          "frameCount": 1098,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1098,
+            "frameCount": 1098,
+            "predictiveSubframes": 2165,
+            "manifestBytes": 11736,
+            "tableCount": 420,
+            "tableBytes": 15540,
+            "sideBytes": 86897,
+            "entropyBytes": 1738600,
+            "bypassBytes": 6551293,
+            "frameBytes": 8402894,
+            "fileBytes": 8430202,
+            "auditBytes": 35589202,
+            "inputRecordCount": 1098
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1098,
+            "frameCount": 1098,
+            "predictiveSubframes": 2165,
+            "manifestBytes": 11736,
+            "tableCount": 420,
+            "tableBytes": 15540,
+            "sideBytes": 86897,
+            "entropyBytes": 1738600,
+            "bypassBytes": 6551293,
+            "frameBytes": 8402894,
+            "fileBytes": 8430202,
+            "auditBytes": 35589202,
+            "inputRecordCount": 1098
+          },
+          "encode": {
+            "wallSeconds": 0.3974030639510602,
+            "userSeconds": 0.34,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.4916703610215336,
+            "userSeconds": 0.43,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:9a57207ac802bad426435d920b77048ba9dd391797c6a462444c6e375716d36f",
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "synth-6"
+      ],
+      "activeFrames": 4066514,
+      "activePcmBytes": 24399084,
+      "canonicalPcmSha256": "9a57207ac802bad426435d920b77048ba9dd391797c6a462444c6e375716d36f",
+      "packedPcmSha256": "de2a8018006159275fbae0d512c309ab6edc0da58a106043f8494058106280b0",
+      "rsdBytes": 32612051,
+      "rsdSha256": "535067fe776fc6ce232ea62f912efcd4bc55642b515dc88c3b66466944d82c87",
+      "manifestBytes": 4303,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 8367347,
+          "outputSha256": "f7a61b2ef59621920662086ab3cb67436579942823caa8a32e639566148f0ab1",
+          "auditSha256": "11f5b53f1d9b13a7a908931bc3d0e067b4f974c94d62e9d1d0c3d3dbf05e5366",
+          "auditBytes": 32484770,
+          "recordCount": 993,
+          "frameCount": 993,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 993,
+            "frameCount": 993,
+            "predictiveSubframes": 1972,
+            "manifestBytes": 4303,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 110750,
+            "entropyBytes": 8228542,
+            "bypassBytes": 0,
+            "frameBytes": 8363012,
+            "fileBytes": 8367347,
+            "auditBytes": 32484770,
+            "inputRecordCount": 993
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 993,
+            "frameCount": 993,
+            "predictiveSubframes": 1972,
+            "manifestBytes": 4303,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 110750,
+            "entropyBytes": 8228542,
+            "bypassBytes": 0,
+            "frameBytes": 8363012,
+            "fileBytes": 8367347,
+            "auditBytes": 32484770,
+            "inputRecordCount": 993
+          },
+          "encode": {
+            "wallSeconds": 0.3551718189846724,
+            "userSeconds": 0.31,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.47012722596991807,
+            "userSeconds": 0.42,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 8312957,
+          "outputSha256": "b6c02627abb75a24e5ca82b52d5745994a27482bda21f5423fb5455891434f8c",
+          "auditSha256": "11f5b53f1d9b13a7a908931bc3d0e067b4f974c94d62e9d1d0c3d3dbf05e5366",
+          "auditBytes": 32484770,
+          "recordCount": 993,
+          "frameCount": 993,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 993,
+            "frameCount": 993,
+            "predictiveSubframes": 1972,
+            "manifestBytes": 4303,
+            "tableCount": 296,
+            "tableBytes": 10952,
+            "sideBytes": 110750,
+            "entropyBytes": 1870244,
+            "bypassBytes": 6292956,
+            "frameBytes": 8297670,
+            "fileBytes": 8312957,
+            "auditBytes": 32484770,
+            "inputRecordCount": 993
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 993,
+            "frameCount": 993,
+            "predictiveSubframes": 1972,
+            "manifestBytes": 4303,
+            "tableCount": 296,
+            "tableBytes": 10952,
+            "sideBytes": 110750,
+            "entropyBytes": 1870244,
+            "bypassBytes": 6292956,
+            "frameBytes": 8297670,
+            "fileBytes": 8312957,
+            "auditBytes": 32484770,
+            "inputRecordCount": 993
+          },
+          "encode": {
+            "wallSeconds": 0.3790013960096985,
+            "userSeconds": 0.33,
+            "systemSeconds": 0.04,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.4795351380016655,
+            "userSeconds": 0.41,
+            "systemSeconds": 0.06,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:b613c11eea1c43c0a0fed317bea191d09146b818c4fe8e7a781cec1061b781f1",
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "vocal-fx"
+      ],
+      "activeFrames": 1529195,
+      "activePcmBytes": 9175170,
+      "canonicalPcmSha256": "b613c11eea1c43c0a0fed317bea191d09146b818c4fe8e7a781cec1061b781f1",
+      "packedPcmSha256": "c5aec73e0036114edcd29a513f75cefafbef5a85fa1773014d106ae24be4c9a5",
+      "rsdBytes": 12096616,
+      "rsdSha256": "b007318da4985b2f0cb23a0841ff21770836a9393ea818204e2d6849597927e6",
+      "manifestBytes": 2400,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 4226334,
+          "outputSha256": "076fa7a2789c8f56d369798c61bff8cbbd538b8ae7456f607541344d22283137",
+          "auditSha256": "7b969666ca45c7f728a243caf457a211994215bfcf0166105560ebcc63850d0b",
+          "auditBytes": 12046710,
+          "recordCount": 374,
+          "frameCount": 374,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 374,
+            "frameCount": 374,
+            "predictiveSubframes": 732,
+            "manifestBytes": 2400,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 38071,
+            "entropyBytes": 4176983,
+            "bypassBytes": 0,
+            "frameBytes": 4223902,
+            "fileBytes": 4226334,
+            "auditBytes": 12046710,
+            "inputRecordCount": 374
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 374,
+            "frameCount": 374,
+            "predictiveSubframes": 732,
+            "manifestBytes": 2400,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 38071,
+            "entropyBytes": 4176983,
+            "bypassBytes": 0,
+            "frameBytes": 4223902,
+            "fileBytes": 4226334,
+            "auditBytes": 12046710,
+            "inputRecordCount": 374
+          },
+          "encode": {
+            "wallSeconds": 0.14484732900746167,
+            "userSeconds": 0.12,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.1791980379493907,
+            "userSeconds": 0.15,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 4161973,
+          "outputSha256": "3d8bcad2cb7a6cf643dd04d90c3c251c6ffff2e1eb56d20dc58499085587076f",
+          "auditSha256": "7b969666ca45c7f728a243caf457a211994215bfcf0166105560ebcc63850d0b",
+          "auditBytes": 12046710,
+          "recordCount": 374,
+          "frameCount": 374,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 374,
+            "frameCount": 374,
+            "predictiveSubframes": 732,
+            "manifestBytes": 2400,
+            "tableCount": 319,
+            "tableBytes": 11803,
+            "sideBytes": 38071,
+            "entropyBytes": 589300,
+            "bypassBytes": 3511519,
+            "frameBytes": 4147738,
+            "fileBytes": 4161973,
+            "auditBytes": 12046710,
+            "inputRecordCount": 374
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 374,
+            "frameCount": 374,
+            "predictiveSubframes": 732,
+            "manifestBytes": 2400,
+            "tableCount": 319,
+            "tableBytes": 11803,
+            "sideBytes": 38071,
+            "entropyBytes": 589300,
+            "bypassBytes": 3511519,
+            "frameBytes": 4147738,
+            "fileBytes": 4161973,
+            "auditBytes": 12046710,
+            "inputRecordCount": 374
+          },
+          "encode": {
+            "wallSeconds": 0.15411859308369458,
+            "userSeconds": 0.13,
+            "systemSeconds": 0.01,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.18360426207073033,
+            "userSeconds": 0.16,
+            "systemSeconds": 0.01,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "bass"
+      ],
+      "activeFrames": 4209708,
+      "activePcmBytes": 25258248,
+      "canonicalPcmSha256": "ba8f39a6c7b1f22bded6ce6d97361a01ce751282b3f1ab08f931b876c6734ae1",
+      "packedPcmSha256": "2b2b003f959b903cb6068dbe15909cbbedaa6b1b5544b7939c84232b2480c364",
+      "rsdBytes": 21466741,
+      "rsdSha256": "023325e095994f344cbd4e3d6cd89e40365ae0ec763ca4cfff377034f4547877",
+      "manifestBytes": 5921,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 3854026,
+          "outputSha256": "52bb9ea1f41f3fddc64206aec2cdadfae06f35d557d4a3dc44ec32662339a630",
+          "auditSha256": "1c1ae57c06efd729608d9400b4f442ce85ca79e11f3f4ec5be7a9c92db1f2055",
+          "auditBytes": 21315402,
+          "recordCount": 1028,
+          "frameCount": 1028,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1028,
+            "frameCount": 1028,
+            "predictiveSubframes": 1291,
+            "manifestBytes": 5921,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 73495,
+            "entropyBytes": 3756026,
+            "bypassBytes": 0,
+            "frameBytes": 3848073,
+            "fileBytes": 3854026,
+            "auditBytes": 21315402,
+            "inputRecordCount": 1028
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1028,
+            "frameCount": 1028,
+            "predictiveSubframes": 1291,
+            "manifestBytes": 5921,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 73495,
+            "entropyBytes": 3756026,
+            "bypassBytes": 0,
+            "frameBytes": 3848073,
+            "fileBytes": 3854026,
+            "auditBytes": 21315402,
+            "inputRecordCount": 1028
+          },
+          "encode": {
+            "wallSeconds": 0.2151402139570564,
+            "userSeconds": 0.18,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.3250422239070758,
+            "userSeconds": 0.28,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 3773850,
+          "outputSha256": "427c83514cedcdedb79e55b4c0a5bca932dd40da5affb8f412f98e608fac8409",
+          "auditSha256": "1c1ae57c06efd729608d9400b4f442ce85ca79e11f3f4ec5be7a9c92db1f2055",
+          "auditBytes": 21315402,
+          "recordCount": 1028,
+          "frameCount": 1028,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1028,
+            "frameCount": 1028,
+            "predictiveSubframes": 1291,
+            "manifestBytes": 5921,
+            "tableCount": 285,
+            "tableBytes": 10545,
+            "sideBytes": 73495,
+            "entropyBytes": 1138063,
+            "bypassBytes": 2527242,
+            "frameBytes": 3757352,
+            "fileBytes": 3773850,
+            "auditBytes": 21315402,
+            "inputRecordCount": 1028
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1028,
+            "frameCount": 1028,
+            "predictiveSubframes": 1291,
+            "manifestBytes": 5921,
+            "tableCount": 285,
+            "tableBytes": 10545,
+            "sideBytes": 73495,
+            "entropyBytes": 1138063,
+            "bypassBytes": 2527242,
+            "frameBytes": 3757352,
+            "fileBytes": 3773850,
+            "auditBytes": 21315402,
+            "inputRecordCount": 1028
+          },
+          "encode": {
+            "wallSeconds": 0.23186491103842854,
+            "userSeconds": 0.19,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4608
+          },
+          "decode": {
+            "wallSeconds": 0.3343678399687633,
+            "userSeconds": 0.3,
+            "systemSeconds": 0.03,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f",
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "bv_s"
+      ],
+      "activeFrames": 6205965,
+      "activePcmBytes": 37235790,
+      "canonicalPcmSha256": "c48e9a6b5621bb213de9d6c0c016c557a4516ba0e02de06deb1141fe7946332f",
+      "packedPcmSha256": "6faa20c44302316658d0afbf96b9bf840d5c10dd66cb3a73b270f107fe9bc278",
+      "rsdBytes": 50041233,
+      "rsdSha256": "02cfa111accfe8f6a575abd28cf41142ab4e73b8474810028d5d1cde4102e8ec",
+      "manifestBytes": 1445,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 22098340,
+          "outputSha256": "706fe1b93d0386d5561678ba4d2d46630986dada59c71416fc6dcf4f08e5d711",
+          "auditSha256": "7dedf81810033b215166aa194fb592012517f98e174fa8f57065c516248b0937",
+          "auditBytes": 49897064,
+          "recordCount": 1516,
+          "frameCount": 1516,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1445,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 186635,
+            "entropyBytes": 21873844,
+            "bypassBytes": 0,
+            "frameBytes": 22096863,
+            "fileBytes": 22098340,
+            "auditBytes": 49897064,
+            "inputRecordCount": 1516
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1445,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 186635,
+            "entropyBytes": 21873844,
+            "bypassBytes": 0,
+            "frameBytes": 22096863,
+            "fileBytes": 22098340,
+            "auditBytes": 49897064,
+            "inputRecordCount": 1516
+          },
+          "encode": {
+            "wallSeconds": 0.6428683960111812,
+            "userSeconds": 0.56,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.803564214031212,
+            "userSeconds": 0.72,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 22054616,
+          "outputSha256": "27f71b9b7090d9af497a321e3a0b7e8d77b11615c97e13bcd56656102304f80c",
+          "auditSha256": "7dedf81810033b215166aa194fb592012517f98e174fa8f57065c516248b0937",
+          "auditBytes": 49897064,
+          "recordCount": 1516,
+          "frameCount": 1516,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1445,
+            "tableCount": 330,
+            "tableBytes": 12210,
+            "sideBytes": 186635,
+            "entropyBytes": 2995387,
+            "bypassBytes": 18822523,
+            "frameBytes": 22040929,
+            "fileBytes": 22054616,
+            "auditBytes": 49897064,
+            "inputRecordCount": 1516
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1445,
+            "tableCount": 330,
+            "tableBytes": 12210,
+            "sideBytes": 186635,
+            "entropyBytes": 2995387,
+            "bypassBytes": 18822523,
+            "frameBytes": 22040929,
+            "fileBytes": 22054616,
+            "auditBytes": 49897064,
+            "inputRecordCount": 1516
+          },
+          "encode": {
+            "wallSeconds": 0.6885324630420655,
+            "userSeconds": 0.63,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.827610413893126,
+            "userSeconds": 0.74,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:d2a9ac32d38219a1dbe387f10ae417abb86101f4366683d2e68270ca1b8b5224",
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "synth-2"
+      ],
+      "activeFrames": 7402999,
+      "activePcmBytes": 44417994,
+      "canonicalPcmSha256": "d2a9ac32d38219a1dbe387f10ae417abb86101f4366683d2e68270ca1b8b5224",
+      "packedPcmSha256": "a7b3d084f99993e4e17f1813e1cc2e75f76482605f416662f429b2e99ee86249",
+      "rsdBytes": 59841417,
+      "rsdSha256": "f7329709cc970167d53f7de66374f480f958f1367e92c1ff0cf365536936bf24",
+      "manifestBytes": 1821,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 21343807,
+          "outputSha256": "e43b06a92136ea4ea99fef6ab101164ae69dc3fa1da59853c7d5f2ae2a56dd80",
+          "auditSha256": "e3209e7ca31193e30dcea998f34426be96cd73f2f799945c06ee18572ae18ddb",
+          "auditBytes": 59577908,
+          "recordCount": 1808,
+          "frameCount": 1808,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1808,
+            "frameCount": 1808,
+            "predictiveSubframes": 3616,
+            "manifestBytes": 1821,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 204660,
+            "entropyBytes": 21093902,
+            "bypassBytes": 0,
+            "frameBytes": 21341954,
+            "fileBytes": 21343807,
+            "auditBytes": 59577908,
+            "inputRecordCount": 1808
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1808,
+            "frameCount": 1808,
+            "predictiveSubframes": 3616,
+            "manifestBytes": 1821,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 204660,
+            "entropyBytes": 21093902,
+            "bypassBytes": 0,
+            "frameBytes": 21341954,
+            "fileBytes": 21343807,
+            "auditBytes": 59577908,
+            "inputRecordCount": 1808
+          },
+          "encode": {
+            "wallSeconds": 0.704770696000196,
+            "userSeconds": 0.63,
+            "systemSeconds": 0.06,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.8754596520448104,
+            "userSeconds": 0.78,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 21230949,
+          "outputSha256": "67acc9713c8819f65dec97230a8a6c62ec299011f328f8153f378dbf17e69491",
+          "auditSha256": "e3209e7ca31193e30dcea998f34426be96cd73f2f799945c06ee18572ae18ddb",
+          "auditBytes": 59577908,
+          "recordCount": 1808,
+          "frameCount": 1808,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1808,
+            "frameCount": 1808,
+            "predictiveSubframes": 3616,
+            "manifestBytes": 1821,
+            "tableCount": 370,
+            "tableBytes": 13690,
+            "sideBytes": 204660,
+            "entropyBytes": 3425376,
+            "bypassBytes": 17541978,
+            "frameBytes": 21215406,
+            "fileBytes": 21230949,
+            "auditBytes": 59577908,
+            "inputRecordCount": 1808
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1808,
+            "frameCount": 1808,
+            "predictiveSubframes": 3616,
+            "manifestBytes": 1821,
+            "tableCount": 370,
+            "tableBytes": 13690,
+            "sideBytes": 204660,
+            "entropyBytes": 3425376,
+            "bypassBytes": 17541978,
+            "frameBytes": 21215406,
+            "fileBytes": 21230949,
+            "auditBytes": 59577908,
+            "inputRecordCount": 1808
+          },
+          "encode": {
+            "wallSeconds": 0.7575535309733823,
+            "userSeconds": 0.66,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.9115542900981382,
+            "userSeconds": 0.82,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:d60d7992ce0ac81666b6e13b3ae7064ab5c1aad701a026619d78cfb725386d4d",
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "bass"
+      ],
+      "activeFrames": 6744916,
+      "activePcmBytes": 40469496,
+      "canonicalPcmSha256": "d60d7992ce0ac81666b6e13b3ae7064ab5c1aad701a026619d78cfb725386d4d",
+      "packedPcmSha256": "eeac682700ca9620e3bbf0c9081f5ea61716189174b1b52e6adf0ef809fe67a6",
+      "rsdBytes": 54291503,
+      "rsdSha256": "b297519973d8599144ab6fba7f1d5d0a550dd5b33f7be24311be152277b25e81",
+      "manifestBytes": 1795,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 12213754,
+          "outputSha256": "b5decbe9517c73d296dd8e9c4ab44edec4a2a6be88e6ee7bdef3d7411f2089fa",
+          "auditSha256": "64907750215cbcdb4f6f048011abc2511efba6433032935a667f9cdca422ffdc",
+          "auditBytes": 54185390,
+          "recordCount": 1647,
+          "frameCount": 1647,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1647,
+            "frameCount": 1647,
+            "predictiveSubframes": 3294,
+            "manifestBytes": 1795,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 194951,
+            "entropyBytes": 11977448,
+            "bypassBytes": 0,
+            "frameBytes": 12211927,
+            "fileBytes": 12213754,
+            "auditBytes": 54185390,
+            "inputRecordCount": 1647
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1647,
+            "frameCount": 1647,
+            "predictiveSubframes": 3294,
+            "manifestBytes": 1795,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 194951,
+            "entropyBytes": 11977448,
+            "bypassBytes": 0,
+            "frameBytes": 12211927,
+            "fileBytes": 12213754,
+            "auditBytes": 54185390,
+            "inputRecordCount": 1647
+          },
+          "encode": {
+            "wallSeconds": 0.5618740369100124,
+            "userSeconds": 0.49,
+            "systemSeconds": 0.06,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.8256578999571502,
+            "userSeconds": 0.75,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 12123273,
+          "outputSha256": "7644e0db191c54d4be25a17acbbafd039e68347fc875d14be3a514a21a0d9088",
+          "auditSha256": "64907750215cbcdb4f6f048011abc2511efba6433032935a667f9cdca422ffdc",
+          "auditBytes": 54185390,
+          "recordCount": 1647,
+          "frameCount": 1647,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1647,
+            "frameCount": 1647,
+            "predictiveSubframes": 3294,
+            "manifestBytes": 1795,
+            "tableCount": 230,
+            "tableBytes": 8510,
+            "sideBytes": 194951,
+            "entropyBytes": 3169535,
+            "bypassBytes": 8708922,
+            "frameBytes": 12112936,
+            "fileBytes": 12123273,
+            "auditBytes": 54185390,
+            "inputRecordCount": 1647
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1647,
+            "frameCount": 1647,
+            "predictiveSubframes": 3294,
+            "manifestBytes": 1795,
+            "tableCount": 230,
+            "tableBytes": 8510,
+            "sideBytes": 194951,
+            "entropyBytes": 3169535,
+            "bypassBytes": 8708922,
+            "frameBytes": 12112936,
+            "fileBytes": 12123273,
+            "auditBytes": 54185390,
+            "inputRecordCount": 1647
+          },
+          "encode": {
+            "wallSeconds": 0.601301618036814,
+            "userSeconds": 0.52,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.8233222650596872,
+            "userSeconds": 0.74,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:dbb6eda6ecc56c418428f6b41d0b4872948d5be58e6089ecacb538b188dd7a74",
+      "recordingRef": "r2",
+      "sourceIDs": [
+        "verse-vox"
+      ],
+      "activeFrames": 1982918,
+      "activePcmBytes": 11897508,
+      "canonicalPcmSha256": "dbb6eda6ecc56c418428f6b41d0b4872948d5be58e6089ecacb538b188dd7a74",
+      "packedPcmSha256": "0d51da76bbbd555ce8e4235a2b01dd7c000a15c65c3eaffd21ae2ff16569706a",
+      "rsdBytes": 15974698,
+      "rsdSha256": "32bde6157e197ff5a6760857ab0f54b1beacd5968b94319a26f623b79a323202",
+      "manifestBytes": 1566,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 7139284,
+          "outputSha256": "a950736aff4fd95ce5b34c70d7e87cbd70e871a01187bf9d11e16ff0f58eca2d",
+          "auditSha256": "00518b71d4234c8f1086dea8b387bc2986e54e6d283b8520a9801e889e32d26f",
+          "auditBytes": 15904638,
+          "recordCount": 485,
+          "frameCount": 485,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 485,
+            "frameCount": 485,
+            "predictiveSubframes": 966,
+            "manifestBytes": 1566,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 54706,
+            "entropyBytes": 7071372,
+            "bypassBytes": 0,
+            "frameBytes": 7137686,
+            "fileBytes": 7139284,
+            "auditBytes": 15904638,
+            "inputRecordCount": 485
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 485,
+            "frameCount": 485,
+            "predictiveSubframes": 966,
+            "manifestBytes": 1566,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 54706,
+            "entropyBytes": 7071372,
+            "bypassBytes": 0,
+            "frameBytes": 7137686,
+            "fileBytes": 7139284,
+            "auditBytes": 15904638,
+            "inputRecordCount": 485
+          },
+          "encode": {
+            "wallSeconds": 0.20955971500370651,
+            "userSeconds": 0.18,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4608
+          },
+          "decode": {
+            "wallSeconds": 0.24692880699876696,
+            "userSeconds": 0.21,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 7104005,
+          "outputSha256": "bc303640e7d131169efaea633c1b39f87328f7d114d97e021254e0adf507f4ab",
+          "auditSha256": "00518b71d4234c8f1086dea8b387bc2986e54e6d283b8520a9801e889e32d26f",
+          "auditBytes": 15904638,
+          "recordCount": 485,
+          "frameCount": 485,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 485,
+            "frameCount": 485,
+            "predictiveSubframes": 966,
+            "manifestBytes": 1566,
+            "tableCount": 365,
+            "tableBytes": 13505,
+            "sideBytes": 54706,
+            "entropyBytes": 885353,
+            "bypassBytes": 6137235,
+            "frameBytes": 7088902,
+            "fileBytes": 7104005,
+            "auditBytes": 15904638,
+            "inputRecordCount": 485
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 485,
+            "frameCount": 485,
+            "predictiveSubframes": 966,
+            "manifestBytes": 1566,
+            "tableCount": 365,
+            "tableBytes": 13505,
+            "sideBytes": 54706,
+            "entropyBytes": 885353,
+            "bypassBytes": 6137235,
+            "frameBytes": 7088902,
+            "fileBytes": 7104005,
+            "auditBytes": 15904638,
+            "inputRecordCount": 485
+          },
+          "encode": {
+            "wallSeconds": 0.22307482396718115,
+            "userSeconds": 0.19,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.25879593996796757,
+            "userSeconds": 0.23,
+            "systemSeconds": 0.02,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62",
+      "recordingRef": "r1",
+      "sourceIDs": [
+        "guitar"
+      ],
+      "activeFrames": 6207923,
+      "activePcmBytes": 37247538,
+      "canonicalPcmSha256": "e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62",
+      "packedPcmSha256": "e5c44270be4bd0862850977ef3d8a06f1b3803d75c276bb243139bae1f56db62",
+      "rsdBytes": 49907600,
+      "rsdSha256": "e3a4bbb254d00c081dfa4caa1e156d5e16878d2ffeb9725d6a35f405a68313ae",
+      "manifestBytes": 1440,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 8504266,
+          "outputSha256": "084fdf57e5836bfd98dec86ae0d14a82fb85206df4e3e2091df76a306fa05070",
+          "auditSha256": "2991aabfabb3e62c9513ec70771a1c7bb3fbcd4f7bbcd67f0e71a94c133a223e",
+          "auditBytes": 49830602,
+          "recordCount": 1516,
+          "frameCount": 1516,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1440,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 148642,
+            "entropyBytes": 8317768,
+            "bypassBytes": 0,
+            "frameBytes": 8502794,
+            "fileBytes": 8504266,
+            "auditBytes": 49830602,
+            "inputRecordCount": 1516
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1440,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 148642,
+            "entropyBytes": 8317768,
+            "bypassBytes": 0,
+            "frameBytes": 8502794,
+            "fileBytes": 8504266,
+            "auditBytes": 49830602,
+            "inputRecordCount": 1516
+          },
+          "encode": {
+            "wallSeconds": 0.5044984130654484,
+            "userSeconds": 0.44,
+            "systemSeconds": 0.05,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.7370166570181027,
+            "userSeconds": 0.65,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 8424005,
+          "outputSha256": "d9c5d3dff7e3de441671cd93c5fa2a2a4b0e4985cdbe6d3a1e9217fe1b052716",
+          "auditSha256": "2991aabfabb3e62c9513ec70771a1c7bb3fbcd4f7bbcd67f0e71a94c133a223e",
+          "auditBytes": 49830602,
+          "recordCount": 1516,
+          "frameCount": 1516,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1440,
+            "tableCount": 160,
+            "tableBytes": 5920,
+            "sideBytes": 148642,
+            "entropyBytes": 3030712,
+            "bypassBytes": 5200875,
+            "frameBytes": 8416613,
+            "fileBytes": 8424005,
+            "auditBytes": 49830602,
+            "inputRecordCount": 1516
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1516,
+            "frameCount": 1516,
+            "predictiveSubframes": 3032,
+            "manifestBytes": 1440,
+            "tableCount": 160,
+            "tableBytes": 5920,
+            "sideBytes": 148642,
+            "entropyBytes": 3030712,
+            "bypassBytes": 5200875,
+            "frameBytes": 8416613,
+            "fileBytes": 8424005,
+            "auditBytes": 49830602,
+            "inputRecordCount": 1516
+          },
+          "encode": {
+            "wallSeconds": 0.524261079961434,
+            "userSeconds": 0.45,
+            "systemSeconds": 0.06,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.7305381590267643,
+            "userSeconds": 0.64,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:f797073413ecf7782ec9e767bb4645034e8293b52c86cd888c920b33427c0d59",
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "bass"
+      ],
+      "activeFrames": 8499092,
+      "activePcmBytes": 50994552,
+      "canonicalPcmSha256": "f797073413ecf7782ec9e767bb4645034e8293b52c86cd888c920b33427c0d59",
+      "packedPcmSha256": "f797073413ecf7782ec9e767bb4645034e8293b52c86cd888c920b33427c0d59",
+      "rsdBytes": 68572203,
+      "rsdSha256": "87b7a3794324683df3144e46fc43d52b9647d50d0f94345f10fb9579a202ec33",
+      "manifestBytes": 1919,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 19248322,
+          "outputSha256": "c5c3957a2ba9c54497ba4e814b17d084259448b2587b6830d4e9b31d42b72c5f",
+          "auditSha256": "20602cc896fef194495c62f9642820a639e74b5396f4b74ea8f09e174720fdfa",
+          "auditBytes": 68319140,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1919,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 180845,
+            "entropyBytes": 19015726,
+            "bypassBytes": 0,
+            "frameBytes": 19246371,
+            "fileBytes": 19248322,
+            "auditBytes": 68319140,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1919,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 180845,
+            "entropyBytes": 19015726,
+            "bypassBytes": 0,
+            "frameBytes": 19246371,
+            "fileBytes": 19248322,
+            "auditBytes": 68319140,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.7632992160506546,
+            "userSeconds": 0.68,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.9891785990912467,
+            "userSeconds": 0.88,
+            "systemSeconds": 0.1,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 19117145,
+          "outputSha256": "02e86dd7e91a436f2119800c13b061c0e488214e795d5a7c85686cb32483ebdc",
+          "auditSha256": "20602cc896fef194495c62f9642820a639e74b5396f4b74ea8f09e174720fdfa",
+          "auditBytes": 68319140,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1919,
+            "tableCount": 280,
+            "tableBytes": 10360,
+            "sideBytes": 180845,
+            "entropyBytes": 4091672,
+            "bypassBytes": 14782517,
+            "frameBytes": 19104834,
+            "fileBytes": 19117145,
+            "auditBytes": 68319140,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1919,
+            "tableCount": 280,
+            "tableBytes": 10360,
+            "sideBytes": 180845,
+            "entropyBytes": 4091672,
+            "bypassBytes": 14782517,
+            "frameBytes": 19104834,
+            "fileBytes": 19117145,
+            "auditBytes": 68319140,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.8138156689237803,
+            "userSeconds": 0.72,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.9963846530299634,
+            "userSeconds": 0.9,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:fc78916013c03b9827b97fe5d422b260b2926d7bd7159c9b8c967e2a49edeef3",
+      "recordingRef": "r4",
+      "sourceIDs": [
+        "lead-vox"
+      ],
+      "activeFrames": 8499092,
+      "activePcmBytes": 50994552,
+      "canonicalPcmSha256": "fc78916013c03b9827b97fe5d422b260b2926d7bd7159c9b8c967e2a49edeef3",
+      "packedPcmSha256": "fc78916013c03b9827b97fe5d422b260b2926d7bd7159c9b8c967e2a49edeef3",
+      "rsdBytes": 68572192,
+      "rsdSha256": "6e4d88c03df8816ea185fe290e03a5be2331e0f735a2fdd03f535456308b9e0d",
+      "manifestBytes": 1920,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 26718391,
+          "outputSha256": "06e3fc6390e00d8b283e5fcebda73aed3b3f19a4893ff54f37485107dd064e03",
+          "auditSha256": "3fc4a5517d946a002fc07a8f59648bad35e10f9c88d9ecde327534c4864e9cb9",
+          "auditBytes": 68344530,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 240774,
+            "entropyBytes": 26425865,
+            "bypassBytes": 0,
+            "frameBytes": 26716439,
+            "fileBytes": 26718391,
+            "auditBytes": 68344530,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 240774,
+            "entropyBytes": 26425865,
+            "bypassBytes": 0,
+            "frameBytes": 26716439,
+            "fileBytes": 26718391,
+            "auditBytes": 68344530,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.8499024299671873,
+            "userSeconds": 0.78,
+            "systemSeconds": 0.06,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 1.080667351023294,
+            "userSeconds": 0.99,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4608
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 26638287,
+          "outputSha256": "2254d6a43794c8fd67f6050090d51ac7453a77478d153899e5b93e819e5d1441",
+          "auditSha256": "3fc4a5517d946a002fc07a8f59648bad35e10f9c88d9ecde327534c4864e9cb9",
+          "auditBytes": 68344530,
+          "recordCount": 2075,
+          "frameCount": 2075,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 285,
+            "tableBytes": 10545,
+            "sideBytes": 240774,
+            "entropyBytes": 4102182,
+            "bypassBytes": 22233034,
+            "frameBytes": 26625790,
+            "fileBytes": 26638287,
+            "auditBytes": 68344530,
+            "inputRecordCount": 2075
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 2075,
+            "frameCount": 2075,
+            "predictiveSubframes": 4150,
+            "manifestBytes": 1920,
+            "tableCount": 285,
+            "tableBytes": 10545,
+            "sideBytes": 240774,
+            "entropyBytes": 4102182,
+            "bypassBytes": 22233034,
+            "frameBytes": 26625790,
+            "fileBytes": 26638287,
+            "auditBytes": 68344530,
+            "inputRecordCount": 2075
+          },
+          "encode": {
+            "wallSeconds": 0.9017940999474376,
+            "userSeconds": 0.8,
+            "systemSeconds": 0.09,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 1.0984513229923323,
+            "userSeconds": 0.99,
+            "systemSeconds": 0.1,
+            "peakRssKiB": 4608
+          }
+        }
+      }
+    },
+    {
+      "identity": "sha256:fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+      "recordingRef": "r3",
+      "sourceIDs": [
+        "lead-vox"
+      ],
+      "activeFrames": 6706456,
+      "activePcmBytes": 40238736,
+      "canonicalPcmSha256": "fdae0da08b49b80492caad638119441bd2a0f2a2330642ff84e3baaafbb03cda",
+      "packedPcmSha256": "82032cf30a8b53c98294a15d7a672371bd77d894657888cba473d473f9734b78",
+      "rsdBytes": 53944189,
+      "rsdSha256": "2ba2f76d1579f5066ac62f9e53bcd4fae569f353650ae276f85cd6643917a72d",
+      "manifestBytes": 2561,
+      "modes": {
+        "rice": {
+          "mode": "rice",
+          "outputBytes": 24146278,
+          "outputSha256": "86f405f70138802c97cc026cc1bbc013447172b369a9e0dd559c4720cb6087cb",
+          "auditSha256": "217ab38fe769f9e7ba66946cb89db2e16d227c53639def909c3c2ada7212f851",
+          "auditBytes": 53776670,
+          "recordCount": 1638,
+          "frameCount": 1638,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1638,
+            "frameCount": 1638,
+            "predictiveSubframes": 3266,
+            "manifestBytes": 2561,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 204344,
+            "entropyBytes": 23900109,
+            "bypassBytes": 0,
+            "frameBytes": 24143685,
+            "fileBytes": 24146278,
+            "auditBytes": 53776670,
+            "inputRecordCount": 1638
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 0,
+            "recordCount": 1638,
+            "frameCount": 1638,
+            "predictiveSubframes": 3266,
+            "manifestBytes": 2561,
+            "tableCount": 0,
+            "tableBytes": 0,
+            "sideBytes": 204344,
+            "entropyBytes": 23900109,
+            "bypassBytes": 0,
+            "frameBytes": 24143685,
+            "fileBytes": 24146278,
+            "auditBytes": 53776670,
+            "inputRecordCount": 1638
+          },
+          "encode": {
+            "wallSeconds": 0.6924667219864205,
+            "userSeconds": 0.6,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.858352898969315,
+            "userSeconds": 0.78,
+            "systemSeconds": 0.07,
+            "peakRssKiB": 4864
+          }
+        },
+        "rans": {
+          "mode": "rans",
+          "outputBytes": 24065699,
+          "outputSha256": "576b3d809dc7543cb2b70bc0a5e3aa4d38902a665f1186b81529253ae2f9e8e4",
+          "auditSha256": "217ab38fe769f9e7ba66946cb89db2e16d227c53639def909c3c2ada7212f851",
+          "auditBytes": 53776670,
+          "recordCount": 1638,
+          "frameCount": 1638,
+          "encodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1638,
+            "frameCount": 1638,
+            "predictiveSubframes": 3266,
+            "manifestBytes": 2561,
+            "tableCount": 400,
+            "tableBytes": 14800,
+            "sideBytes": 204344,
+            "entropyBytes": 3158145,
+            "bypassBytes": 20646585,
+            "frameBytes": 24048306,
+            "fileBytes": 24065699,
+            "auditBytes": 53776670,
+            "inputRecordCount": 1638
+          },
+          "decodeSummary": {
+            "format": "issue77-round2-summary-v1",
+            "mode": 1,
+            "recordCount": 1638,
+            "frameCount": 1638,
+            "predictiveSubframes": 3266,
+            "manifestBytes": 2561,
+            "tableCount": 400,
+            "tableBytes": 14800,
+            "sideBytes": 204344,
+            "entropyBytes": 3158145,
+            "bypassBytes": 20646585,
+            "frameBytes": 24048306,
+            "fileBytes": 24065699,
+            "auditBytes": 53776670,
+            "inputRecordCount": 1638
+          },
+          "encode": {
+            "wallSeconds": 0.7465461440151557,
+            "userSeconds": 0.68,
+            "systemSeconds": 0.06,
+            "peakRssKiB": 4864
+          },
+          "decode": {
+            "wallSeconds": 0.8898587540024891,
+            "userSeconds": 0.8,
+            "systemSeconds": 0.08,
+            "peakRssKiB": 4864
+          }
+        }
+      }
+    }
+  ]
+}

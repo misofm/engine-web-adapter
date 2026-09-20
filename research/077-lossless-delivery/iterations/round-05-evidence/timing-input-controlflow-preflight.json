@@ -1,0 +1,8 @@
+{
+  "format": "issue77-round5-timing-input-controlflow-preflight-v1",
+  "allChecksPassed": true,
+  "measuredExecution": false,
+  "baselineChecksPassed": true,
+  "expectedStop": "missing R5 full artifact after baseline validation",
+  "message": "R5 artifact differs from result: /data/issue-77-lossless/iterations/round-05/no-r5-full/full/03328fc288eda889bb9bb7813a48bf87d3e011b1698778fc456f57c8561b9db2/p0-rans.mix"
+}

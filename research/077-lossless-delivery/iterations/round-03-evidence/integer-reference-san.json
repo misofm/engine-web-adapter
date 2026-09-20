@@ -1,0 +1,41 @@
+{
+  "buildRecipe": {
+    "compiler": "gcc",
+    "driver": "research/077-lossless-delivery/iterations/round-03/native/round3_integer_driver.c",
+    "flags": [
+      "-std=c11",
+      "-O1",
+      "-g",
+      "-fno-omit-frame-pointer",
+      "-fsanitize=address,undefined",
+      "-Wall",
+      "-Wextra",
+      "-Wconversion",
+      "-Wshadow"
+    ],
+    "libFLAC": "/data/issue-77-lossless/tooling/flac-build/src/libFLAC/libFLAC.a"
+  },
+  "chooseCases": 306,
+  "command": "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 PYTHONDONTWRITEBYTECODE=1 python3 research/077-lossless-delivery/iterations/round-03/test_integer.py --build-dir /data/issue-77-lossless/iterations/round-03/integer-audit-san --sanitized",
+  "diagnostics": false,
+  "driver": "/data/issue-77-lossless/iterations/round-03/integer-audit-san/round3-integer-san",
+  "driverSha256": "2ef45917e4d4e7127565c78854df923c228a8b92bce001eafb3edae145fa054c",
+  "driverSourceSha256": "466ea081a95af51afd82d108ef82ab106445bf186d479d2f6d42a13e4a9b3cf8",
+  "exhaustiveKCases": 306,
+  "flacLibrarySha256": "a485b5d7e8f5cec078c954e8d8cc7ab02af4e5e172024a149ce6b6f941921026",
+  "format": "issue77-round3-integer-tests-v1",
+  "result": "pass",
+  "round1DependencySha256": "9d90b5ed1eda3d58d3b5209fc9caeb48e04959760ddd8cc86e53c333a2de8f0a",
+  "round2DependencySha256": "9dc86f2423fd7aba13e8a9e3058448dd36c0f6c53b144ec17f283cd4c88cf960",
+  "sanitized": true,
+  "seed": "0x77030001/0x77030002",
+  "sourceSha256": "f1cb8f3b9f22266631c6dd3886cda935c7ae0a59c7852fc58c4b958f25feec03",
+  "stderrBytes": 0,
+  "stressPaths": [
+    "coefficientClamp",
+    "modularWrap",
+    "predictionClamp"
+  ],
+  "traceProfiles": 5,
+  "traceVectors": 95
+}
