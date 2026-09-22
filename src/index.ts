@@ -1,7 +1,13 @@
 export { ADAPTER_PROVENANCE } from "./provenance.js";
 export { EngineWebAdapterError } from "./errors.js";
 export { openEngineWebSession, openSparseEngineWebSession } from "./session.js";
-export type { EngineWebAdapterErrorCode, EngineWebAdapterErrorPhase } from "./errors.js";
+export type {
+  EngineWebAdapterErrorCause,
+  EngineWebAdapterErrorCode,
+  EngineWebAdapterErrorContext,
+  EngineWebAdapterErrorPhase,
+  EngineWebAdapterVerification,
+} from "./errors.js";
 export type {
   EngineAudioContext,
   EnginePump,

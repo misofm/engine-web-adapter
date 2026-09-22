@@ -107,7 +107,9 @@ export class VerifiedStemStore implements StemStore {
         await this.#mutateIndex((index) => {
           const row = index.stems[stem.identity];
           if (row === undefined || row.bytes !== stem.bytes) {
-            throw new EngineWebAdapterError("stem.corrupt", "Verified stem disappeared before leasing", { identity: stem.identity });
+            throw new EngineWebAdapterError("storage.io", "Verified stem disappeared before leasing", {
+              identity: stem.identity, operation: "read", resource: "dense-stem", phase: "lease", failureKind: "io",
+            });
           }
           row.pins.push(pin);
           row.lastUsedAt = this.#now();
@@ -180,7 +182,9 @@ export class VerifiedStemStore implements StemStore {
       return await deadline(this.#backend.read(finalName(identity)), this.#readDeadlineMs);
     } catch (error) {
       await this.#demote(identity).catch(() => undefined);
-      throw classify(error, "stem.corrupt", `Stored stem cannot be read: ${identity}`, { identity });
+      throw classify(error, "storage.io", `Stored stem cannot be read: ${identity}`, {
+        identity, operation: "read", resource: "dense-stem", phase: "storage-read",
+      });
     }
   }
 
@@ -372,7 +376,7 @@ export class VerifiedStemStore implements StemStore {
       }
       const observed = hash?.digest("hex") ?? packageResult?.digest?.();
       if (bytes !== stem.bytes || observed !== digest(stem.identity)) {
-        throw integrity(stem, bytes, observed !== digest(stem.identity) ? "BLAKE3 mismatch" : "truncated stream");
+        throw integrity(stem, bytes, observed !== digest(stem.identity) ? "BLAKE3 mismatch" : "truncated stream", observed);
       }
       signal.throwIfAborted();
       await writeOperation(() => writer!.close());
@@ -466,7 +470,7 @@ export class VerifiedStemStore implements StemStore {
       }
     }
     if (typeof parsed === "object" && parsed !== null && "version" in parsed && parsed.version !== INDEX_VERSION) {
-      throw new EngineWebAdapterError("stem.corrupt", "Unsupported stem index version", { version: parsed.version });
+      throw new EngineWebAdapterError("stem.invalid_declaration", "Unsupported stem index version", { version: parsed.version, metadata: "index" });
     }
     if (validIndex(parsed)) return parsed;
     return this.#rebuildIndex(liveLocks ?? await this.#liveLockNames());
@@ -671,9 +675,22 @@ async function runBounded<T>(
   await Promise.all(Array.from({ length: Math.min(width, values.length) }, next));
   if (failed) throw firstError;
 }
-function integrity(stem: StemRequirement, observedBytes: number, reason: string): EngineWebAdapterError {
+function integrity(stem: StemRequirement, observedBytes: number, reason: string, observedDigest?: string): EngineWebAdapterError {
+  const expectedDigest = digest(stem.identity);
+  if (reason === "BLAKE3 mismatch" && observedDigest === undefined) {
+    return new EngineWebAdapterError("storage.io", `Resolved stem could not expose verification evidence: ${reason}`, {
+      identity: stem.identity, operation: "verify", resource: "dense-stem", phase: "verification", failureKind: "adapter",
+    });
+  }
+  const verification = reason === "BLAKE3 mismatch" && observedDigest !== undefined
+    ? { kind: "digest" as const, expected: expectedDigest, observed: observedDigest, algorithm: "blake3-256" }
+    : { kind: "length" as const, expected: stem.bytes, observed: observedBytes };
   return new EngineWebAdapterError("stem.corrupt", `Resolved stem failed verification: ${reason}`, {
-    identity: stem.identity, expectedBytes: stem.bytes, observedBytes, reason,
+    identity: stem.identity,
+    expectedBytes: stem.bytes,
+    observedBytes,
+    reason,
+    verification,
   });
 }
 function emptyIndex(): StoreIndex { return { version: INDEX_VERSION, stems: {} }; }

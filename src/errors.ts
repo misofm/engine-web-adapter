@@ -16,6 +16,7 @@ export type EngineWebAdapterErrorCode =
   | "session.input_path"
   | "session.open"
   | "session.playback"
+  | "storage.io"
   | "stem.cancelled"
   | "stem.corrupt"
   | "stem.decode.asset"
@@ -52,6 +53,42 @@ export type EngineWebAdapterErrorPhase =
   | "console"
   | "lifecycle";
 
+/**
+ * Additive context for an operation which crossed a browser storage boundary.
+ * `phase` is deliberately nested in `details`; the public `phase` property
+ * remains the coarse adapter phase used by existing consumers.
+ */
+export interface EngineWebAdapterErrorContext {
+  readonly operation: string;
+  readonly resource: string;
+  readonly phase: string;
+}
+
+/**
+ * Evidence for a verified mismatch. A corruption code without this shape is
+ * not a valid integrity result.
+ */
+export interface EngineWebAdapterVerification {
+  readonly kind: "digest" | "length";
+  readonly expected: string | number;
+  readonly observed: string | number;
+  readonly algorithm?: string;
+}
+
+/**
+ * Bounded, structured form used when an Error crosses a Worker boundary.
+ * `causes` preserves all members of an AggregateError instead of selecting
+ * one reason. It is intentionally data-only so callers can log it safely.
+ */
+export interface EngineWebAdapterErrorCause {
+  readonly name: string;
+  readonly message: string;
+  readonly code?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+  readonly cause?: EngineWebAdapterErrorCause;
+  readonly causes?: readonly EngineWebAdapterErrorCause[];
+}
+
 interface CodeRow {
   readonly phase: EngineWebAdapterErrorPhase;
   /** What the caller can actually do about it. Never empty. */
@@ -72,6 +109,11 @@ const CODES: Record<EngineWebAdapterErrorCode, CodeRow> = {
   "session.playback": {
     phase: "lifecycle",
     remedy: "Open a new session after the playback worker fails; inspect the retained cause.",
+    transient: false,
+  },
+  "storage.io": {
+    phase: "store",
+    remedy: "Inspect details.operation, details.resource, details.phase and the retained cause; retry only after the caller has resolved the named storage condition.",
     transient: false,
   },
   "session.busy": {
@@ -250,6 +292,118 @@ const CODES: Record<EngineWebAdapterErrorCode, CodeRow> = {
     transient: true,
   },
 };
+
+const MAX_SERIALIZED_CAUSE_DEPTH = 4;
+const MAX_SERIALIZED_CAUSES = 8;
+const MAX_SERIALIZED_STRING = 512;
+const MAX_SERIALIZED_DETAIL_KEYS = 24;
+
+/** Runtime guard used by Worker clients before reviving a public code. */
+export function isEngineWebAdapterErrorCode(value: unknown): value is EngineWebAdapterErrorCode {
+  return typeof value === "string" && Object.hasOwn(CODES, value);
+}
+
+/**
+ * Convert an arbitrary Error-like value to bounded plain data. This preserves
+ * browser exception names and nested causes without making classification
+ * decisions from their message text.
+ */
+export function serializeEngineWebAdapterCause(value: unknown): EngineWebAdapterErrorCause {
+  return serializeCause(value, 0, new Set<object>());
+}
+
+/** Revive the data-only representation used by the Worker wire protocols. */
+export function reviveEngineWebAdapterCause(value: EngineWebAdapterErrorCause): unknown {
+  return reviveCause(value, 0);
+}
+
+function reviveCause(value: EngineWebAdapterErrorCause, depth: number): Error {
+  if (depth >= MAX_SERIALIZED_CAUSE_DEPTH) {
+    const bounded = new Error("Nested cause depth exceeded the adapter bound");
+    bounded.name = "CauseDepthLimit";
+    return bounded;
+  }
+  const nestedCause = value.cause === undefined ? undefined : reviveCause(value.cause, depth + 1);
+  const nestedCauses = value.causes?.slice(0, MAX_SERIALIZED_CAUSES).map((cause) => reviveCause(cause, depth + 1)) ?? [];
+  const revived = value.causes === undefined
+    ? new Error(value.message, nestedCause === undefined ? undefined : { cause: nestedCause })
+    : new AggregateError(nestedCauses, value.message, nestedCause === undefined ? undefined : { cause: nestedCause });
+  revived.name = value.name;
+  if (value.code !== undefined) Object.defineProperty(revived, "code", { value: value.code, enumerable: true, configurable: true });
+  if (value.details !== undefined) Object.defineProperty(revived, "details", { value: value.details, enumerable: true, configurable: true });
+  return revived;
+}
+
+function serializeCause(value: unknown, depth: number, seen: Set<object>): EngineWebAdapterErrorCause {
+  if (depth >= MAX_SERIALIZED_CAUSE_DEPTH) return { name: "CauseDepthLimit", message: "Nested cause depth exceeded the adapter bound" };
+  if (typeof value === "object" && value !== null) {
+    if (seen.has(value)) return { name: "CircularCause", message: "Circular cause was omitted at the adapter boundary" };
+    seen.add(value);
+  }
+  const record = value as { readonly name?: unknown; readonly message?: unknown; readonly code?: unknown; readonly details?: unknown; readonly cause?: unknown } | null;
+  const name = value instanceof Error
+    ? value.name
+    : typeof record?.name === "string" ? record.name : value === null ? "null" : typeof value === "object" ? "Object" : typeof value;
+  const message = value instanceof Error
+    ? value.message
+    : typeof record?.message === "string" ? record.message : safeString(value);
+  const output: {
+    name: string;
+    message: string;
+    code?: string;
+    details?: Readonly<Record<string, unknown>>;
+    cause?: EngineWebAdapterErrorCause;
+    causes?: readonly EngineWebAdapterErrorCause[];
+  } = { name: trimString(name), message: trimString(message) };
+  if (typeof record?.code === "string") output.code = trimString(record.code);
+  if (isRecord(record?.details)) output.details = boundedRecord(record.details, depth + 1, seen);
+  if (value instanceof AggregateError) {
+    output.causes = value.errors.slice(0, MAX_SERIALIZED_CAUSES).map((item) => serializeCause(item, depth + 1, seen));
+  }
+  const nested = readCause(value);
+  if (nested.found) output.cause = serializeCause(nested.value, depth + 1, seen);
+  return output;
+}
+
+function readCause(value: unknown): { readonly found: boolean; readonly value?: unknown } {
+  if (typeof value !== "object" || value === null) return { found: false };
+  try {
+    if (!Object.hasOwn(value, "cause") && !("cause" in value)) return { found: false };
+    return { found: true, value: (value as { readonly cause?: unknown }).cause };
+  } catch {
+    return { found: true, value: "Cause getter threw while crossing the adapter boundary" };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function boundedRecord(value: Record<string, unknown>, depth: number, seen: Set<object>): Readonly<Record<string, unknown>> {
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(value).slice(0, MAX_SERIALIZED_DETAIL_KEYS)) {
+    try { result[key] = boundedValue(value[key], depth, seen); }
+    catch { result[key] = "Unable to serialize detail"; }
+  }
+  return result;
+}
+
+function boundedValue(value: unknown, depth: number, seen: Set<object>): unknown {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+  if (value === undefined) return undefined;
+  if (typeof value === "bigint") return `${value}n`;
+  if (depth >= MAX_SERIALIZED_CAUSE_DEPTH) return "[detail depth limit]";
+  if (typeof value === "object") {
+    if (seen.has(value)) return "[circular detail]";
+    seen.add(value);
+    if (Array.isArray(value)) return value.slice(0, MAX_SERIALIZED_CAUSES).map((item) => boundedValue(item, depth + 1, seen));
+    return boundedRecord(value as Record<string, unknown>, depth + 1, seen);
+  }
+  return safeString(value);
+}
+
+function trimString(value: string): string { return value.length > MAX_SERIALIZED_STRING ? value.slice(0, MAX_SERIALIZED_STRING) : value; }
+function safeString(value: unknown): string { try { return String(value); } catch { return "[unprintable cause]"; } }
 
 /**
  * The single adapter-boundary failure.

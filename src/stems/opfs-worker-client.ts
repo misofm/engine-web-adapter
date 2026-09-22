@@ -1,7 +1,6 @@
 import { createOpfsWorker } from "../assets.js";
 import type { AdapterAssetOverrides } from "../assets.js";
-import { EngineWebAdapterError } from "../errors.js";
-import type { EngineWebAdapterErrorCode } from "../errors.js";
+import { EngineWebAdapterError, isEngineWebAdapterErrorCode, reviveEngineWebAdapterCause } from "../errors.js";
 import { OPFS_WRITE_METHOD, OPFS_WRITE_REMEDY } from "./opfs-worker-protocol.js";
 import type { OpfsWorkerLike, OpfsWorkerRequest, OpfsWorkerResponse } from "./opfs-worker-protocol.js";
 import type { StemStorageWriter } from "./storage.js";
@@ -324,10 +323,21 @@ export class OpfsWriteWorkerClient {
 }
 
 function reviveWorkerError(error: Extract<OpfsWorkerResponse, { type: "opfs-error" }>["error"]): unknown {
-  if (error.code !== undefined) {
-    return new EngineWebAdapterError(error.code as EngineWebAdapterErrorCode, error.message, error.details ?? {});
+  if (error.code !== undefined && isEngineWebAdapterErrorCode(error.code)) {
+    const cause = error.causes === undefined
+      ? error.cause === undefined ? undefined : reviveEngineWebAdapterCause(error.cause)
+      : reviveEngineWebAdapterCause({
+        name: error.name,
+        message: error.message,
+        ...(error.cause === undefined ? {} : { cause: error.cause }),
+        causes: error.causes,
+      });
+    return new EngineWebAdapterError(error.code, error.message, error.details ?? {}, cause);
   }
-  const revived = new Error(error.message);
-  revived.name = error.name;
-  return revived;
+  return reviveEngineWebAdapterCause({
+    name: error.name,
+    message: error.message,
+    ...(error.cause === undefined ? {} : { cause: error.cause }),
+    ...(error.causes === undefined ? {} : { causes: error.causes }),
+  });
 }

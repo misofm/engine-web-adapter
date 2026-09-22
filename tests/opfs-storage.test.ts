@@ -6,7 +6,7 @@ import { getEventListeners } from "node:events";
 import { EngineWebAdapterError } from "../src/errors.js";
 import { OpfsStorageBackend } from "../src/stems/storage.js";
 import { OpfsWriteWorkerClient } from "../src/stems/opfs-worker-client.js";
-import { VerifiedStemStore } from "../src/stems/store.js";
+import { VerifiedSparsePcmStore, VerifiedStemStore } from "../src/stems/index.js";
 import type { OpfsWorkerLike, OpfsWorkerRequest, OpfsWorkerResponse } from "../src/stems/opfs-worker-protocol.js";
 import type { StemIdentity } from "../src/stems/types.js";
 
@@ -21,18 +21,30 @@ const identityFor = (bytes: Uint8Array) => `blake3:${identityHasher.init().updat
 
 interface FakeEntry { bytes: Uint8Array }
 
+interface FakeFaults {
+  directoryOpen?: Error;
+  writerOpen?: Error;
+  read?: Error;
+  write?: Error;
+  close?: Error;
+}
+
 class FakeDirectory {
   readonly kind = "directory" as const;
   readonly files = new Map<string, FakeEntry>();
   readonly directories = new Map<string, FakeDirectory>();
   readonly locked = new Set<string>();
+  readonly faults: FakeFaults;
   handlesWithoutSyncAccess = false;
 
+  constructor(faults: FakeFaults = {}) { this.faults = faults; }
+
   async getDirectoryHandle(name: string, options: { create?: boolean } = {}): Promise<FakeDirectory> {
+    if (this.faults.directoryOpen !== undefined) throw this.faults.directoryOpen;
     const existing = this.directories.get(name);
     if (existing !== undefined) return existing;
     if (options.create !== true) throw named(`${name} was not found`, "NotFoundError");
-    const created = new FakeDirectory();
+    const created = new FakeDirectory(this.faults);
     created.handlesWithoutSyncAccess = this.handlesWithoutSyncAccess;
     this.directories.set(name, created);
     return created;
@@ -66,9 +78,11 @@ class FakeDirectory {
 class FakeFileHandle {
   constructor(private readonly directory: FakeDirectory, private readonly name: string) {}
 
-  async getFile(): Promise<{ stream(): ReadableStream<Uint8Array>; text(): Promise<string> }> {
+  async getFile(): Promise<{ readonly size: number; stream(): ReadableStream<Uint8Array>; text(): Promise<string> }> {
+    if (this.directory.faults.read !== undefined) throw this.directory.faults.read;
     const bytes = this.#entry().bytes.slice();
     return {
+      size: bytes.byteLength,
       stream: () => new ReadableStream<Uint8Array>({
         start(controller) { controller.enqueue(bytes); controller.close(); },
       }),
@@ -82,6 +96,7 @@ class FakeFileHandle {
     flush(): void;
     close(): void;
   }> {
+    if (this.directory.faults.writerOpen !== undefined) throw this.directory.faults.writerOpen;
     if (this.directory.locked.has(this.name)) throw named(`${this.name} is locked`, "NoModificationAllowedError");
     this.directory.locked.add(this.name);
     const entry = this.#entry();
@@ -90,6 +105,7 @@ class FakeFileHandle {
     let closed = false;
     return {
       write: (data, options = {}) => {
+        if (directory.faults.write !== undefined) throw directory.faults.write;
         if (closed) throw named("handle is closed", "InvalidStateError");
         const at = options.at ?? 0;
         const size = Math.max(entry.bytes.byteLength, at + data.byteLength);
@@ -103,7 +119,10 @@ class FakeFileHandle {
         if (closed) throw named("handle is closed", "InvalidStateError");
         entry.bytes = entry.bytes.slice(0, size);
       },
-      flush: () => { if (closed) throw named("handle is closed", "InvalidStateError"); },
+      flush: () => {
+        if (directory.faults.close !== undefined) throw directory.faults.close;
+        if (closed) throw named("handle is closed", "InvalidStateError");
+      },
       close: () => { closed = true; directory.locked.delete(name); },
     };
   }
@@ -735,6 +754,125 @@ test("a file handle without createSyncAccessHandle fails typed, never as a bare 
     error instanceof EngineWebAdapterError
     && error.code === "capability.opfs"
     && error.details["missing"] === "FileSystemFileHandle.createSyncAccessHandle");
+});
+
+test("OPFS Worker errors retain browser names and nested finalizer causes", async () => {
+  const harness = controlledWorkerHarness();
+  const client = new OpfsWriteWorkerClient({ idleGraceMs: 0, createWorker: () => harness.worker });
+  const opening = client.createWriter("folder", "nested-cause");
+  harness.emit({ type: "worker-ready", writeSupport: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = harness.messages.find((message) => message.type === "write-open");
+  assert.ok(request);
+  harness.emit({
+    type: "opfs-error",
+    requestId: request.requestId,
+    error: {
+      name: "UnknownError",
+      message: "storage write refused",
+      causes: [
+        { name: "InvalidStateError", message: "handle state" },
+        { name: "NoModificationAllowedError", message: "cleanup lock" },
+      ],
+      cause: { name: "NotAllowedError", message: "browser policy" },
+    },
+  });
+  await assert.rejects(opening, (error: unknown) => {
+    if (!(error instanceof Error) || error.name !== "UnknownError") return false;
+    const aggregate = error as Error & { readonly errors?: readonly Error[]; readonly cause?: Error };
+    return aggregate.cause?.name === "NotAllowedError" &&
+      aggregate.errors?.map((item) => item.name).join(",") === "InvalidStateError,NoModificationAllowedError";
+  });
+  client.close();
+});
+
+test("OPFS storage exceptions stay structured I/O failures across root, open, read, write, and close", async () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const expected = {
+    identity: identityFor(bytes), sampleRateHz: 48_000, channels: 1 as const, bitDepth: 16 as const,
+    frames: 2, canonicalBytes: bytes.byteLength,
+  };
+  const cases = [
+    {
+      label: "root", name: "UnknownError", operation: "open", resource: "sparse-root", phase: "root-open",
+      make: () => {
+        const root = new FakeDirectory();
+        const backend = new OpfsStorageBackend({
+          folderName: "opfs-fault-root-v1", storage: { getDirectory: async () => { throw named("root denied", "UnknownError"); } } as never,
+          createWorker: () => fakeOpfsWorker(root), readDeadlineMs: 5_000,
+        });
+        return { backend, store: new VerifiedSparsePcmStore({ backend, instanceId: "fault-root" }) };
+      },
+    },
+    {
+      label: "open", name: "InvalidStateError", operation: "open", resource: "sparse-root", phase: "root-open",
+      make: () => {
+        const root = new FakeDirectory({ directoryOpen: named("root handle is invalid", "InvalidStateError") });
+        const backend = backendFor(root, "opfs-fault-open-v1");
+        return { backend, store: new VerifiedSparsePcmStore({ backend, instanceId: "fault-open" }) };
+      },
+    },
+    {
+      label: "writer-open", name: "NotAllowedError", operation: "create", resource: "sparse-payload", phase: "writer-open",
+      make: () => {
+        const root = new FakeDirectory({ writerOpen: named("writer creation denied", "NotAllowedError") });
+        const backend = backendFor(root, "opfs-fault-writer-open-v1");
+        return { backend, store: new VerifiedSparsePcmStore({ backend, instanceId: "fault-writer-open" }) };
+      },
+    },
+    {
+      label: "read", name: "NotAllowedError", operation: "read", resource: "sparse-marker", phase: "metadata",
+      make: () => {
+        const root = new FakeDirectory();
+        const backend = backendFor(root, "opfs-fault-read-v1");
+        return { backend, store: new VerifiedSparsePcmStore({ backend, instanceId: "fault-read" }), root };
+      },
+    },
+    {
+      label: "write", name: "NoModificationAllowedError", operation: "write", resource: "sparse-payload", phase: "payload-write",
+      make: () => {
+        const root = new FakeDirectory({ write: named("writer is locked", "NoModificationAllowedError") });
+        const backend = backendFor(root, "opfs-fault-write-v1");
+        return { backend, store: new VerifiedSparsePcmStore({ backend, instanceId: "fault-write" }) };
+      },
+    },
+    {
+      label: "close", name: "UnknownError", operation: "close", resource: "sparse-payload", phase: "writer-close",
+      make: () => {
+        const root = new FakeDirectory({ close: named("flush failed", "UnknownError") });
+        const backend = backendFor(root, "opfs-fault-close-v1");
+        return { backend, store: new VerifiedSparsePcmStore({ backend, instanceId: "fault-close" }) };
+      },
+    },
+  ] as const;
+
+  for (const fixture of cases) {
+    const resources = fixture.make();
+    const { backend, store } = resources;
+    let resolverCalls = 0;
+    try {
+      if (fixture.label === "read") {
+        await store.installSource(expected, { resolve: async () => ({ spans: (async function* () { yield { startFrame: 0, bytes }; })() }) });
+        const root = (resources as unknown as { readonly root: FakeDirectory }).root;
+        root.faults.read = named("marker read denied", "NotAllowedError");
+        await assert.rejects(store.openSource(expected), (error: unknown) =>
+          error instanceof EngineWebAdapterError && error.code === "storage.io" &&
+          error.details.operation === fixture.operation && error.details.resource === fixture.resource && error.details.phase === fixture.phase &&
+          (error.cause as Error | undefined)?.name === fixture.name);
+      } else {
+        await assert.rejects(store.installSource(expected, {
+          resolve: async () => { resolverCalls += 1; return { spans: (async function* () { yield { startFrame: 0, bytes }; })() }; },
+        }), (error: unknown) =>
+          error instanceof EngineWebAdapterError && error.code === "storage.io" &&
+          error.details.operation === fixture.operation && error.details.resource === fixture.resource && error.details.phase === fixture.phase &&
+          (error.cause as Error | undefined)?.name === fixture.name);
+        if (fixture.label === "root" || fixture.label === "open") assert.equal(resolverCalls, 0, `${fixture.label} refuses before resolver work`);
+      }
+    } finally {
+      await store.close();
+      backend.close();
+    }
+  }
 });
 
 test("the verified store ingests, promotes, and rereads canonical PCM on the OPFS backend", async () => {

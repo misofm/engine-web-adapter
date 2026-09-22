@@ -1,0 +1,16 @@
+{
+  "name": "EngineWebAdapterError",
+  "message": "Sparse root access failed",
+  "code": "storage.io",
+  "phase": "store",
+  "details": {
+    "operation": "open",
+    "resource": "sparse-root",
+    "phase": "root-open",
+    "failureKind": "io"
+  },
+  "cause": {
+    "name": "UnknownError",
+    "message": "Storage access was refused"
+  }
+}

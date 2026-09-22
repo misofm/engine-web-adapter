@@ -614,7 +614,7 @@ test("unsupported index version refuses before touching historical files", async
   backend.files.set("staging-old", new Uint8Array([5]));
   backend.files.set("staging/old", new Uint8Array([6]));
   const before = [...backend.files].map(([name, bytes]) => [name, [...bytes]]);
-  await assert.rejects(new VerifiedStemStore({ backend, locks: new TestLocks() }).open(), { code: "stem.corrupt" });
+  await assert.rejects(new VerifiedStemStore({ backend, locks: new TestLocks() }).open(), { code: "stem.invalid_declaration" });
   assert.deepEqual([...backend.files].map(([name, bytes]) => [name, [...bytes]]), before);
 });
 

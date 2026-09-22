@@ -3,6 +3,7 @@ import { afterEach, describe, it } from "node:test";
 import { createBLAKE3 } from "hash-wasm";
 
 import { SparseVerifyWorkerPool } from "../src/stems/sparse-verify-worker-pool.js";
+import type { EngineWebAdapterErrorCause, EngineWebAdapterVerification } from "../src/errors.js";
 import { MemoryStemStorageBackend, VerifiedSparsePcmStore, createSparseStemResolver } from "../src/stems/index.js";
 import {
   SPARSE_VERIFY_PROTOCOL_VERSION,
@@ -454,7 +455,46 @@ describe("Sparse verification Worker transport", () => {
         readDeadlineMs: item.mode === "deadline" ? 15 : 250,
       });
       assert.equal(result.failure?.kind, item.kind, item.mode);
+      if (item.mode === "short") {
+        assert.deepEqual(result.failure?.verification, { kind: "length", expected: 4, observed: 3 });
+      }
     }
+  });
+
+  it("round trips sparse worker nested causes and verification evidence", async () => {
+    class FailureWorker extends FakeVerifyWorker {
+      override postMessage(message: any): void {
+        if (message.type !== "start") return super.postMessage(message);
+        queueMicrotask(() => this.emitForTest({ data: {
+          type: "failure", version: SPARSE_VERIFY_PROTOCOL_VERSION,
+          jobId: message.jobId, generation: message.generation, kind: "io",
+          message: "Sparse verification read failed",
+          verification: { kind: "length", expected: 4, observed: 3 },
+          cause: {
+            name: "AggregateError", message: "read and cleanup failed",
+            cause: { name: "UnknownError", message: "browser read failed" },
+            causes: [
+              { name: "InvalidStateError", message: "reader state" },
+              { name: "NoModificationAllowedError", message: "cleanup state" },
+            ],
+          } satisfies EngineWebAdapterErrorCause,
+        } }));
+      }
+    }
+    (globalThis as unknown as { Worker: new () => ListenerWorker }).Worker = FailureWorker;
+    const pool = new SparseVerifyWorkerPool({ width: 1 });
+    const result = await pool.run(runOptions(smallIndex(), new AbortController().signal)).catch((error: unknown) => error);
+    assert.equal(result instanceof Error && "kind" in result && result.kind, "io");
+    assert.deepEqual((result as Error & { readonly verification?: EngineWebAdapterVerification }).verification, {
+      kind: "length", expected: 4, observed: 3,
+    });
+    const cause = (result as Error).cause;
+    assert.equal(cause instanceof AggregateError, true);
+    const aggregate = cause as AggregateError & { readonly cause?: unknown };
+    const nestedCause = aggregate.cause;
+    assert.equal(nestedCause instanceof Error && nestedCause.name, "UnknownError");
+    assert.deepEqual(aggregate.errors.map((value) => (value as Error).name), ["InvalidStateError", "NoModificationAllowedError"]);
+    await pool.close();
   });
 
   it("coalesces held progress, cancels the actual loop, and leaves no terminal delivery", async () => {
@@ -581,13 +621,19 @@ function runOptions(index: ReturnType<typeof smallIndex>, signal: AbortSignal) {
 function completeMessage(identity: `blake3:${string}`, jobId: number, generation: number): Record<string, unknown> {
   return {
     type: "complete", version: SPARSE_VERIFY_PROTOCOL_VERSION, jobId, generation,
-    identity, digest: "0".repeat(64), progressBytes: 8, canonicalBytes: 8,
+    identity, digest: identity.slice(7), progressBytes: 8, canonicalBytes: 8,
     readCalls: 1, readBytes: 4, hashedBytes: 8, hashUpdates: 2, zeroUpdates: 1,
     elapsedMs: 1, readWaitMs: 1, hashMs: 1,
   };
 }
 
-type ActualWorkerFailure = { readonly type: "failure"; readonly kind: string; readonly message: string };
+type ActualWorkerFailure = {
+  readonly type: "failure";
+  readonly kind: string;
+  readonly message: string;
+  readonly verification?: EngineWebAdapterVerification;
+  readonly cause?: EngineWebAdapterErrorCause;
+};
 type ActualWorkerScope = { onmessage: ((event: MessageEvent<unknown>) => void) | null };
 
 interface ActualWorkerLoopOptions {
@@ -778,7 +824,7 @@ class FakeVerifyWorker implements ListenerWorker {
       if (this.hold) return;
       queueMicrotask(() => this.emit({ data: {
         type: "complete", version: SPARSE_VERIFY_PROTOCOL_VERSION, jobId: message.jobId, generation: message.generation,
-        identity: this.identity, digest: "0".repeat(64), progressBytes: 8, canonicalBytes: 8, readCalls: 1, readBytes: 4, hashedBytes: 8,
+        identity: this.identity, digest: this.identity.slice(7), progressBytes: 8, canonicalBytes: 8, readCalls: 1, readBytes: 4, hashedBytes: 8,
         hashUpdates: 2, zeroUpdates: 1,
         elapsedMs: 1, readWaitMs: 1, hashMs: 1,
       } }));

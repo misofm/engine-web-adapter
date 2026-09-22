@@ -1,6 +1,7 @@
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
 
 import { EngineWebAdapterError } from "../errors.js";
+import type { EngineWebAdapterErrorContext, EngineWebAdapterVerification } from "../errors.js";
 import { createIncrementalBlake3, type IncrementalBlake3 } from "./blake3.js";
 import { registerForcedProgressObserver, sparseProgressReporter, type ProgressObserver } from "./progress.js";
 import { sparseResolverScheduling } from "./sparse-scheduling.js";
@@ -64,15 +65,23 @@ export type SparsePcmPresence =
   | { readonly status: "missing" }
   | { readonly status: "present"; readonly activeBytes: number };
 
-class SparseBoundaryError extends Schema.TaggedError<SparseBoundaryError>()("SparseBoundaryError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
-class SparseCorruptError extends Schema.TaggedError<SparseCorruptError>()("SparseCorruptError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
-class SparseNotFoundError extends Schema.TaggedError<SparseNotFoundError>()("SparseNotFoundError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
-class SparseCancelledError extends Schema.TaggedError<SparseCancelledError>()("SparseCancelledError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
-class SparseDeadlineError extends Schema.TaggedError<SparseDeadlineError>()("SparseDeadlineError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
-class SparseQuotaError extends Schema.TaggedError<SparseQuotaError>()("SparseQuotaError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
-class SparseConflictError extends Schema.TaggedError<SparseConflictError>()("SparseConflictError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
-class SparseIoError extends Schema.TaggedError<SparseIoError>()("SparseIoError", { message: Schema.String, cause: Schema.optionalKey(Schema.Unknown) }) {}
-type SparseFailure = SparseBoundaryError | SparseCorruptError | SparseNotFoundError | SparseCancelledError | SparseDeadlineError | SparseQuotaError | SparseConflictError | SparseIoError;
+const SparseFailureFields = {
+  message: Schema.String,
+  cause: Schema.optionalKey(Schema.Unknown),
+  context: Schema.optionalKey(Schema.Unknown),
+  verification: Schema.optionalKey(Schema.Unknown),
+  failureKind: Schema.optionalKey(Schema.String),
+} as const;
+class SparseBoundaryError extends Schema.TaggedError<SparseBoundaryError>()("SparseBoundaryError", SparseFailureFields) {}
+class SparseMetadataError extends Schema.TaggedError<SparseMetadataError>()("SparseMetadataError", SparseFailureFields) {}
+class SparseIntegrityError extends Schema.TaggedError<SparseIntegrityError>()("SparseIntegrityError", SparseFailureFields) {}
+class SparseNotFoundError extends Schema.TaggedError<SparseNotFoundError>()("SparseNotFoundError", SparseFailureFields) {}
+class SparseCancelledError extends Schema.TaggedError<SparseCancelledError>()("SparseCancelledError", SparseFailureFields) {}
+class SparseDeadlineError extends Schema.TaggedError<SparseDeadlineError>()("SparseDeadlineError", SparseFailureFields) {}
+class SparseQuotaError extends Schema.TaggedError<SparseQuotaError>()("SparseQuotaError", SparseFailureFields) {}
+class SparseConflictError extends Schema.TaggedError<SparseConflictError>()("SparseConflictError", SparseFailureFields) {}
+class SparseIoError extends Schema.TaggedError<SparseIoError>()("SparseIoError", SparseFailureFields) {}
+type SparseFailure = SparseBoundaryError | SparseMetadataError | SparseIntegrityError | SparseNotFoundError | SparseCancelledError | SparseDeadlineError | SparseQuotaError | SparseConflictError | SparseIoError;
 
 const ExpectedSchema = Schema.Struct({
   identity: Schema.String,
@@ -122,7 +131,7 @@ interface BackendShape {
   readonly createWriter: (name: string, signal: AbortSignal) => Effect.Effect<StemStorageWriter, SparseFailure>;
   readonly write: (writer: StemStorageWriter, chunk: Uint8Array | string) => Effect.Effect<void, SparseFailure>;
   readonly close: (writer: StemStorageWriter) => Effect.Effect<void, SparseFailure>;
-  readonly abort: (writer: StemStorageWriter, reason: unknown) => Effect.Effect<void, never>;
+  readonly abort: (writer: StemStorageWriter, reason: unknown) => Effect.Effect<void, SparseFailure>;
   readonly remove: (name: string) => Effect.Effect<void, SparseFailure>;
   readonly estimate: Effect.Effect<{ readonly quota?: number; readonly usage?: number }, SparseFailure>;
   readonly lock: { readonly locks?: WebLockProvider; readonly shared: SharedLockState; readonly folderName: string };
@@ -131,24 +140,43 @@ interface BackendShape {
   readonly opfsOwnedDeadlines: boolean;
 }
 
+interface SparseWriterState {
+  readonly signal: AbortSignal;
+  readonly context: EngineWebAdapterErrorContext;
+}
+
+function storageContext(operation: string, resource: string, phase: string): EngineWebAdapterErrorContext {
+  return Object.freeze({ operation, resource, phase });
+}
+
+function resourceForName(name: string): string {
+  if (name.startsWith("sparse-pcm-v1-commit-")) return "sparse-marker";
+  if (name.startsWith("sparse-pcm-v1-data-")) return "sparse-payload";
+  return "sparse-storage";
+}
+
 class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engine-web/SparseBackend") {
   static layer(backend: StemStorageBackend, options: { readonly lock: BackendShape["lock"]; readonly instanceId: string; readonly readDeadlineMs: number }): Layer.Layer<SparseBackend> {
-    const writerSignals = new WeakMap<StemStorageWriter, AbortSignal>();
-    const fail = (operation: string, cause: unknown): SparseFailure => {
+    const writerSignals = new WeakMap<StemStorageWriter, SparseWriterState>();
+    const fail = (operation: string, cause: unknown, context: EngineWebAdapterErrorContext, failureKind = "io"): SparseFailure => {
       const name = cause && typeof cause === "object" && "name" in cause ? String((cause as { readonly name?: unknown }).name) : "";
-      if (name === "AbortError") return new SparseCancelledError({ message: `${operation} was cancelled`, cause });
-      if (name === "TimeoutError") return new SparseDeadlineError({ message: `${operation} exceeded its deadline`, cause });
-      if (name === "QuotaExceededError") return new SparseQuotaError({ message: `${operation} exceeded quota`, cause });
-      return new SparseIoError({ message: `${operation} failed`, cause });
+      if (name === "AbortError") return new SparseCancelledError({ message: `${operation} was cancelled`, cause, context, failureKind: "interruption" });
+      if (name === "TimeoutError") return new SparseDeadlineError({ message: `${operation} exceeded its deadline`, cause, context, failureKind: "deadline" });
+      if (name === "QuotaExceededError") return new SparseQuotaError({ message: `${operation} exceeded quota`, cause, context, failureKind: "quota" });
+      return new SparseIoError({ message: `${operation} failed`, cause, context, failureKind });
     };
-    const promise = <A>(operation: string, run: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, SparseFailure> => Effect.tryPromise({ try: run, catch: (cause) => fail(operation, cause) });
-    const timed = <A>(operation: string, run: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, SparseFailure> => {
-      const base = promise(operation, run);
-      return base.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline` }))));
+    const promise = <A>(operation: string, context: EngineWebAdapterErrorContext, run: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, SparseFailure> => Effect.tryPromise({ try: run, catch: (cause) => fail(operation, cause, context) });
+    const timed = <A>(operation: string, context: EngineWebAdapterErrorContext, run: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, SparseFailure> => {
+      const base = promise(operation, context, run);
+      return base.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline`, context, failureKind: "deadline" }))));
     };
-    const physical = <A>(operation: string, writer: StemStorageWriter | undefined, run: () => PromiseLike<A>): Effect.Effect<A, SparseFailure> => {
+    const physical = <A>(operation: string, writer: StemStorageWriter | undefined, context: EngineWebAdapterErrorContext, run: () => PromiseLike<A>): Effect.Effect<A, SparseFailure> => {
       const effect = Effect.callback<A, SparseFailure>((resume, effectSignal) => {
-        const requestedSignal = writer === undefined ? undefined : writerSignals.get(writer);
+        const writerState = writer === undefined ? undefined : writerSignals.get(writer);
+        const requestedSignal = writerState?.signal;
+        const operationContext = writerState === undefined
+          ? context
+          : storageContext(operation, writerState.context.resource, context.phase);
         let settled = false;
         let mutationStarted = false;
         let abortRequested = false;
@@ -158,7 +186,7 @@ class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engi
         const onAbort = () => {
           abortRequested = true;
           if (!mutationStarted) {
-            finish(Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled` })));
+            finish(Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, context: operationContext, failureKind: "interruption" })));
             return;
           }
           if (pending === undefined) return;
@@ -170,11 +198,13 @@ class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engi
           void Promise.allSettled([pending, abortPromise]).then((results) => {
             if (settled) return;
             const abortResult = results[1];
-            finish(abortResult?.status === "rejected" ? Effect.fail(fail(operation, abortResult.reason)) : Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled` })));
+            finish(abortResult?.status === "rejected"
+              ? Effect.fail(fail(operation, abortResult.reason, operationContext))
+              : Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, context: operationContext, failureKind: "interruption" })));
           });
         };
         if (requestedSignal?.aborted) {
-          finish(Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, cause: requestedSignal.reason })));
+          finish(Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, cause: requestedSignal.reason, context: operationContext, failureKind: "interruption" })));
           return Effect.void;
         }
         requestedSignal?.addEventListener("abort", onAbort, { once: true });
@@ -185,7 +215,9 @@ class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engi
         mutationStarted = true;
         try { pending = Promise.resolve(run()); }
         catch (cause) {
-          finish(requestedSignal?.aborted || abortRequested ? Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, cause })) : Effect.fail(fail(operation, cause)));
+          finish(requestedSignal?.aborted || abortRequested
+            ? Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, cause, context: operationContext, failureKind: "interruption" }))
+            : Effect.fail(fail(operation, cause, operationContext)));
           return Effect.void;
         }
         if (requestedSignal?.aborted || abortRequested) onAbort();
@@ -196,7 +228,7 @@ class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engi
           },
           (cause) => {
             if (requestedSignal?.aborted || abortRequested) { onAbort(); return; }
-            if (!effectSignal.aborted) finish(Effect.fail(fail(operation, cause)));
+            if (!effectSignal.aborted) finish(Effect.fail(fail(operation, cause, operationContext)));
           },
         );
         return Effect.promise(async () => {
@@ -211,66 +243,77 @@ class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engi
           // physical mutation. Never remove or unlock while a late write can
           // still settle against the owned file.
           await Promise.allSettled([pending]);
-          if (abortFailure !== undefined) throw abortFailure;
+          if (abortFailure !== undefined) throw fail("abort", abortFailure, storageContext("abort", operationContext.resource, "writer-abort"));
         });
       });
       if (ownsOpfsWriteDeadlines(backend, options.readDeadlineMs)) return effect;
-      return effect.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline` }))));
+      return effect.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline`, context, failureKind: "deadline" }))));
     };
     const createWriter = (name: string, requestedSignal: AbortSignal): Effect.Effect<StemStorageWriter, SparseFailure> => Effect.callback<StemStorageWriter, SparseFailure>((resume, effectSignal) => {
       const signal = requestedSignal;
+      const context = storageContext("create", resourceForName(name), "writer-open");
       let pending: Promise<StemStorageWriter>;
       try { pending = Promise.resolve(backend.createWriter(name, signal)); }
-      catch (cause) { resume(Effect.fail(fail("writer create", cause))); return; }
+      catch (cause) { resume(Effect.fail(fail("create", cause, context))); return; }
       let settled = false;
       const complete = (result: Effect.Effect<StemStorageWriter, SparseFailure>) => { if (!settled) { settled = true; signal.removeEventListener("abort", onAbort); resume(result); } };
       const onAbort = () => {
         void pending.then(async (writer) => {
           try {
             await writer.abort(new DOMException("Physical writer acquisition interrupted", "AbortError"));
-            complete(Effect.fail(new SparseCancelledError({ message: "Sparse writer acquisition was cancelled" })));
+            complete(Effect.fail(new SparseCancelledError({ message: "Sparse writer acquisition was cancelled", context, failureKind: "interruption" })));
           } catch (cause) {
-            complete(Effect.fail(fail("writer abort", cause)));
+            complete(Effect.fail(fail("abort", cause, storageContext("abort", context.resource, "writer-abort"))));
           }
-        }, (cause) => complete(Effect.fail(isAbort(cause) ? new SparseCancelledError({ message: "Sparse writer acquisition was cancelled", cause }) : fail("writer create", cause))));
+        }, (cause) => complete(Effect.fail(isAbort(cause)
+          ? new SparseCancelledError({ message: "Sparse writer acquisition was cancelled", cause, context, failureKind: "interruption" })
+          : fail("create", cause, context))));
       };
       signal.addEventListener("abort", onAbort, { once: true });
       pending.then(
-        (writer) => { if (!signal.aborted && !effectSignal.aborted) { writerSignals.set(writer, signal); complete(Effect.succeed(writer)); } else onAbort(); },
-        (cause) => { if (!effectSignal.aborted) complete(Effect.fail(signal.aborted || isAbort(cause) ? new SparseCancelledError({ message: "Sparse writer acquisition was cancelled", cause }) : fail("writer create", cause))); },
+        (writer) => { if (!signal.aborted && !effectSignal.aborted) { writerSignals.set(writer, { signal, context }); complete(Effect.succeed(writer)); } else onAbort(); },
+        (cause) => { if (!effectSignal.aborted) complete(Effect.fail(signal.aborted || isAbort(cause)
+          ? new SparseCancelledError({ message: "Sparse writer acquisition was cancelled", cause, context, failureKind: "interruption" })
+          : fail("create", cause, context))); },
       );
       return Effect.promise(async () => {
         signal.removeEventListener("abort", onAbort);
         let writer: StemStorageWriter;
         try { writer = await pending; }
         catch { return; } // a rejected create has no physical writer to abort
-        await writer.abort(new DOMException("Physical writer acquisition interrupted", "AbortError"));
+        try { await writer.abort(new DOMException("Physical writer acquisition interrupted", "AbortError")); }
+        catch (cause) { throw fail("abort", cause, storageContext("abort", context.resource, "writer-abort")); }
       });
     });
     const createTimed = (name: string, signal: AbortSignal): Effect.Effect<StemStorageWriter, SparseFailure> => {
       const effect = createWriter(name, signal);
-      return ownsOpfsWriteDeadlines(backend, options.readDeadlineMs) ? effect : effect.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: "writer create exceeded its deadline" }))));
+      const context = storageContext("create", resourceForName(name), "writer-open");
+      return ownsOpfsWriteDeadlines(backend, options.readDeadlineMs) ? effect : effect.pipe(Effect.timeout(options.readDeadlineMs), Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: "writer create exceeded its deadline", context, failureKind: "deadline" }))));
     };
     const removePhysical = (name: string): Effect.Effect<void, SparseFailure> => Effect.callback<void, SparseFailure>((resume, effectSignal) => {
+      const context = storageContext("remove", resourceForName(name), "cleanup");
       let pending: Promise<void>;
       try { pending = Promise.resolve(backend.remove(name)); }
-      catch (cause) { resume(Effect.fail(fail("storage remove", cause))); return; }
+      catch (cause) { resume(Effect.fail(fail("remove", cause, context))); return; }
       pending.then(
         () => { if (!effectSignal.aborted) resume(Effect.succeed(undefined)); },
-        (cause) => { if (!effectSignal.aborted) resume(Effect.fail(fail("storage remove", cause))); },
+        (cause) => { if (!effectSignal.aborted) resume(Effect.fail(fail("remove", cause, context))); },
       );
       return Effect.promise(() => pending);
     });
     return Layer.succeed(this, this.of({
-      open: timed("storage open", () => backend.open()),
-      exists: (name) => timed("storage exists", () => backend.exists(name)),
-      read: (name) => timed("storage read", () => backend.read(name)),
+      open: timed("open", storageContext("open", "sparse-root", "root-open"), () => backend.open()),
+      exists: (name) => timed("exists", storageContext("exists", resourceForName(name), "metadata"), () => backend.exists(name)),
+      read: (name) => timed("read", storageContext("read", resourceForName(name), "metadata"), () => backend.read(name)),
       createWriter: (name, signal) => createTimed(name, signal),
-      write: (writer, chunk) => physical("writer write", writer, () => writer.write(chunk)).pipe(Effect.asVoid),
-      close: (writer) => physical("writer close", writer, () => writer.close()).pipe(Effect.asVoid),
-      abort: (writer, reason) => Effect.promise(() => writer.abort(reason)),
+      write: (writer, chunk) => physical("write", writer, storageContext("write", "sparse-storage", "payload-write"), () => writer.write(chunk)).pipe(Effect.asVoid),
+      close: (writer) => physical("close", writer, storageContext("close", "sparse-storage", "writer-close"), () => writer.close()).pipe(Effect.asVoid),
+      abort: (writer, reason) => {
+        const context = writerSignals.get(writer)?.context ?? storageContext("abort", "sparse-storage", "writer-abort");
+        return promise("abort", storageContext("abort", context.resource, "writer-abort"), () => writer.abort(reason));
+      },
       remove: removePhysical,
-      estimate: timed("storage estimate", () => backend.estimate?.() ?? Promise.resolve({})),
+      estimate: timed("estimate", storageContext("estimate", "sparse-root", "quota"), () => backend.estimate?.() ?? Promise.resolve({})),
       lock: options.lock,
       instanceId: options.instanceId,
       readDeadlineMs: options.readDeadlineMs,
@@ -969,10 +1012,14 @@ function resolveSource(
     const resolving = Effect.callback<SparsePcmResolved, SparseFailure>((resume, effectSignal) => {
       let pending: Promise<SparsePcmResolved>;
       try { pending = Promise.resolve(resolve(child.signal, context)); }
-      catch (cause) { resume(Effect.fail(isAbort(cause) ? new SparseCancelledError({ message: "Sparse resolver was cancelled", cause }) : new SparseIoError({ message: "Sparse resolver failed", cause }))); return Effect.sync(() => { child.abort(cause); }); }
+      catch (cause) { resume(Effect.fail(isAbort(cause)
+        ? new SparseCancelledError({ message: "Sparse resolver was cancelled", cause, context: storageContext("resolve", "resolver", "resolution"), failureKind: "interruption" })
+        : new SparseIoError({ message: "Sparse resolver failed", cause, context: storageContext("resolve", "resolver", "resolution"), failureKind: "io" }))); return Effect.sync(() => { child.abort(cause); }); }
       pending.then(
         (resolved) => { if (!effectSignal.aborted) resume(Effect.succeed(resolved)); },
-        (cause) => { if (!effectSignal.aborted) resume(Effect.fail(isAbort(cause) ? new SparseCancelledError({ message: "Sparse resolver was cancelled", cause }) : new SparseIoError({ message: "Sparse resolver failed", cause }))); },
+        (cause) => { if (!effectSignal.aborted) resume(Effect.fail(isAbort(cause)
+          ? new SparseCancelledError({ message: "Sparse resolver was cancelled", cause, context: storageContext("resolve", "resolver", "resolution"), failureKind: "interruption" })
+          : new SparseIoError({ message: "Sparse resolver failed", cause, context: storageContext("resolve", "resolver", "resolution"), failureKind: "io" }))); },
       );
       return Effect.promise(async () => {
         child.abort(new DOMException("Sparse resolver interrupted", "AbortError"));
@@ -980,13 +1027,13 @@ function resolveSource(
       });
     }).pipe(
       Effect.timeout(deadlineMs),
-      Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: "Sparse resolver exceeded its deadline" }))),
+      Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: "Sparse resolver exceeded its deadline", context: storageContext("resolve", "resolver", "resolution"), failureKind: "deadline" }))),
     );
     const value = yield* resolving;
     return yield* Effect.try({ try: () => {
       if (!isRecord(value) || typeof (value.spans as { readonly [Symbol.asyncIterator]?: unknown } | undefined)?.[Symbol.asyncIterator] !== "function") throw new Error("resolver spans must be an AsyncIterable");
       return { ...value, sourceController: child } as ResolvedInput;
-    }, catch: (cause) => new SparseBoundaryError({ message: "Sparse resolver result is invalid", cause }) });
+    }, catch: (cause) => new SparseBoundaryError({ message: "Sparse resolver result is invalid", cause, context: storageContext("resolve", "resolver", "resolution"), failureKind: "adapter" }) });
   });
 }
 
@@ -1031,10 +1078,10 @@ function ingestAndCommit(
     // Reserve the unpublished name before asking the backend to create it.
     // A backend may create a file and then reject/cancel the create promise;
     // cleanup must still know that this transaction owns that name.
-    const dataWriter = yield* Effect.acquireRelease(backend.createWriter(dataName, operation.signal), (writer) => dataClosed ? Effect.void : backend.abort(writer, "data writer scope closed"), { interruptible: true });
+    const dataWriter = yield* Effect.acquireRelease(backend.createWriter(dataName, operation.signal), (writer) => dataClosed ? Effect.void : backend.abort(writer, "data writer scope closed").pipe(Effect.orDie), { interruptible: true });
     const hash = yield* Effect.tryPromise({
       try: createIncrementalBlake3,
-      catch: (cause) => new SparseBoundaryError({ message: "BLAKE3 verification could not initialize", cause }),
+      catch: (cause) => new SparseBoundaryError({ message: "BLAKE3 verification could not initialize", cause, context: storageContext("verify", "sparse-payload", "warm-verification"), failureKind: "adapter" }),
     });
     const intervals: SparsePcmInterval[] = [];
     let previousEnd = 0;
@@ -1090,16 +1137,21 @@ function ingestAndCommit(
     yield* hashZeros(hash, (expected.frames - previousEnd) * frameBytes, operation.signal, (bytes) => onProgress?.({
       stage: "ingesting", identity: expected.identity, bytes, totalBytes: expected.canonicalBytes, byteKind: "pcm",
     }), previousEnd * frameBytes);
-    const index = yield* Effect.try({ try: () => validateSparsePcmIndex({ format: SPARSE_PCM_FORMAT, identity: expected.identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth, frames: expected.frames, intervals, activeBytes, canonicalBytes: expected.canonicalBytes }, activeBytes), catch: (cause) => new SparseCorruptError({ message: "Derived sparse index is invalid", cause }) });
+    const index = yield* Effect.try({ try: () => validateSparsePcmIndex({ format: SPARSE_PCM_FORMAT, identity: expected.identity, sampleRateHz: expected.sampleRateHz, channels: expected.channels, bitDepth: expected.bitDepth, frames: expected.frames, intervals, activeBytes, canonicalBytes: expected.canonicalBytes }, activeBytes), catch: (cause) => new SparseBoundaryError({ message: "Derived sparse index is invalid", cause, context: storageContext("validate", "sparse-marker", "metadata") }) });
     if (asserted !== undefined) compareIndexes(asserted, index);
-    if (hash.digest("hex") !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse active spans do not match canonical identity" });
-    if (dataClosed) return yield* new SparseCorruptError({ message: "Sparse data writer closed unexpectedly" });
+    const digest = hash.digest("hex");
+    if (digest !== identityHex(expected.identity)) return yield* new SparseIntegrityError({
+      message: "Sparse active spans do not match canonical identity",
+      context: storageContext("verify", "sparse-payload", "ingest-verification"),
+      verification: { kind: "digest", expected: identityHex(expected.identity), observed: digest, algorithm: "blake3-256" },
+    });
+    if (dataClosed) return yield* new SparseIoError({ message: "Sparse data writer closed unexpectedly", context: storageContext("close", "sparse-payload", "writer-state"), failureKind: "adapter" });
     yield* backend.close(dataWriter);
     dataClosed = true;
     yield* Ref.set(operation.ref, { _tag: "data-closed" } as Lifecycle);
     const marker = makeMarker(expected, index, dataName, generation);
     const markerBytes = canonicalJsonBytes(marker);
-    if (markerBytes.byteLength > MAX_MARKER_BYTES) return yield* new SparseCorruptError({ message: "Sparse marker exceeds its bound" });
+    if (markerBytes.byteLength > MAX_MARKER_BYTES) return yield* new SparseBoundaryError({ message: "Sparse marker exceeds its bound", context: storageContext("validate", "sparse-marker", "metadata") });
     yield* quotaCheck(backend, markerBytes.byteLength);
     yield* Ref.set(operation.ref, { _tag: "marker-writing" } as Lifecycle);
     let markerClosed = false;
@@ -1107,13 +1159,17 @@ function ingestAndCommit(
     // The marker is visible only after close, but its ordinary file entry may
     // exist as soon as create is attempted. Register ownership before that
     // attempt so a partial create is removed only after physical abort.
-    const markerWriter = yield* Effect.acquireRelease(backend.createWriter(markerName(expected.identity), operation.signal), (writer) => markerClosed ? Effect.void : backend.abort(writer, "marker writer scope closed"), { interruptible: true });
+    const markerWriter = yield* Effect.acquireRelease(backend.createWriter(markerName(expected.identity), operation.signal), (writer) => markerClosed ? Effect.void : backend.abort(writer, "marker writer scope closed").pipe(Effect.orDie), { interruptible: true });
     yield* backend.write(markerWriter, markerBytes);
     yield* backend.close(markerWriter);
     markerClosed = true;
     yield* checkSignal(operation.signal);
     const data = yield* backend.read(dataName);
-    if (data.size !== index.activeBytes) return yield* new SparseCorruptError({ message: "Sparse payload length changed before commit" });
+    if (data.size !== index.activeBytes) return yield* new SparseIntegrityError({
+      message: "Sparse payload length changed before commit",
+      context: storageContext("verify", "sparse-payload", "commit-verification"),
+      verification: { kind: "length", expected: index.activeBytes, observed: data.size },
+    });
     yield* checkSignal(operation.signal);
     markerCommitted = markerClosed;
     return { marker, data };
@@ -1266,7 +1322,12 @@ function makeWarmTaskYieldResource(signal: AbortSignal): WarmTaskYieldResource {
     if (failures.length === 0) return cause;
     return new AggregateError([cause, ...failures], "Warm task-yield resource cleanup failed");
   };
-  const boundaryFailure = (message: string, cause: unknown, failures: readonly unknown[] = []): SparseBoundaryError => new SparseBoundaryError({ message, cause: cleanupCause(cause, failures) });
+  const boundaryFailure = (message: string, cause: unknown, failures: readonly unknown[] = []): SparseBoundaryError => new SparseBoundaryError({
+    message,
+    cause: cleanupCause(cause, failures),
+    context: storageContext("verify", "sparse-payload", "warm-task"),
+    failureKind: "adapter",
+  });
   const close = (): void => {
     if (closed) return;
     closed = true;
@@ -1288,7 +1349,7 @@ function makeWarmTaskYieldResource(signal: AbortSignal): WarmTaskYieldResource {
     try { close(); } catch (cause) { cleanupFailure = cause; }
     return cleanupFailure === undefined
       ? cancellation()
-      : Effect.fail(new SparseBoundaryError({ message: "Warm task-yield cancellation cleanup failed", cause: cleanupFailure }));
+      : Effect.fail(new SparseBoundaryError({ message: "Warm task-yield cancellation cleanup failed", cause: cleanupFailure, context: storageContext("verify", "sparse-payload", "warm-task"), failureKind: "adapter" }));
   };
   const closeRawPorts = (ports: readonly unknown[]): unknown[] => {
     const failures: unknown[] = [];
@@ -1344,12 +1405,12 @@ function makeWarmTaskYieldResource(signal: AbortSignal): WarmTaskYieldResource {
       return Effect.void;
     }
     if (pending !== undefined) {
-      resume(Effect.fail(new SparseBoundaryError({ message: "Warm task-yield wait overlapped" })));
+      resume(Effect.fail(new SparseBoundaryError({ message: "Warm task-yield wait overlapped", context: storageContext("verify", "sparse-payload", "warm-task"), failureKind: "adapter" })));
       return Effect.void;
     }
     try { ensureChannel(); }
     catch (cause) {
-      resume(Effect.fail(cause instanceof SparseBoundaryError ? cause : new SparseBoundaryError({ message: "Warm task-yield channel failed", cause })));
+      resume(Effect.fail(cause instanceof SparseBoundaryError ? cause : new SparseBoundaryError({ message: "Warm task-yield channel failed", cause, context: storageContext("verify", "sparse-payload", "warm-task"), failureKind: "adapter" })));
       return Effect.void;
     }
     if (fallback) {
@@ -1412,7 +1473,7 @@ function hashZeros(
   yieldEffect: Effect.Effect<void, SparseFailure> = Effect.yieldNow,
 ): Effect.Effect<void, SparseFailure> {
   return Effect.fn("SparseProgram.hashZeros")(function*() {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isSafeInteger(baseBytes) || baseBytes < 0 || baseBytes + bytes > Number.MAX_SAFE_INTEGER) return yield* new SparseCorruptError({ message: "Sparse zero gap arithmetic is unsafe" });
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isSafeInteger(baseBytes) || baseBytes < 0 || baseBytes + bytes > Number.MAX_SAFE_INTEGER) return yield* new SparseBoundaryError({ message: "Sparse zero gap arithmetic is unsafe", failureKind: "adapter" });
     for (let offset = 0; offset < bytes; offset += ZERO_BLOCK.byteLength) {
       yield* checkSignal(signal);
       const count = Math.min(ZERO_BLOCK.byteLength, bytes - offset);
@@ -1427,14 +1488,15 @@ function readMarker(backend: BackendShape, name: string, signal: AbortSignal): E
   return Effect.fn("SparseProgram.readMarker")(function*() {
     yield* checkSignal(signal);
     const blob = yield* backend.read(name);
-    if (!Number.isSafeInteger(blob.size) || blob.size < 1 || blob.size > MAX_MARKER_BYTES) return yield* new SparseCorruptError({ message: "Sparse marker is outside its bounded byte size" });
+    const metadataContext = storageContext("read", "sparse-marker", "metadata");
+    if (!Number.isSafeInteger(blob.size) || blob.size < 1 || blob.size > MAX_MARKER_BYTES) return yield* new SparseMetadataError({ message: "Sparse marker is outside its bounded byte size", context: metadataContext });
     const bytes = yield* readBlobBytes(backend, blob, 0, blob.size, signal, "Sparse marker read");
-    const value = yield* Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown, catch: (cause) => new SparseCorruptError({ message: "Sparse marker JSON is invalid", cause }) });
-    const decoded = yield* Schema.decodeUnknownEffect(MarkerSchema, { onExcessProperty: "error" })(value).pipe(Effect.mapError((cause) => new SparseCorruptError({ message: "Sparse marker schema is invalid", cause })));
-    const index = yield* Effect.try({ try: () => validateSparsePcmIndex(decoded.index, decoded.activeBytes), catch: (cause) => new SparseCorruptError({ message: "Sparse marker index is invalid", cause }) });
+    const value = yield* Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown, catch: (cause) => new SparseMetadataError({ message: "Sparse marker JSON is invalid", cause, context: metadataContext }) });
+    const decoded = yield* Schema.decodeUnknownEffect(MarkerSchema, { onExcessProperty: "error" })(value).pipe(Effect.mapError((cause) => new SparseMetadataError({ message: "Sparse marker schema is invalid", cause, context: metadataContext })));
+    const index = yield* Effect.try({ try: () => validateSparsePcmIndex(decoded.index, decoded.activeBytes), catch: (cause) => new SparseMetadataError({ message: "Sparse marker index is invalid", cause, context: metadataContext }) });
     const marker = Object.freeze({ ...decoded, index }) as Marker;
     const canonical = canonicalJsonBytes(marker);
-    if (!sameBytes(canonical, new Uint8Array(bytes))) return yield* new SparseCorruptError({ message: "Sparse marker is not canonical JSON" });
+    if (!sameBytes(canonical, new Uint8Array(bytes))) return yield* new SparseMetadataError({ message: "Sparse marker is not canonical JSON", context: metadataContext });
     return marker;
   })();
 }
@@ -1463,15 +1525,20 @@ function prospectiveMarkerBytes(expected: SparsePcmExpectation, generation: stri
 interface AdmittedSparseMetadata { readonly marker: Marker; readonly data: Blob }
 function admitMarkerMetadata(backend: BackendShape, marker: Marker, expected: SparsePcmExpectation, signal: AbortSignal): Effect.Effect<AdmittedSparseMetadata, SparseFailure> {
   return Effect.fn("SparseProgram.admitMarkerMetadata")(function*() {
-    if (marker.format !== MARKER_TAG || marker.identity !== expected.identity || marker.sampleRateHz !== expected.sampleRateHz || marker.channels !== expected.channels || marker.bitDepth !== expected.bitDepth || marker.frames !== expected.frames || marker.canonicalBytes !== expected.canonicalBytes || marker.activeBytes !== marker.index.activeBytes || marker.payloadName !== payloadName(expected.identity, marker.generation)) return yield* new SparseCorruptError({ message: "Sparse marker conflicts with the expectation" });
+    const metadataContext = storageContext("read", "sparse-marker", "metadata");
+    if (marker.format !== MARKER_TAG || marker.identity !== expected.identity || marker.sampleRateHz !== expected.sampleRateHz || marker.channels !== expected.channels || marker.bitDepth !== expected.bitDepth || marker.frames !== expected.frames || marker.canonicalBytes !== expected.canonicalBytes || marker.activeBytes !== marker.index.activeBytes || marker.payloadName !== payloadName(expected.identity, marker.generation)) return yield* new SparseMetadataError({ message: "Sparse marker conflicts with the expectation", context: metadataContext });
     compareIndexShape(marker.index, expected);
-    if (!(yield* backend.exists(marker.payloadName))) return yield* new SparseCorruptError({ message: "Sparse payload generation is missing" });
+    if (!(yield* backend.exists(marker.payloadName))) return yield* new SparseMetadataError({ message: "Sparse payload generation is missing", context: storageContext("exists", "sparse-payload", "metadata") });
     const data = yield* backend.read(marker.payloadName).pipe(
       Effect.catchTag("SparseIoError", (error): Effect.Effect<never, SparseFailure> => isNotFound(error.cause)
-        ? Effect.fail(new SparseCorruptError({ message: "Sparse payload generation is missing", cause: error.cause }))
+        ? Effect.fail(new SparseMetadataError({ message: "Sparse payload generation is missing", cause: error.cause, context: storageContext("read", "sparse-payload", "metadata") }))
         : Effect.fail(error)),
     );
-    if (data.size !== marker.activeBytes) return yield* new SparseCorruptError({ message: "Sparse payload length conflicts with its index" });
+    if (data.size !== marker.activeBytes) return yield* new SparseIntegrityError({
+      message: "Sparse payload length conflicts with its index",
+      context: storageContext("verify", "sparse-payload", "metadata-verification"),
+      verification: { kind: "length", expected: marker.activeBytes, observed: data.size },
+    });
     yield* checkSignal(signal);
     return { marker, data };
   })();
@@ -1507,12 +1574,20 @@ function verifyMarker(
         }).pipe(Effect.mapError(mapWarmWorkerFailure));
       const expectedCounts = yield* Effect.try({
         try: () => sparseVerifyExpectedCounts(admitted.marker.index, expected.frames, expected.channels * (expected.bitDepth / 8)),
-        catch: (cause) => new SparseCorruptError({ message: "Sparse Worker count expectation could not be derived", cause }),
+        catch: (cause) => new SparseBoundaryError({ message: "Sparse Worker count expectation could not be derived", cause, context: storageContext("verify", "sparse-payload", "warm-worker"), failureKind: "adapter" }),
       });
       if (result.identity !== expected.identity || result.canonicalBytes !== expected.canonicalBytes || result.readBytes !== admitted.marker.activeBytes ||
         result.readCalls !== expectedCounts.readCalls || result.hashUpdates !== expectedCounts.hashUpdates || result.zeroUpdates !== expectedCounts.zeroUpdates ||
         result.hashedBytes !== expected.canonicalBytes || result.digest !== identityHex(expected.identity)) {
-        return yield* new SparseCorruptError({ message: "Sparse payload failed canonical Worker verification" });
+        const verification: EngineWebAdapterVerification | undefined = result.identity !== expected.identity || result.digest !== identityHex(expected.identity)
+          ? { kind: "digest", expected: identityHex(expected.identity), observed: result.digest, algorithm: "blake3-256" }
+          : result.canonicalBytes !== expected.canonicalBytes || result.hashedBytes !== expected.canonicalBytes
+            ? { kind: "length", expected: expected.canonicalBytes, observed: result.hashedBytes }
+            : result.readBytes !== admitted.marker.activeBytes
+              ? { kind: "length", expected: admitted.marker.activeBytes, observed: result.readBytes }
+              : undefined;
+        if (verification !== undefined) return yield* new SparseIntegrityError({ message: "Sparse payload failed canonical Worker verification", verification, context: storageContext("verify", "sparse-payload", "warm-verification") });
+        return yield* new SparseIoError({ message: "Sparse verification Worker accounting disagreed with the admitted descriptor", failureKind: "adapter", context: storageContext("verify", "sparse-payload", "warm-verification") });
       }
       yield* checkSignal(signal);
       onProgress?.({
@@ -1544,7 +1619,7 @@ function verifyMarker(
     const data = admitted.data;
     const hash = yield* Effect.tryPromise({
       try: createIncrementalBlake3,
-      catch: (cause) => new SparseBoundaryError({ message: "BLAKE3 verification could not initialize", cause }),
+      catch: (cause) => new SparseBoundaryError({ message: "BLAKE3 verification could not initialize", cause, context: storageContext("verify", "sparse-payload", "warm-verification"), failureKind: "adapter" }),
     });
     const update = (chunk: Uint8Array): void => {
       const before = performance.now();
@@ -1567,7 +1642,11 @@ function verifyMarker(
         readWaitMs += performance.now() - beforeRead;
         readCalls += 1;
         readBytes += bytes.byteLength;
-        if (bytes.byteLength !== end - offset) return yield* new SparseCorruptError({ message: "Sparse payload read was short" });
+        if (bytes.byteLength !== end - offset) return yield* new SparseIntegrityError({
+          message: "Sparse payload read was short",
+          context: storageContext("verify", "sparse-payload", "warm-verification"),
+          verification: { kind: "length", expected: end - offset, observed: bytes.byteLength },
+        });
         update(new Uint8Array(bytes));
         onProgress?.({
           stage: "verifying", identity: expected.identity,
@@ -1584,7 +1663,16 @@ function verifyMarker(
     const beforeDigest = performance.now();
     const digest = hash.digest("hex");
     hashMs += performance.now() - beforeDigest;
-    if (payloadCursor !== data.size || digest !== identityHex(expected.identity)) return yield* new SparseCorruptError({ message: "Sparse payload failed canonical verification" });
+    if (digest !== identityHex(expected.identity)) return yield* new SparseIntegrityError({
+      message: "Sparse payload failed canonical verification",
+      context: storageContext("verify", "sparse-payload", "warm-verification"),
+      verification: { kind: "digest", expected: identityHex(expected.identity), observed: digest, algorithm: "blake3-256" },
+    });
+    if (payloadCursor !== data.size) return yield* new SparseIntegrityError({
+      message: "Sparse payload length changed during canonical verification",
+      context: storageContext("verify", "sparse-payload", "warm-verification"),
+      verification: { kind: "length", expected: data.size, observed: payloadCursor },
+    });
     yield* checkSignal(signal);
     onProgress?.({
       stage: "verifying", identity: expected.identity, bytes: expected.canonicalBytes,
@@ -1598,27 +1686,31 @@ function verifyMarker(
 }
 
 function mapWarmWorkerFailure(cause: unknown): SparseFailure {
-  if (!(cause instanceof SparseVerifyWorkerError)) return new SparseIoError({ message: "Sparse verification Worker failed", cause });
+  if (!(cause instanceof SparseVerifyWorkerError)) return new SparseIoError({ message: "Sparse verification Worker failed", cause, failureKind: "adapter", context: storageContext("verify", "sparse-payload", "warm-worker") });
   switch (cause.kind) {
-    case "cancelled": return new SparseCancelledError({ message: cause.message, cause });
-    case "deadline": return new SparseDeadlineError({ message: cause.message, cause });
-    case "boundary": return new SparseBoundaryError({ message: cause.message, cause });
-    case "corrupt": return new SparseCorruptError({ message: cause.message, cause });
-    case "io": return new SparseIoError({ message: cause.message, cause });
+    case "cancelled": return new SparseCancelledError({ message: cause.message, cause, failureKind: "interruption", context: storageContext("verify", "sparse-payload", "warm-worker") });
+    case "deadline": return new SparseDeadlineError({ message: cause.message, cause, failureKind: "deadline", context: storageContext("verify", "sparse-payload", "warm-worker") });
+    case "boundary": return new SparseBoundaryError({ message: cause.message, cause, failureKind: "adapter", context: storageContext("verify", "sparse-payload", "warm-worker") });
+    case "corrupt": return cause.verification === undefined
+      ? new SparseIoError({ message: cause.message, cause, failureKind: "adapter", context: storageContext("verify", "sparse-payload", "warm-worker") })
+      : new SparseIntegrityError({ message: cause.message, cause, verification: cause.verification, context: storageContext("verify", "sparse-payload", "warm-worker") });
+    case "io": return new SparseIoError({ message: cause.message, cause, failureKind: "adapter", context: storageContext("verify", "sparse-payload", "warm-worker") });
   }
 }
 
 function readBlobBytes(backend: BackendShape, blob: Blob, start: number, end: number, signal: AbortSignal, operation: string): Effect.Effect<ArrayBuffer, SparseFailure> {
   return Effect.gen(function*() {
     yield* checkSignal(signal);
+    const resource = operation.toLowerCase().includes("marker") ? "sparse-marker" : "sparse-payload";
+    const context = storageContext("read", resource, "verification");
     const bytes = yield* Effect.tryPromise({
       try: () => blob.slice(start, end).arrayBuffer(),
       catch: (cause) => isAbort(cause)
-        ? new SparseCancelledError({ message: `${operation} was cancelled`, cause })
-        : new SparseIoError({ message: `${operation} failed`, cause }),
+        ? new SparseCancelledError({ message: `${operation} was cancelled`, cause, failureKind: "interruption", context })
+        : new SparseIoError({ message: `${operation} failed`, cause, failureKind: "io", context }),
     }).pipe(
       Effect.timeout(backend.readDeadlineMs),
-      Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline` }))),
+      Effect.catchTag("TimeoutError", () => Effect.fail(new SparseDeadlineError({ message: `${operation} exceeded its deadline`, failureKind: "deadline", context }))),
     );
     yield* checkSignal(signal);
     return bytes;
@@ -1626,7 +1718,7 @@ function readBlobBytes(backend: BackendShape, blob: Blob, start: number, end: nu
 }
 
 function compareIndexShape(index: SparsePcmIndex, expected: SparsePcmExpectation): void { if (index.identity !== expected.identity || index.sampleRateHz !== expected.sampleRateHz || index.channels !== expected.channels || index.bitDepth !== expected.bitDepth || index.frames !== expected.frames || index.canonicalBytes !== expected.canonicalBytes) throw new EngineWebAdapterError("stem.invalid_declaration", "Sparse PCM index shape conflicts with expectation"); }
-function compareIndexes(a: SparsePcmIndex, b: SparsePcmIndex): void { if (a.activeBytes !== b.activeBytes || a.canonicalBytes !== b.canonicalBytes || a.intervals.length !== b.intervals.length || a.intervals.some((x, i) => x.startFrame !== b.intervals[i]!.startFrame || x.frames !== b.intervals[i]!.frames || x.byteOffset !== b.intervals[i]!.byteOffset)) throw new EngineWebAdapterError("stem.corrupt", "Sparse resolver index disagrees with derived spans"); }
+function compareIndexes(a: SparsePcmIndex, b: SparsePcmIndex): void { if (a.activeBytes !== b.activeBytes || a.canonicalBytes !== b.canonicalBytes || a.intervals.length !== b.intervals.length || a.intervals.some((x, i) => x.startFrame !== b.intervals[i]!.startFrame || x.frames !== b.intervals[i]!.frames || x.byteOffset !== b.intervals[i]!.byteOffset)) throw new EngineWebAdapterError("stem.invalid_declaration", "Sparse resolver index disagrees with derived spans", { metadata: "index" }); }
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean { return a.byteLength === b.byteLength && a.every((value, index) => value === b[index]); }
 function quotaCheck(backend: BackendShape, additional: number): Effect.Effect<void, SparseFailure> { return Effect.gen(function*() { const estimate = yield* backend.estimate; if (estimate.quota !== undefined && estimate.usage !== undefined && (!Number.isSafeInteger(additional) || additional < 0 || estimate.usage + additional > estimate.quota)) return yield* new SparseQuotaError({ message: "Sparse storage quota is insufficient" }); }); }
 function isAbort(error: unknown): boolean { return error instanceof DOMException && error.name === "AbortError" || error instanceof Error && error.name === "AbortError"; }
@@ -1634,18 +1726,20 @@ function isTimeout(error: unknown): boolean { return error instanceof DOMExcepti
 function mapPublicCause(cause: Cause.Cause<SparseFailure>): unknown {
   const reasons = cause.reasons;
   if (reasons.length === 0) {
-    return new EngineWebAdapterError("stem.corrupt", "Sparse operation failed", {}, new Error("Sparse operation failed without a cause"));
+    return new EngineWebAdapterError("storage.io", "Sparse operation failed without a cause", { failureKind: "defect" }, new Error("Sparse operation failed without a cause"));
   }
   const values = reasons.map((reason) => causeValue(reason));
-  const primary = values[0];
-  const mapped = mapPublicError(primary);
+  const mappedValues = values.map((value) => mapPublicError(value));
+  // Preserve the Effect cause's primary ordering for the public code. Every
+  // sibling remains in the AggregateError below; selecting a later, more
+  // familiar code would flatten a real storage failure into its finalizer.
+  const mapped = mappedValues[0];
   if (mapped instanceof EngineWebAdapterError) {
     if (values.length === 1) return mapped;
     return new EngineWebAdapterError(mapped.code, mapped.message, mapped.details, new AggregateError(values, "Sparse operation failed"));
   }
   const preserved = values.length === 1 && values[0] !== undefined ? values[0] : new AggregateError(values, "Sparse operation failed");
-  const code = Cause.isInterruptReason(reasons[0]!) || isAbort(primary) ? "stem.cancelled" : "stem.corrupt";
-  return new EngineWebAdapterError(code, code === "stem.cancelled" ? "Sparse operation was cancelled" : "Sparse operation failed", {}, preserved);
+  return new EngineWebAdapterError("storage.io", "Sparse operation failed", { failureKind: "defect" }, preserved);
 }
 function causeValue(reason: Cause.Reason<SparseFailure>): unknown {
   if (Cause.isFailReason(reason)) return reason.error;
@@ -1655,26 +1749,80 @@ function causeValue(reason: Cause.Reason<SparseFailure>): unknown {
   return interrupted;
 }
 function mapPublicError(error: unknown): unknown {
-  if (error instanceof EngineWebAdapterError) return error;
+  const inheritedDetails = sparseFailureDetails(error);
+  if (error instanceof EngineWebAdapterError) return mergePublicError(error, inheritedDetails);
   const preserved = nestedAdapterError(error);
-  if (preserved !== undefined) return preserved;
-  if (error instanceof SparseCancelledError) return new EngineWebAdapterError("stem.cancelled", error.message, {}, error.cause);
-  if (error instanceof SparseDeadlineError) return new EngineWebAdapterError("stem.read_deadline", error.message, {}, error.cause);
-  if (error instanceof SparseQuotaError) return new EngineWebAdapterError("stem.quota", error.message, {}, error.cause);
-  if (error instanceof SparseBoundaryError) return new EngineWebAdapterError("stem.invalid_declaration", error.message, {}, error.cause);
-  if (error instanceof SparseNotFoundError) return new EngineWebAdapterError("stem.not_found", error.message, {}, error.cause);
-  if (error instanceof SparseConflictError || error instanceof SparseCorruptError) return new EngineWebAdapterError("stem.corrupt", error.message, {}, error.cause);
-  if (error instanceof SparseIoError) return new EngineWebAdapterError("stem.corrupt", error.message, {}, error.cause);
-  return isAbort(error) ? new EngineWebAdapterError("stem.cancelled", "Sparse operation was cancelled", {}, error) : error;
+  if (preserved !== undefined) return mergePublicError(preserved, inheritedDetails);
+  if (error instanceof SparseCancelledError) return new EngineWebAdapterError("stem.cancelled", error.message, { ...inheritedDetails, failureKind: "interruption" }, error.cause);
+  if (error instanceof SparseDeadlineError) return new EngineWebAdapterError("stem.read_deadline", error.message, { ...inheritedDetails, failureKind: "deadline" }, error.cause);
+  if (error instanceof SparseQuotaError) return new EngineWebAdapterError("stem.quota", error.message, { ...inheritedDetails, failureKind: "quota" }, error.cause);
+  if (error instanceof SparseBoundaryError) {
+    return error.failureKind === "adapter"
+      ? new EngineWebAdapterError("storage.io", error.message, { ...inheritedDetails, failureKind: "adapter" }, error.cause)
+      : new EngineWebAdapterError("stem.invalid_declaration", error.message, inheritedDetails, error.cause);
+  }
+  if (error instanceof SparseMetadataError) return new EngineWebAdapterError("stem.invalid_declaration", error.message, { ...inheritedDetails, failureKind: "invalid_metadata" }, error.cause);
+  if (error instanceof SparseIntegrityError) {
+    return error.verification === undefined
+      ? new EngineWebAdapterError("storage.io", error.message, { ...inheritedDetails, failureKind: "adapter" }, error.cause)
+      : new EngineWebAdapterError("stem.corrupt", error.message, inheritedDetails, error.cause);
+  }
+  if (error instanceof SparseNotFoundError) return new EngineWebAdapterError("stem.not_found", error.message, inheritedDetails, error.cause);
+  if (error instanceof SparseConflictError) return new EngineWebAdapterError("storage.io", error.message, { ...inheritedDetails, failureKind: "contention" }, error.cause);
+  if (error instanceof SparseIoError) return new EngineWebAdapterError("storage.io", error.message, inheritedDetails, error.cause);
+  return isAbort(error)
+    ? new EngineWebAdapterError("stem.cancelled", "Sparse operation was cancelled", { failureKind: "interruption" }, error)
+    : new EngineWebAdapterError("storage.io", "Sparse operation failed", { failureKind: "defect" }, error);
+}
+
+function mergePublicError(error: EngineWebAdapterError, details: Readonly<Record<string, unknown>>): EngineWebAdapterError {
+  if (Object.keys(details).length === 0) return error;
+  return new EngineWebAdapterError(error.code, error.message, { ...error.details, ...details }, error.cause);
+}
+
+function sparseFailureDetails(error: unknown): Readonly<Record<string, unknown>> {
+  if (typeof error !== "object" || error === null) return {};
+  const value = error as { readonly context?: unknown; readonly verification?: unknown; readonly failureKind?: unknown };
+  const details: Record<string, unknown> = {};
+  if (isStorageContext(value.context)) {
+    details.operation = value.context.operation;
+    details.resource = value.context.resource;
+    details.phase = value.context.phase;
+  }
+  if (isVerification(value.verification)) details.verification = value.verification;
+  if (typeof value.failureKind === "string") details.failureKind = value.failureKind;
+  return details;
+}
+
+function isStorageContext(value: unknown): value is EngineWebAdapterErrorContext {
+  return typeof value === "object" && value !== null &&
+    typeof (value as { readonly operation?: unknown }).operation === "string" &&
+    typeof (value as { readonly resource?: unknown }).resource === "string" &&
+    typeof (value as { readonly phase?: unknown }).phase === "string";
+}
+
+function isVerification(value: unknown): value is EngineWebAdapterVerification {
+  return typeof value === "object" && value !== null &&
+    ((value as { readonly kind?: unknown }).kind === "digest" || (value as { readonly kind?: unknown }).kind === "length") &&
+    (typeof (value as { readonly expected?: unknown }).expected === "string" || typeof (value as { readonly expected?: unknown }).expected === "number") &&
+    (typeof (value as { readonly observed?: unknown }).observed === "string" || typeof (value as { readonly observed?: unknown }).observed === "number");
 }
 function nestedAdapterError(error: unknown): EngineWebAdapterError | undefined {
-  let current: unknown = error;
-  for (let depth = 0; depth < 4; depth += 1) {
+  const seen = new Set<object>();
+  const visit = (current: unknown, depth: number): EngineWebAdapterError | undefined => {
     if (current instanceof EngineWebAdapterError) return current;
-    if (typeof current !== "object" || current === null || !("cause" in current)) return undefined;
-    current = (current as { readonly cause?: unknown }).cause;
-  }
-  return current instanceof EngineWebAdapterError ? current : undefined;
+    if (depth >= 4 || typeof current !== "object" || current === null || seen.has(current)) return undefined;
+    seen.add(current);
+    if (current instanceof AggregateError) {
+      for (const item of current.errors) {
+        const found = visit(item, depth + 1);
+        if (found !== undefined) return found;
+      }
+    }
+    if ("cause" in current) return visit((current as { readonly cause?: unknown }).cause, depth + 1);
+    return undefined;
+  };
+  return visit(error, 0);
 }
 function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && (error as { readonly name?: unknown }).name === "NotFoundError";

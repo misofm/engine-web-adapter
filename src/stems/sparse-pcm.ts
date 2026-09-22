@@ -44,7 +44,7 @@ export interface SparsePcmIndexDraft {
 }
 
 function corrupt(message: string, details: Readonly<Record<string, unknown>> = {}): EngineWebAdapterError {
-  return new EngineWebAdapterError("stem.corrupt", message, details);
+  return new EngineWebAdapterError("stem.invalid_declaration", message, { ...details, metadata: "sparse-pcm-index" });
 }
 
 function integer(value: unknown, path: string, minimum: number): number {

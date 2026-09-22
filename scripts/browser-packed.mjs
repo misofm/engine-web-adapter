@@ -240,8 +240,14 @@ const peak: TrackMeter | undefined = update.tracks.get("track-000");
 declare const failure: EngineWebAdapterError;
 const remedy: string = failure.remedy;
 const transient: boolean = failure.transient;
+const storageFailure = new EngineWebAdapterError("storage.io", "packed storage fixture", {
+  operation: "open", resource: "sparse-root", phase: "root-open", failureKind: "io",
+});
+const storageCode: EngineWebAdapterError["code"] = storageFailure.code;
+const storagePhase: EngineWebAdapterError["phase"] = storageFailure.phase;
 void [openEngineWebSession, openSparseEngineWebSession, createFlacStemResolver, PcmPumpWorkerClient, ADAPTER_ASSETS, packageJson,
-  minimal, sparseMinimal, live, meters, telemetry, sdk, directMeters, directTelemetry, directResponse, directSpectrum, peak, remedy, transient];
+  minimal, sparseMinimal, live, meters, telemetry, sdk, directMeters, directTelemetry, directResponse, directSpectrum, peak, remedy, transient,
+  storageFailure, storageCode, storagePhase];
 `);
 await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: {
   strict: true, noEmit: true, target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext",
