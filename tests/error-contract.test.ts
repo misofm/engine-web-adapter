@@ -81,6 +81,9 @@ test("cause transport uses UTF-8 byte bounds and keeps bounded sibling summaries
   assert.deepEqual(first.causes?.map((cause) => cause.message), siblings.map((error) => error.message));
   assert.deepEqual(second.causes?.map((cause) => cause.message), siblings.map((error) => error.message));
   assert.ok(new TextEncoder().encode(JSON.stringify(second)).byteLength <= 16 * 1024);
+  const revived = reviveEngineWebAdapterCause(second) as AggregateError;
+  const revivedSerialized = serializeEngineWebAdapterCause(revived);
+  assert.deepEqual(revivedSerialized.causes?.map((cause) => cause.message), siblings.map((error) => error.message));
 
   const plainErrors = serializeEngineWebAdapterCause({
     name: "AggregateError",
@@ -134,4 +137,71 @@ test("cause transport marks depth/claim truncation and survives throwing exotic 
     verification: { kind: "length", expected: 4, observed: 4 },
   }));
   assert.equal(equalEvidence.code, undefined);
+});
+
+test("cause transport reserves every retained sibling summary before detail pressure", () => {
+  const detailPressure = Object.fromEntries(Array.from({ length: 24 }, (_, index) => [`d${index}`, "x".repeat(483)]));
+  const identity = (cause: EngineWebAdapterErrorCause) => cause.causes?.map((sibling) => [sibling.name, sibling.message]);
+  const assertRoundTrips = (serialized: EngineWebAdapterErrorCause, expected: readonly (readonly [string, string])[]) => {
+    assert.equal(serialized.causes?.length, expected.length);
+    assert.deepEqual(identity(serialized), expected);
+    assert.ok(serialized.causes?.every((sibling) => sibling.name.length > 0 && sibling.message.length > 0));
+    assert.ok(new TextEncoder().encode(JSON.stringify(serialized)).byteLength <= 16 * 1024);
+
+    const repeated = serializeEngineWebAdapterCause(serialized);
+    assert.deepEqual(identity(repeated), expected);
+    const revived = reviveEngineWebAdapterCause(repeated) as AggregateError;
+    assert.deepEqual(identity(serializeEngineWebAdapterCause(revived)), expected);
+  };
+
+  const wide = serializeEngineWebAdapterCause({
+    name: "AggregateError",
+    message: "root",
+    errors: Array.from({ length: 3 }, (_, index) => ({
+      name: `N${index}${"漢".repeat(512)}`,
+      message: `S${index}${"漢".repeat(512)}`,
+      details: detailPressure,
+    })),
+  });
+  const wideExpected = wide.causes!.map((sibling) => [sibling.name, sibling.message] as const);
+  assert.ok(wideExpected.every(([name, message], index) =>
+    name.startsWith(`N${index}`) && name.endsWith("[truncated]") &&
+    message.startsWith(`S${index}`) && message.endsWith("[truncated]")));
+  assertRoundTrips(wide, wideExpected);
+  assert.equal(wide.truncated, true);
+
+  const ordinary = serializeEngineWebAdapterCause({
+    name: "AggregateError",
+    message: "root",
+    errors: Array.from({ length: 3 }, (_, index) => ({
+      name: "Error",
+      message: `S${index}${"漢".repeat(512)}`,
+      details: detailPressure,
+    })),
+  });
+  const ordinaryExpected = ordinary.causes!.map((sibling) => [sibling.name, sibling.message] as const);
+  assert.ok(ordinaryExpected.every(([name, message], index) =>
+    name === "Error" && message.startsWith(`S${index}`) && message.endsWith("[truncated]")));
+  assertRoundTrips(ordinary, ordinaryExpected);
+
+  const cases = [
+    { count: 1, glyph: "x", repeats: 32, detailKeys: 0, detailLength: 0 },
+    { count: 2, glyph: "漢", repeats: 256, detailKeys: 8, detailLength: 192 },
+    { count: 4, glyph: "𐍈", repeats: 128, detailKeys: 24, detailLength: 320 },
+  ] as const;
+  for (const { count, glyph, repeats, detailKeys, detailLength } of cases) {
+    const details = Object.fromEntries(Array.from({ length: detailKeys }, (_, index) => [`d${index}`, "v".repeat(detailLength)]));
+    const serialized = serializeEngineWebAdapterCause(new AggregateError(
+      Array.from({ length: count }, (_, index) => ({
+        name: `N${index}${glyph.repeat(repeats)}`,
+        message: `S${index}${glyph.repeat(repeats)}`,
+        details,
+      })),
+      `table-${count}`,
+    ));
+    const expected = serialized.causes!.map((sibling) => [sibling.name, sibling.message] as const);
+    assert.ok(expected.every(([name, message], index) =>
+      name.startsWith(`N${index}`) && message.startsWith(`S${index}`)));
+    assertRoundTrips(serialized, expected);
+  }
 });

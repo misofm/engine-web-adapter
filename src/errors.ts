@@ -363,8 +363,15 @@ interface MutableSerializedCause {
 }
 interface ContainerState { count: number }
 interface PropertyRead { found: boolean; value?: unknown; threw?: boolean }
+interface CauseSummary { readonly name: string; readonly message: string }
 
-function serializeCause(value: unknown, depth: number, seen: Set<object>, budget: SerializationBudget): EngineWebAdapterErrorCause {
+function serializeCause(
+  value: unknown,
+  depth: number,
+  seen: Set<object>,
+  budget: SerializationBudget,
+  summaryLimit?: number,
+): EngineWebAdapterErrorCause {
   if (depth >= MAX_SERIALIZED_CAUSE_DEPTH) {
     budget.truncated = true;
     return { name: "CauseDepthLimit", message: "Nested cause depth exceeded the adapter bound" };
@@ -384,8 +391,15 @@ function serializeCause(value: unknown, depth: number, seen: Set<object>, budget
   }
   const nameRead = readProperty(value, "name");
   const messageRead = readProperty(value, "message");
-  addValue(output, state, "name", boundedText(typeof nameRead.value === "string" ? nameRead.value : causeName(value), budget), budget);
-  addValue(output, state, "message", boundedText(typeof messageRead.value === "string" ? messageRead.value : safeString(value), budget), budget);
+  const name = typeof nameRead.value === "string" ? nameRead.value : causeName(value);
+  const message = typeof messageRead.value === "string" ? messageRead.value : safeString(value);
+  if (summaryLimit === undefined) {
+    addValue(output, state, "name", boundedText(name, budget), budget);
+    addValue(output, state, "message", boundedText(message, budget), budget);
+  } else {
+    const summary = boundedSummary(name, message, Math.min(summaryLimit, availableSummaryBytes(budget)), budget);
+    if (!addSummary(output, state, summary, budget)) budget.truncated = true;
+  }
 
   const roleRead = readProperty(value, "role");
   if (roleRead.value === "interruption" || roleRead.value === "body" || roleRead.value === "finalizer") {
@@ -487,15 +501,63 @@ function serializeCauseArray(values: readonly unknown[], depth: number, seen: Se
   const count = Math.min(values.length, MAX_SERIALIZED_CAUSES);
   for (let index = 0; index < count; index += 1) {
     const remaining = count - index - 1;
-    budget.protected += remaining * SERIALIZED_CAUSE_SUMMARY_RESERVE;
+    budget.protected += remaining * (SERIALIZED_CAUSE_SUMMARY_RESERVE + 1);
     try {
       if (!reserveArrayItem(state, budget)) break;
-      output.push(serializeCause(values[index], depth, seen, budget));
+      output.push(serializeCause(values[index], depth, seen, budget, SERIALIZED_CAUSE_SUMMARY_RESERVE));
     } finally {
-      budget.protected -= remaining * SERIALIZED_CAUSE_SUMMARY_RESERVE;
+      budget.protected -= remaining * (SERIALIZED_CAUSE_SUMMARY_RESERVE + 1);
     }
   }
   return output;
+}
+
+function boundedSummary(name: string, message: string, limit: number, budget: SerializationBudget): CauseSummary {
+  const boundedName = boundedText(name, budget);
+  const boundedMessage = boundedText(message, budget);
+  if (summaryLength(boundedName, boundedMessage) <= limit) {
+    return { name: boundedName, message: boundedMessage };
+  }
+
+  const emptyValueLength = jsonLength("");
+  const availableValueBytes = Math.max(0, limit - summaryLength("", ""));
+  const nameBytes = Math.max(0, jsonLength(boundedName) - emptyValueLength);
+  const messageBytes = Math.max(0, jsonLength(boundedMessage) - emptyValueLength);
+  let nameBudget = Math.min(nameBytes, Math.floor(availableValueBytes / 2));
+  let messageBudget = Math.min(messageBytes, availableValueBytes - nameBudget);
+  let remaining = availableValueBytes - nameBudget - messageBudget;
+  if (remaining > 0 && nameBudget < nameBytes) {
+    const extra = Math.min(remaining, nameBytes - nameBudget);
+    nameBudget += extra;
+    remaining -= extra;
+  }
+  if (remaining > 0 && messageBudget < messageBytes) messageBudget += Math.min(remaining, messageBytes - messageBudget);
+
+  const fittedName = fitSummaryText(boundedName, emptyValueLength + nameBudget);
+  const fittedMessage = fitSummaryText(boundedMessage, emptyValueLength + messageBudget);
+  if (fittedName !== boundedName || fittedMessage !== boundedMessage) budget.truncated = true;
+  return { name: fittedName, message: fittedMessage };
+}
+
+function summaryLength(name: string, message: string): number {
+  return 2 +
+    jsonLength("name") + 1 + jsonLength(name) + 1 +
+    jsonLength("message") + 1 + jsonLength(message);
+}
+
+function fitSummaryText(value: string, maxJsonBytes: number): string {
+  if (jsonLength(value) <= maxJsonBytes) return value;
+  if (jsonLength(SERIALIZED_TRUNCATION_MARKER) > maxJsonBytes) return "";
+  const characters = Array.from(value);
+  let low = 0;
+  let high = characters.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = `${characters.slice(0, middle).join("")}${SERIALIZED_TRUNCATION_MARKER}`;
+    if (jsonLength(candidate) <= maxJsonBytes) low = middle;
+    else high = middle - 1;
+  }
+  return `${characters.slice(0, low).join("")}${SERIALIZED_TRUNCATION_MARKER}`;
 }
 
 function serializeDetails(
@@ -770,6 +832,21 @@ function reserveChildField(target: Record<string, unknown>, state: ContainerStat
 function reserveFieldPrefix(state: ContainerState, key: string, budget: SerializationBudget): boolean {
   if (!reserve(budget, jsonLength(key) + 1 + (state.count === 0 ? 0 : 1))) return false;
   state.count += 1;
+  return true;
+}
+
+function availableSummaryBytes(budget: SerializationBudget): number {
+  return Math.max(0, MAX_SERIALIZED_PAYLOAD - SERIALIZED_TRUNCATION_RESERVE - budget.protected - budget.used + 2);
+}
+
+function addSummary(target: MutableSerializedCause, state: ContainerState, summary: CauseSummary, budget: SerializationBudget): boolean {
+  const amount = jsonLength("name") + 1 + jsonLength(summary.name) +
+    (state.count === 0 ? 0 : 1) +
+    jsonLength("message") + 1 + jsonLength(summary.message);
+  if (!reserve(budget, amount)) return false;
+  state.count += 2;
+  target.name = summary.name;
+  target.message = summary.message;
   return true;
 }
 

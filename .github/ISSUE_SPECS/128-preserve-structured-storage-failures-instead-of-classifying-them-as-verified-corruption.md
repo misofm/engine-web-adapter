@@ -61,16 +61,16 @@ browser capability limitations below.
 
 ## Implementation evidence
 
-Candidate source: `d14f1a6a099b23855c5e0b05309f4feeeb64a704`.
-Coordinator verified the configured packed browser against that exact clean
-source commit; this evidence-only update does not change source or tests.
+Source parent: `ba9edba93e929fde3f2cda55c8c31fe348a2e696`.
+Pending commit: the P2 cause-summary reservation fix in this working tree;
+the final commit SHA is recorded in the handoff below.
 
 Verification completed:
 
-- `node scripts/clean-test-dist.mjs && ./node_modules/.bin/tsc -p tsconfig.test.json && node --test .test-dist/tests/error-contract.test.js .test-dist/tests/sparse-store.test.js` — 71/71 focused tests passed.
-- `npm run check` — passed, including format, wasm verification, lint, decoder checks, the full 393/393 test suite, and package policy (`248 files, 498266 bytes`).
-- Initial `npm run test:browser` stopped before fixtures because the default executable search did not locate Chromium and `CHROME_EXECUTABLE` was unset.
-- `CHROME_EXECUTABLE=/home/bl/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome npm run test:browser` — passed against the fresh packed consumer on Chromium 151.0.7922.34, 15 assets, no request failures or console errors. Artifact: `/tmp/engine-web-adapter-browser-VgVOHg`; coordinator log: `/tmp/miso-294-t2-repair2-committed-browser.log`.
+- `npm exec -- tsc -p tsconfig.test.json` — test compilation passed.
+- `node --test .test-dist/tests/error-contract.test.js .test-dist/tests/sparse-store.test.js .test-dist/tests/opfs-storage.test.js` — 102/102 focused tests passed.
+- `npm run check` — passed, including format, wasm verification, lint, decoder checks, the full 394/394 test suite, and package policy (`248 files, 500552 bytes`).
+- `CHROME_EXECUTABLE=/home/bl/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome npm run test:browser` — passed against the fresh packed consumer on Chromium 151.0.7922.34, 15 assets, no request failures or console errors. Artifact: `/tmp/engine-web-adapter-browser-Ha7nH2`.
 
 The real storage-root `installSource` boundary keeps foreign/nested
 `stem.corrupt` payloads and invalid proof shapes under primary `storage.io`
