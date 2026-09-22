@@ -1,3 +1,5 @@
+import type { EngineWebAdapterErrorCause } from "../errors.js";
+
 /**
  * Wire contract for the OPFS write Worker.
  *
@@ -33,8 +35,12 @@ export type OpfsWorkerResponse =
       readonly error: {
         readonly name: string;
         readonly message: string;
+        readonly role?: "interruption" | "body" | "finalizer";
+        readonly truncated?: true;
         readonly code?: string;
         readonly details?: Readonly<Record<string, unknown>>;
+        readonly cause?: EngineWebAdapterErrorCause;
+        readonly causes?: readonly EngineWebAdapterErrorCause[];
       };
     };
 

@@ -658,7 +658,8 @@ test("private completion checks host PCM hash and strict final counts", async ()
     first.value!.release();
     const requestId = worker.posted.find((message): message is Extract<FlacWorkerRequest, { type: "start" }> => message.type === "start")!.requestId;
     worker.emit({ type: "complete", requestId, pcmBytes: 4, frames: problem === "count" ? 1 : 2 });
-    await assert.rejects(reader.read(), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt");
+    await assert.rejects(reader.read(), (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.corrupt" &&
+      (error.details.verification as { readonly kind?: unknown } | undefined)?.kind === (problem === "hash" ? "digest" : "length"));
     assert.equal(worker.terminated, true);
   }
 });

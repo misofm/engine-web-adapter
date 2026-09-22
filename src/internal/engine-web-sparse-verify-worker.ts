@@ -1,6 +1,8 @@
 import { Cause, Effect, Exit, Fiber } from "effect";
 
 import { createIncrementalBlake3, type IncrementalBlake3 } from "../stems/blake3.js";
+import { serializeEngineWebAdapterCause } from "../errors.js";
+import type { EngineWebAdapterVerification } from "../errors.js";
 import { verifiedSparseVerifyArrayBufferTransfer, type SparseVerifyArrayBufferTransfer } from "../stems/sparse-verify-buffer.js";
 import {
   SPARSE_VERIFY_READ_BYTES,
@@ -45,11 +47,13 @@ interface Counters {
 
 class WorkerVerificationError extends Error {
   readonly kind: SparseVerifyFailureKind;
+  readonly verification: EngineWebAdapterVerification | undefined;
 
-  constructor(kind: SparseVerifyFailureKind, message: string, cause?: unknown) {
+  constructor(kind: SparseVerifyFailureKind, message: string, cause?: unknown, verification?: EngineWebAdapterVerification) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "WorkerVerificationError";
     this.kind = kind;
+    this.verification = verification;
   }
 }
 
@@ -94,16 +98,16 @@ function start(value: SparseVerifyStart): void {
   try {
     decoded = sparseVerifyWorkerStart(value);
   } catch (cause) {
-    postFailure(value, "corrupt", message(cause));
+    postFailure(value, "corrupt", message(cause), cause);
     return;
   }
   if (active !== undefined) {
-    postFailure(value, "corrupt", "Sparse verification worker received overlapping jobs");
+    postFailure(value, "corrupt", "Sparse verification worker received overlapping jobs", new Error("Sparse verification worker received overlapping jobs"));
     return;
   }
   const transfer = verifiedSparseVerifyArrayBufferTransfer();
   if (transfer === undefined) {
-    postFailure(value, "boundary", "Sparse verification ArrayBuffer transfer capability is unavailable");
+    postFailure(value, "boundary", "Sparse verification ArrayBuffer transfer capability is unavailable", new Error("Sparse verification ArrayBuffer transfer capability is unavailable"));
     return;
   }
   const job: JobState = {
@@ -151,7 +155,9 @@ function verify(job: JobState): Effect.Effect<SparseVerifyComplete, WorkerVerifi
         counters.readCalls = addCount(counters.readCalls, 1);
         counters.readBytes = addCount(counters.readBytes, readLength);
         payloadCursor = addCount(payloadCursor, readLength);
-        if (payloadCursor > request.activeBytes) throw new WorkerVerificationError("corrupt", "Sparse verification payload cursor exceeded its bound");
+        if (payloadCursor > request.activeBytes) throw new WorkerVerificationError("corrupt", "Sparse verification payload cursor exceeded its bound", undefined, {
+          kind: "length", expected: request.activeBytes, observed: payloadCursor,
+        });
       }
       frameCursor = addCount(startFrame, frames);
     }
@@ -160,11 +166,23 @@ function verify(job: JobState): Effect.Effect<SparseVerifyComplete, WorkerVerifi
     const beforeDigest = now();
     const digest = yield* Effect.try({
       try: () => hash.digest("hex"),
-      catch: (cause) => new WorkerVerificationError("corrupt", "Sparse verification digest failed", cause),
+      catch: (cause) => new WorkerVerificationError("io", "Sparse verification digest failed", cause),
     });
     counters.hashMs += Math.max(0, now() - beforeDigest);
-    if (payloadCursor !== request.data.size || counters.readBytes !== request.activeBytes || counters.hashedBytes !== request.canonicalBytes) {
-      throw new WorkerVerificationError("corrupt", "Sparse verification byte counts are inconsistent");
+    if (payloadCursor !== request.data.size) {
+      throw new WorkerVerificationError("corrupt", "Sparse verification payload length is inconsistent", undefined, {
+        kind: "length", expected: request.data.size, observed: payloadCursor,
+      });
+    }
+    if (counters.readBytes !== request.activeBytes) {
+      throw new WorkerVerificationError("corrupt", "Sparse verification active byte count is inconsistent", undefined, {
+        kind: "length", expected: request.activeBytes, observed: counters.readBytes,
+      });
+    }
+    if (counters.hashedBytes !== request.canonicalBytes) {
+      throw new WorkerVerificationError("corrupt", "Sparse verification canonical byte count is inconsistent", undefined, {
+        kind: "length", expected: request.canonicalBytes, observed: counters.hashedBytes,
+      });
     }
     return {
       type: "complete",
@@ -306,7 +324,9 @@ function consumeBuffer(job: JobState, buffer: ArrayBuffer, expectedLength: numbe
   let primary: WorkerVerificationError | undefined;
   try {
     readLength = owned.byteLength;
-    if (readLength !== expectedLength) throw new WorkerVerificationError("corrupt", "Sparse verification payload read was short");
+    if (readLength !== expectedLength) throw new WorkerVerificationError("corrupt", "Sparse verification payload read was short", undefined, {
+      kind: "length", expected: expectedLength, observed: readLength,
+    });
     checkCancelled(job);
     view = new Uint8Array(owned);
     hashUpdateSync(job, hash, view, counters);
@@ -319,6 +339,12 @@ function consumeBuffer(job: JobState, buffer: ArrayBuffer, expectedLength: numbe
       try { void job.transfer(owned, 0); }
       catch (cause) {
         if (primary === undefined) primary = new WorkerVerificationError("io", "Sparse verification payload disposal failed", cause);
+        else primary = new WorkerVerificationError(
+          primary.kind,
+          primary.message,
+          new AggregateError([primary, cause], "Sparse verification payload disposal failed"),
+          primary.verification,
+        );
       }
     }
     view = undefined;
@@ -415,17 +441,18 @@ function finish(job: JobState, exit: Exit.Exit<SparseVerifyComplete, WorkerVerif
     clear(job);
     return;
   }
-  fail(job, Cause.squash(exit.cause));
+  fail(job, effectCause(exit.cause));
 }
 
 function fail(job: JobState, cause: unknown): void {
   if (job.cleared) return;
   const request = job.request;
-  postFailure(request, cause instanceof WorkerVerificationError ? cause.kind : "io", message(cause));
+  const primary = findWorkerVerificationError(cause);
+  postFailure(request, primary?.kind ?? "io", primary?.message ?? message(cause), cause, primary?.verification);
   clear(job);
 }
 
-function postFailure(request: Partial<SparseVerifyStart>, kind: SparseVerifyFailureKind, text: string): void {
+function postFailure(request: Partial<SparseVerifyStart>, kind: SparseVerifyFailureKind, text: string, cause?: unknown, verification?: EngineWebAdapterVerification): void {
   if (typeof request.jobId !== "number" || typeof request.generation !== "number") return;
   try {
     scope.postMessage({
@@ -435,10 +462,35 @@ function postFailure(request: Partial<SparseVerifyStart>, kind: SparseVerifyFail
       generation: request.generation,
       kind,
       message: text,
+      ...(verification === undefined ? {} : { verification }),
+      ...(cause === undefined ? {} : { cause: serializeEngineWebAdapterCause(cause) }),
     });
   } catch {
     scope.close?.();
   }
+}
+
+function effectCause(cause: Cause.Cause<WorkerVerificationError>): unknown {
+  const values = cause.reasons.map((reason) => {
+    if (Cause.isFailReason(reason)) return reason.error;
+    if (Cause.isDieReason(reason)) return reason.defect;
+    const interrupted = new Error("Sparse verification was interrupted");
+    interrupted.name = "AbortError";
+    return interrupted;
+  });
+  return values.length === 1 ? values[0] : new AggregateError(values, "Sparse verification failed");
+}
+
+function findWorkerVerificationError(value: unknown, depth = 0): WorkerVerificationError | undefined {
+  if (depth > 4) return undefined;
+  if (value instanceof WorkerVerificationError) return value;
+  if (value instanceof AggregateError) {
+    for (const item of value.errors) {
+      const found = findWorkerVerificationError(item, depth + 1);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
 }
 
 function clear(job: JobState): void {

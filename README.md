@@ -114,6 +114,33 @@ identical operation is `transient`, frozen `details`, and the underlying
 `cause`. No Engine host object, Worker message or Effect value reaches a caller
 through it.
 
+Storage access failures use the distinct `storage.io` code. Its coarse public
+`.phase` remains `store`; storage details add `operation`, `resource`, and a
+granular `phase`, while the original browser exception name and cause are
+retained without classifying from message text. `stem.invalid_declaration`
+covers invalid metadata or declarations. `stem.corrupt` is reserved for a
+verified digest or byte-length mismatch and carries
+`details.verification = { kind, expected, observed, algorithm? }`; a storage or
+metadata refusal never receives that code.
+
+For example, an OPFS root refusal is app-consumable as:
+
+```json
+{
+  "name": "EngineWebAdapterError",
+  "message": "Sparse root access failed",
+  "code": "storage.io",
+  "phase": "store",
+  "details": {
+    "operation": "open",
+    "resource": "sparse-root",
+    "phase": "root-open",
+    "failureKind": "io"
+  },
+  "cause": { "name": "UnknownError", "message": "Storage access was refused" }
+}
+```
+
 Console submission returns the SDK `CommandReport` unchanged. A semantic
 refusal has `ok: false`, `admitted: 0`, and its original reason, rejected index,
 and application sample; transport failures reject. Request identifiers are
@@ -235,9 +262,15 @@ asset fields without discarding the other common fields; the low-level
 - Canonical PCM is headerless interleaved little-endian PCM16 or PCM24 at
   44.1, 48, 88.2, or 96 kHz; there is no implicit sample-rate conversion.
 
-`close()` is idempotent. The `./stems` entry exports what a caller can supply
-or replace: the canonical-PCM resolver seam, the verified store and its storage
-backends, the FLAC resolver, the pump, and the ring control words a `createPump`
+`close()` is idempotent. Store close aborts active logical operations, waits for
+their physical reads/writes and writer aborts to settle, then disposes shared
+verification workers. Cancellation has the same settlement rule: late browser
+work cannot publish a source or trigger an automatic retry. A failed physical
+writer close is surfaced with its original cause and is not retried or replaced
+by a forced shutdown; staging cleanup remains separately observable. The
+session-owned OPFS backend is released by session teardown. The `./stems` entry
+exports what a caller can supply or replace: the canonical-PCM resolver seam,
+the verified store and its storage backends, the FLAC resolver, the pump, and the ring control words a `createPump`
 override reads. The existing ring control exports are SDK re-exports. Digests,
 admission width, the decoder pool and adapter Worker protocols remain internal;
 PCM ring arithmetic is owned by the SDK.
@@ -420,7 +453,7 @@ ingest locks. Each lease also holds its historical folder-qualified
 `:pin:<session-pin>` lifetime lock so existing app recovery recognizes it.
 Recovery preserves ambiguous session pins and offline pins; it leaves the
 historical `staging/` directory alone. Explicit unsupported index versions
-refuse with `stem.corrupt` before recovery changes any file.
+refuse with `stem.invalid_declaration` before recovery changes any file.
 
 When a known storage estimate cannot fit a cold source, the store reclaims
 unpinned indexed entries by oldest `lastUsedAt`, breaking ties by identity,

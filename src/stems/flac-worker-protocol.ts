@@ -1,4 +1,5 @@
 import type { WorkerProcessingMetrics } from "./ingest-diagnostics.js";
+import type { EngineWebAdapterErrorCause } from "../errors.js";
 import type { CanonicalPcmExpectation, StemIdentity } from "./types.js";
 import type { FlacInputSlotBuffers } from "./flac-input-slot.js";
 import type { NativeFlacStreamInfo } from "./native-flac-metadata.js";
@@ -59,8 +60,17 @@ export type FlacWorkerResponse =
   | {
       readonly type: "error";
       readonly requestId: number;
-      readonly error: { readonly name: string; readonly message: string; readonly code?: string; readonly details?: Readonly<Record<string, unknown>> };
-    };
+      readonly error: {
+        readonly name: string;
+        readonly message: string;
+        readonly role?: "interruption" | "body" | "finalizer";
+        readonly truncated?: true;
+        readonly code?: string;
+        readonly details?: Readonly<Record<string, unknown>>;
+        readonly cause?: EngineWebAdapterErrorCause;
+        readonly causes?: readonly EngineWebAdapterErrorCause[];
+      };
+  };
 
 export interface FlacWorkerLike {
   postMessage(message: FlacWorkerRequest, transfer?: Transferable[]): void;

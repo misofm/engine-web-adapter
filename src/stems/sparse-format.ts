@@ -70,7 +70,7 @@ export interface SparseSessionDeclaredSource {
 export type SparseSessionSourceExpectation = SparseSessionSourceShape | SparseSessionDeclaredSource;
 
 function corrupt(message: string, details: Readonly<Record<string, unknown>> = {}): EngineWebAdapterError {
-  return new EngineWebAdapterError("stem.corrupt", message, details);
+  return new EngineWebAdapterError("stem.invalid_declaration", message, { ...details, metadata: "sparse-stem" });
 }
 
 function declaration(message: string, details: Readonly<Record<string, unknown>> = {}): EngineWebAdapterError {

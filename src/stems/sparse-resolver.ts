@@ -158,6 +158,20 @@ interface SparsePullState {
   activeOutput: ReadableStream<import("./flac-resolver.js").BorrowedFlacPcm> | undefined;
 }
 
+function sparseAdapterFailure(
+  message: string,
+  details: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): EngineWebAdapterError {
+  return new EngineWebAdapterError("storage.io", message, {
+    operation: "decode",
+    resource: "sparse-decoder",
+    phase: "worker-output",
+    failureKind: "adapter",
+    ...details,
+  }, cause);
+}
+
 function intervalEnd(interval: SparseStemInterval): number {
   return interval.packedFrameOffset + interval.frames;
 }
@@ -169,23 +183,23 @@ function expectedPackedFrames(manifest: SparseStemManifest): number {
 
 function mapNextBlock(state: SparsePullState): SparsePcmSpan {
   const block = state.currentBlock;
-  if (block === undefined) throw new EngineWebAdapterError("stem.corrupt", "Sparse mapper has no decoder block", { identity: state.expected.identity });
+  if (block === undefined) throw sparseAdapterFailure("Sparse mapper has no decoder block", { identity: state.expected.identity });
   while (state.intervalIndex < state.manifest.intervals.length &&
     state.packedFrame >= intervalEnd(state.manifest.intervals[state.intervalIndex]!)) state.intervalIndex += 1;
   const interval = state.manifest.intervals[state.intervalIndex];
   if (interval === undefined || state.packedFrame < interval.packedFrameOffset || state.packedFrame >= intervalEnd(interval)) {
-    throw new EngineWebAdapterError("stem.corrupt", "Sparse decoder block falls outside admitted active intervals", { identity: state.expected.identity, packedFrame: state.packedFrame });
+    throw sparseAdapterFailure("Sparse decoder block falls outside admitted active intervals", { identity: state.expected.identity, packedFrame: state.packedFrame });
   }
   const maxFrames = Math.max(1, Math.floor(128 * 1024 / state.frameBytes));
   const blockEnd = block.startPackedFrame + block.frames;
   const end = Math.min(blockEnd, intervalEnd(interval), state.packedFrame + maxFrames);
-  if (end <= state.packedFrame) throw new EngineWebAdapterError("stem.corrupt", "Sparse mapper made no frame progress", { identity: state.expected.identity });
+  if (end <= state.packedFrame) throw sparseAdapterFailure("Sparse mapper made no frame progress", { identity: state.expected.identity });
   const frames = end - state.packedFrame;
   const startInBlock = state.packedFrame - block.startPackedFrame;
   const startByte = startInBlock * state.frameBytes;
   const endByte = startByte + frames * state.frameBytes;
   const bytes = block.value.bytes.subarray(startByte, endByte);
-  if (bytes.byteLength !== frames * state.frameBytes) throw new EngineWebAdapterError("stem.corrupt", "Sparse decoder block view is not frame aligned", { identity: state.expected.identity });
+  if (bytes.byteLength !== frames * state.frameBytes) throw sparseAdapterFailure("Sparse decoder block view is not frame aligned", { identity: state.expected.identity });
   const span = {
     startFrame: interval.startFrame + (state.packedFrame - interval.packedFrameOffset),
     bytes,
@@ -225,7 +239,7 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
           if (bytes.byteLength < 1 || bytes.byteLength % state.frameBytes !== 0 || bytes.byteLength > 384 * 1024 ||
             next.value.bytes.buffer.byteLength > 384 * 1024) {
             next.value.release();
-            return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "Sparse decoder output has an unsafe PCM block shape", { identity: state.expected.identity }));
+            return yield* Effect.fail(sparseAdapterFailure("Sparse decoder output has an unsafe PCM block shape", { identity: state.expected.identity }));
           }
           const frames = bytes.byteLength / state.frameBytes;
           state.currentBlock = { value: next.value, startPackedFrame: state.packedFrame, frames, offsetFrames: 0 };
@@ -236,7 +250,7 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
         state.activeOutput = undefined;
         const chunk = state.currentChunk;
         if (chunk === undefined || state.chunkFrames !== chunk.frames) {
-          return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "Sparse decoder output did not cover its declared chunk", {
+          return yield* Effect.fail(sparseAdapterFailure("Sparse decoder output did not cover its declared chunk", {
             identity: state.expected.identity,
             expectedFrames: chunk?.frames,
             actualFrames: state.chunkFrames,
@@ -251,7 +265,7 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
 
       const chunk = state.manifest.chunks[state.chunkIndex];
       if (chunk === undefined) {
-        if (state.packedFrame !== expectedPackedFrames(state.manifest)) return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "Sparse packed frame endpoint changed during mapping", { identity: state.expected.identity }));
+        if (state.packedFrame !== expectedPackedFrames(state.manifest)) return yield* Effect.fail(sparseAdapterFailure("Sparse packed frame endpoint changed during mapping", { identity: state.expected.identity }));
         yield* state.cursor.assertEof;
         if (state.signal.aborted) return yield* Effect.fail(sparseStreamCancelled(state.expected.identity, state.signal.reason));
         // Active PCM decoding can finish below the full canonical total when
@@ -273,7 +287,7 @@ const nextSparseSpan = Effect.fn("SparseResolver.nextSpan")(function*(state: Spa
         return yield* Cause.done();
       }
       const expectedPosition = state.payloadStart + chunk.offset;
-      if (state.cursor.position !== expectedPosition) return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "Sparse finite source cursor is not at its admitted chunk", { identity: state.expected.identity, expectedPosition, actualPosition: state.cursor.position }));
+      if (state.cursor.position !== expectedPosition) return yield* Effect.fail(sparseAdapterFailure("Sparse finite source cursor is not at its admitted chunk", { identity: state.expected.identity, expectedPosition, actualPosition: state.cursor.position }));
       const onChunkProgress = (progress: StemProgress): void => {
         if (progress.stage === "decoding" && progress.byteKind === "pcm") {
           if (!Number.isSafeInteger(progress.bytes) || progress.bytes < state.chunkDecodedBytes ||
@@ -568,9 +582,9 @@ export function createSparseStemResolver(
         onProgress: reportResponse,
       });
       const header = yield* cursor.readExact(SPARSE_STEM_HEADER_BYTES);
-      const headerAdmission = yield* Effect.try({ try: () => admitSparseStemHeader(header), catch: cause => cause instanceof EngineWebAdapterError ? cause : new EngineWebAdapterError("stem.corrupt", "Sparse header admission failed", { identity: expected.identity }, cause) });
+      const headerAdmission = yield* Effect.try({ try: () => admitSparseStemHeader(header), catch: cause => cause instanceof EngineWebAdapterError ? cause : new EngineWebAdapterError("stem.invalid_declaration", "Sparse header admission failed", { identity: expected.identity, metadata: "sparse-stem-header" }, cause) });
       const encodedManifest = yield* cursor.readExact(headerAdmission.manifestBytes);
-      const manifest = yield* Effect.try({ try: () => admitSparseStemManifest(encodedManifest), catch: cause => cause instanceof EngineWebAdapterError ? cause : new EngineWebAdapterError("stem.corrupt", "Sparse manifest admission failed", { identity: expected.identity }, cause) });
+      const manifest = yield* Effect.try({ try: () => admitSparseStemManifest(encodedManifest), catch: cause => cause instanceof EngineWebAdapterError ? cause : new EngineWebAdapterError("stem.invalid_declaration", "Sparse manifest admission failed", { identity: expected.identity, metadata: "sparse-stem-manifest" }, cause) });
       yield* Effect.try({ try: () => assertSparseStemSessionBinding(manifest, expected), catch: cause => cause instanceof EngineWebAdapterError ? cause : new EngineWebAdapterError("stem.invalid_declaration", "Sparse manifest does not match its session source", { identity: expected.identity }, cause) });
       const payload = payloadBytes(manifest);
       responseTotal = headerAdmission.payloadStart + payload;

@@ -24,6 +24,13 @@ assert.equal(
 );
 const { ADAPTER_PROVENANCE } = await import("../dist/provenance.js");
 assert.equal(ADAPTER_PROVENANCE.engine.package, `@misofm/engine@${packageJson.dependencies["@misofm/engine"]}`, "built provenance must identify the installed Engine dependency");
+const { EngineWebAdapterError } = await import("../dist/index.js");
+const packedSurfaceFailure = new EngineWebAdapterError("storage.io", "packed storage fixture", {
+  operation: "open", resource: "sparse-root", phase: "root-open", failureKind: "io",
+}, new Error("UnknownError fixture"));
+assert.equal(packedSurfaceFailure.code, "storage.io");
+assert.equal(packedSurfaceFailure.phase, "store");
+assert.equal(packedSurfaceFailure.details.operation, "open");
 const cache = await mkdtemp(join(tmpdir(), "engine-web-adapter-npm-cache-"));
 const packed = spawnSync("npm", ["pack", "--dry-run", "--json"], {
   encoding: "utf8", env: { ...process.env, npm_config_cache: cache },

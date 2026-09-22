@@ -8,7 +8,7 @@ import {
 } from "@misofm/codec";
 
 import { createIncrementalBlake3, type IncrementalBlake3 } from "../stems/blake3.js";
-import { EngineWebAdapterError } from "../errors.js";
+import { EngineWebAdapterError, serializeEngineWebAdapterCause } from "../errors.js";
 import { FlacInputSlotConsumer, FLAC_INPUT_SLOT_BYTES, type FlacInputReadResult, type FlacInputSlotBuffers } from "../stems/flac-input-slot.js";
 import { FlacOutputCredits } from "../stems/flac-output-credits.js";
 import { loadFlacDecoderModule, mapFlacDecodeError } from "../stems/native-flac-decoder.js";
@@ -67,16 +67,17 @@ function clearJobState(): void {
 }
 
 function serialize(error: unknown): Extract<FlacWorkerResponse, { type: "error" }>['error'] {
-  if (error instanceof Error) {
-    const record = error as Error & { readonly code?: unknown; readonly details?: unknown };
-    return {
-      name: error.name,
-      message: error.message,
-      ...(typeof record.code === "string" ? { code: record.code } : {}),
-      ...(typeof record.details === "object" && record.details !== null ? { details: record.details as Readonly<Record<string, unknown>> } : {}),
-    };
-  }
-  return { name: "Error", message: String(error) };
+  const serialized = serializeEngineWebAdapterCause(error);
+  return {
+    name: serialized.name,
+    message: serialized.message,
+    ...(serialized.role === undefined ? {} : { role: serialized.role }),
+    ...(serialized.truncated === undefined ? {} : { truncated: serialized.truncated }),
+    ...(serialized.code === undefined ? {} : { code: serialized.code }),
+    ...(serialized.details === undefined ? {} : { details: serialized.details }),
+    ...(serialized.cause === undefined ? {} : { cause: serialized.cause }),
+    ...(serialized.causes === undefined ? {} : { causes: serialized.causes }),
+  };
 }
 
 function fail(error: unknown): void {

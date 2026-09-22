@@ -1,7 +1,8 @@
 import { Cause, Effect, Exit, Queue } from "effect";
 import { beginIngestStage, ownRunnableWorker, configureProcessingDiagnostics, recordWorkerProcessing, deliveredRangeOwner, registerFlacResolver, releaseDecoded, retainDecoded, type IngestDiagnostics } from "./ingest-diagnostics.js";
 import { MAXIMUM_CANONICAL_OUTPUT_BYTES } from "./native-flac-decoder.js";
-import { EngineWebAdapterError } from "../errors.js";
+import { EngineWebAdapterError, isEngineWebAdapterErrorCode, isEngineWebAdapterVerification, reviveEngineWebAdapterCause } from "../errors.js";
+import type { EngineWebAdapterVerification } from "../errors.js";
 import { ADAPTER_ASSETS, type AdapterAssetOverrides } from "../assets.js";
 import { BoundedStemAdmission, flacPipelineWidths, type FlacProcessingOptions } from "./flac-admission.js";
 import { registerFlacResult } from "./flac-result.js";
@@ -50,10 +51,27 @@ let nextRequestId = 1;
 
 function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): EngineWebAdapterError {
   const code = message.error.code;
-  if (code !== undefined) {
-    return new EngineWebAdapterError(code as EngineWebAdapterError["code"], message.error.message, message.error.details ?? {});
+  const cause = message.error.causes === undefined
+    ? message.error.cause === undefined ? undefined : reviveEngineWebAdapterCause(message.error.cause)
+    : reviveEngineWebAdapterCause({
+      name: message.error.name,
+      message: message.error.message,
+      ...(message.error.role === undefined ? {} : { role: message.error.role }),
+      ...(message.error.truncated === undefined ? {} : { truncated: message.error.truncated }),
+      ...(message.error.cause === undefined ? {} : { cause: message.error.cause }),
+      causes: message.error.causes,
+    });
+  if (code !== undefined && isEngineWebAdapterErrorCode(code) &&
+    (code !== "stem.corrupt" || isEngineWebAdapterVerification(message.error.details?.verification))) {
+    return new EngineWebAdapterError(code, message.error.message, message.error.details ?? {}, cause);
   }
-  return new EngineWebAdapterError("stem.decode.worker", message.error.message);
+  if (code === "stem.corrupt") {
+    return new EngineWebAdapterError("storage.io", message.error.message, {
+      ...(message.error.details ?? {}),
+      failureKind: "adapter",
+    }, cause);
+  }
+  return new EngineWebAdapterError("stem.decode.worker", message.error.message, {}, cause);
 }
 
 function decoderSourceError(error: unknown): EngineWebAdapterError {
@@ -482,9 +500,10 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
                   preparedMetadata.expectedFrames !== chunk.expected.frames ||
                   preparedMetadata.totalPcmBytes !== chunk.expected.canonicalBytes
                 )) {
-                  return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "FLAC chunk preparation does not match its declared shape", {
+                  return yield* Effect.fail(new EngineWebAdapterError("stem.invalid_declaration", "FLAC chunk preparation does not match its declared shape", {
                     identity, expectedFrames: chunk.expected.frames,
                     expectedPcmBytes: chunk.expected.canonicalBytes,
+                    metadata: "flac-chunk",
                   }));
                 }
                 initialized = true;
@@ -515,12 +534,40 @@ function makeFlacStemResolver(options: FlacResolverOptions, diagnostics?: Ingest
               } else {
                 if (!initialized) return yield* new DecoderByteSourceError({ operation: "finish", message: "FLAC Worker completed before readiness" });
                 const message = command.message;
-                if (message.pcmBytes !== decodedBytes || message.frames !== decodedFrames ||
-                  (options.processing !== undefined && (decodedBytes !== preparedMetadata!.totalPcmBytes || decodedFrames !== preparedMetadata!.expectedFrames)) ||
-                  (chunk !== undefined && (decodedBytes !== chunk.expected.canonicalBytes || decodedFrames !== chunk.expected.frames ||
-                    hostPcmHash?.digestHex() !== chunk.pcmSha256)) ||
-                  (workerHashes && (message.digest !== identity.slice(7) || !/^[a-f0-9]{64}$/u.test(message.digest)))) {
-                  return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "FLAC Worker completion does not verify canonical PCM", { identity }));
+                let verification: EngineWebAdapterVerification | undefined;
+                if (message.pcmBytes !== decodedBytes) {
+                  verification = { kind: "length", expected: decodedBytes, observed: message.pcmBytes };
+                } else if (message.frames !== decodedFrames) {
+                  const frameBytes = preparedMetadata!.streamInfo.channels * (preparedMetadata!.streamInfo.bitDepth / 8);
+                  verification = { kind: "length", expected: decodedFrames * frameBytes, observed: message.frames * frameBytes };
+                } else if (options.processing !== undefined && decodedBytes !== preparedMetadata!.totalPcmBytes) {
+                  verification = { kind: "length", expected: preparedMetadata!.totalPcmBytes, observed: decodedBytes };
+                } else if (options.processing !== undefined && decodedFrames !== preparedMetadata!.expectedFrames) {
+                  const frameBytes = preparedMetadata!.streamInfo.channels * (preparedMetadata!.streamInfo.bitDepth / 8);
+                  verification = { kind: "length", expected: preparedMetadata!.expectedFrames * frameBytes, observed: decodedFrames * frameBytes };
+                } else if (chunk !== undefined && decodedBytes !== chunk.expected.canonicalBytes) {
+                  verification = { kind: "length", expected: chunk.expected.canonicalBytes, observed: decodedBytes };
+                } else if (chunk !== undefined && decodedFrames !== chunk.expected.frames) {
+                  const frameBytes = chunk.expected.channels * (chunk.expected.bitDepth / 8);
+                  verification = { kind: "length", expected: chunk.expected.frames * frameBytes, observed: decodedFrames * frameBytes };
+                } else if (chunk !== undefined) {
+                  const observed = hostPcmHash?.digestHex();
+                  if (observed !== chunk.pcmSha256 && observed !== undefined) {
+                    verification = { kind: "digest", expected: chunk.pcmSha256, observed, algorithm: "sha256" };
+                  }
+                }
+                if (verification === undefined && workerHashes && typeof message.digest === "string" && (message.digest !== identity.slice(7) || !/^[a-f0-9]{64}$/u.test(message.digest))) {
+                  verification = { kind: "digest", expected: identity.slice(7), observed: message.digest, algorithm: "blake3-256" };
+                }
+                if (verification !== undefined) {
+                  return yield* Effect.fail(new EngineWebAdapterError("stem.corrupt", "FLAC Worker completion does not verify canonical PCM", {
+                    identity, operation: "verify", resource: "flac-worker", phase: "completion", verification,
+                  }));
+                }
+                if (workerHashes && (typeof message.digest !== "string" || message.digest !== identity.slice(7))) {
+                  return yield* Effect.fail(new EngineWebAdapterError("storage.io", "FLAC Worker did not return canonical digest evidence", {
+                    identity, operation: "verify", resource: "flac-worker", phase: "completion", failureKind: "adapter",
+                  }));
                 }
                 if (message.metrics !== undefined) recordWorkerProcessing(diagnostics, message.metrics);
                 if (workerHashes) verifiedDigest = message.digest;

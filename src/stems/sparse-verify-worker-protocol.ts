@@ -1,3 +1,5 @@
+import { isEngineWebAdapterVerification } from "../errors.js";
+import type { EngineWebAdapterErrorCause, EngineWebAdapterVerification } from "../errors.js";
 import type { SparsePcmIndex } from "./sparse-pcm.js";
 import type { StemIdentity } from "./types.js";
 
@@ -80,6 +82,8 @@ export interface SparseVerifyFailure {
   readonly generation: number;
   readonly kind: SparseVerifyFailureKind;
   readonly message: string;
+  readonly verification?: EngineWebAdapterVerification;
+  readonly cause?: EngineWebAdapterErrorCause;
 }
 
 export type SparseVerifyWorkerRequest = SparseVerifyStart | SparseVerifyAck | SparseVerifyCancel;
@@ -202,8 +206,25 @@ export function sparseVerifyWorkerResponse(value: unknown): SparseVerifyWorkerRe
     if (!["boundary", "corrupt", "deadline", "io", "cancelled"].includes(response.kind) || typeof response.message !== "string") {
       throw new Error("Sparse verification worker failure is invalid");
     }
+    if (response.verification !== undefined) validateVerification(response.verification);
+    if (response.cause !== undefined) validateCause(response.cause);
   }
   return response;
+}
+
+function validateVerification(value: unknown): asserts value is EngineWebAdapterVerification {
+  if (!isEngineWebAdapterVerification(value)) {
+    throw new Error("Sparse verification evidence is invalid");
+  }
+}
+
+function validateCause(value: unknown, depth = 0): asserts value is EngineWebAdapterErrorCause {
+  if (depth > 4 || !record(value) || typeof value.name !== "string" || typeof value.message !== "string") throw new Error("Sparse verification cause is invalid");
+  if (value.cause !== undefined) validateCause(value.cause, depth + 1);
+  if (value.causes !== undefined) {
+    if (!Array.isArray(value.causes) || value.causes.length > 8) throw new Error("Sparse verification causes exceed their bound");
+    for (const cause of value.causes) validateCause(cause, depth + 1);
+  }
 }
 
 function record(value: unknown): value is Record<string, unknown> {

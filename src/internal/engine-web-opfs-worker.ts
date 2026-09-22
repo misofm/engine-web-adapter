@@ -1,4 +1,4 @@
-import { EngineWebAdapterError } from "../errors.js";
+import { EngineWebAdapterError, serializeEngineWebAdapterCause } from "../errors.js";
 import { OPFS_WRITE_METHOD, OPFS_WRITE_REMEDY } from "../stems/opfs-worker-protocol.js";
 import type { OpfsWorkerRequest, OpfsWorkerResponse } from "../stems/opfs-worker-protocol.js";
 
@@ -70,7 +70,11 @@ async function apply(request: OpfsWorkerRequest): Promise<void> {
       try {
         handle.truncate(0);
       } catch (error) {
-        try { handle.close(); } catch { /* the truncate failure is the authoritative cause */ }
+        let closeFailed = false;
+        let closeError: unknown;
+        try { handle.close(); }
+        catch (cause) { closeFailed = true; closeError = cause; }
+        if (closeFailed) throw compoundPhysicalFailure("OPFS writer open failed during cleanup", error, closeError);
         throw error;
       }
       handles.set(request.writerId, { handle, offset: 0 });
@@ -80,9 +84,10 @@ async function apply(request: OpfsWorkerRequest): Promise<void> {
       const entry = opened(request.writerId);
       const written = entry.handle.write(request.chunk, { at: entry.offset });
       if (written !== request.chunk.byteLength) {
-        throw new EngineWebAdapterError("stem.corrupt", "Origin-private file storage wrote a short chunk", {
+        throw new EngineWebAdapterError("storage.io", "Origin-private file storage wrote a short chunk", {
           expectedBytes: request.chunk.byteLength,
           writtenBytes: written,
+          failureKind: "io",
         });
       }
       entry.offset += written;
@@ -91,7 +96,17 @@ async function apply(request: OpfsWorkerRequest): Promise<void> {
     case "write-close": {
       const entry = opened(request.writerId);
       handles.delete(request.writerId);
-      try { entry.handle.flush(); } finally { entry.handle.close(); }
+      let flushFailed = false;
+      let flushError: unknown;
+      try { entry.handle.flush(); }
+      catch (cause) { flushFailed = true; flushError = cause; }
+      let closeFailed = false;
+      let closeError: unknown;
+      try { entry.handle.close(); }
+      catch (cause) { closeFailed = true; closeError = cause; }
+      if (flushFailed && closeFailed) throw compoundPhysicalFailure("OPFS writer close failed during flush and cleanup", flushError, closeError);
+      if (flushFailed) throw flushError;
+      if (closeFailed) throw closeError;
       return;
     }
     case "write-abort": {
@@ -133,16 +148,29 @@ function opened(writerId: number): { readonly handle: SyncAccessHandleLike; offs
 }
 
 function serialize(error: unknown): Extract<OpfsWorkerResponse, { type: "opfs-error" }>["error"] {
-  if (error instanceof Error) {
-    const record = error as Error & { readonly code?: unknown; readonly details?: unknown };
-    return {
-      name: error.name,
-      message: error.message,
-      ...(typeof record.code === "string" ? { code: record.code } : {}),
-      ...(typeof record.details === "object" && record.details !== null
-        ? { details: record.details as Readonly<Record<string, unknown>> }
-        : {}),
-    };
-  }
-  return { name: "Error", message: String(error) };
+  const serialized = serializeEngineWebAdapterCause(error);
+  return {
+    name: serialized.name,
+    message: serialized.message,
+    ...(serialized.role === undefined ? {} : { role: serialized.role }),
+    ...(serialized.truncated === undefined ? {} : { truncated: serialized.truncated }),
+    ...(serialized.code === undefined ? {} : { code: serialized.code }),
+    ...(serialized.details === undefined ? {} : { details: serialized.details }),
+    ...(serialized.cause === undefined ? {} : { cause: serialized.cause }),
+    ...(serialized.causes === undefined ? {} : { causes: serialized.causes }),
+  };
+}
+
+function compoundPhysicalFailure(message: string, body: unknown, finalizer: unknown): AggregateError {
+  return new AggregateError([
+    roleFailure("body", body),
+    roleFailure("finalizer", finalizer),
+  ], message);
+}
+
+function roleFailure(role: "body" | "finalizer", error: unknown): Error {
+  const wrapped = new Error(error instanceof Error ? error.message : String(error), { cause: error });
+  wrapped.name = error instanceof Error ? error.name : "Error";
+  Object.defineProperty(wrapped, "role", { value: role, enumerable: true, configurable: true });
+  return wrapped;
 }

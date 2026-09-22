@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 
+import { reviveEngineWebAdapterCause } from "../errors.js";
 import { createSparseVerifyWorker } from "./sparse-verify-worker-asset.js";
 import { verifiedSparseVerifyArrayBufferTransfer, type SparseVerifyArrayBufferTransfer } from "./sparse-verify-buffer.js";
 import {
@@ -10,6 +11,7 @@ import {
   sparseVerifyWorkerResponse,
   type SparseVerifyComplete,
   type SparseVerifyFailureKind,
+  type SparseVerifyFailure,
   type SparseVerifyStart,
   type SparseVerifyWorkerResponse,
 } from "./sparse-verify-worker-protocol.js";
@@ -18,11 +20,13 @@ import type { StemIdentity } from "./types.js";
 
 export class SparseVerifyWorkerError extends Error {
   readonly kind: SparseVerifyFailureKind;
+  readonly verification: SparseVerifyFailure["verification"];
 
-  constructor(kind: SparseVerifyFailureKind, message: string, cause?: unknown) {
+  constructor(kind: SparseVerifyFailureKind, message: string, cause?: unknown, verification?: SparseVerifyFailure["verification"]) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "SparseVerifyWorkerError";
     this.kind = kind;
+    this.verification = verification;
   }
 }
 
@@ -321,7 +325,12 @@ export class SparseVerifyWorkerPool {
       return;
     }
     if (response.type === "failure") {
-      this.failSlot(slot, generation, new SparseVerifyWorkerError(response.kind, response.message));
+      this.failSlot(slot, generation, new SparseVerifyWorkerError(
+        response.kind,
+        response.message,
+        response.cause === undefined ? undefined : reviveEngineWebAdapterCause(response.cause),
+        response.verification,
+      ));
       return;
     }
     let expectedCounts: ReturnType<typeof sparseVerifyExpectedCounts>;
@@ -330,10 +339,23 @@ export class SparseVerifyWorkerPool {
       this.failSlot(slot, generation, new SparseVerifyWorkerError("corrupt", "Sparse verification count expectation was invalid", cause));
       return;
     }
-    if (response.identity !== job.options.identity || response.progressBytes !== job.options.canonicalBytes || response.canonicalBytes !== job.options.canonicalBytes ||
-      response.readBytes !== job.options.index.activeBytes || response.hashedBytes !== job.options.canonicalBytes ||
-      response.readCalls !== expectedCounts.readCalls || response.hashUpdates !== expectedCounts.hashUpdates || response.zeroUpdates !== expectedCounts.zeroUpdates) {
-      this.failSlot(slot, generation, new SparseVerifyWorkerError("corrupt", "Sparse verification Worker counts or identity disagreed with the admitted descriptor"));
+    const expectedDigest = job.options.identity.slice("blake3:".length);
+    const verification = response.digest !== expectedDigest
+      ? { kind: "digest" as const, expected: expectedDigest, observed: response.digest, algorithm: "blake3-256" }
+      : response.progressBytes !== job.options.canonicalBytes || response.canonicalBytes !== job.options.canonicalBytes || response.hashedBytes !== job.options.canonicalBytes
+        ? { kind: "length" as const, expected: job.options.canonicalBytes, observed: response.hashedBytes }
+        : response.readBytes !== job.options.index.activeBytes
+          ? { kind: "length" as const, expected: job.options.index.activeBytes, observed: response.readBytes }
+          : undefined;
+    if (verification !== undefined || response.identity !== job.options.identity || response.readCalls !== expectedCounts.readCalls || response.hashUpdates !== expectedCounts.hashUpdates || response.zeroUpdates !== expectedCounts.zeroUpdates) {
+      this.failSlot(slot, generation, new SparseVerifyWorkerError(
+        "corrupt",
+        verification === undefined && response.identity === job.options.identity
+          ? "Sparse verification Worker accounting disagreed with the admitted descriptor"
+          : "Sparse verification Worker result did not match the admitted content",
+        undefined,
+        verification,
+      ));
       return;
     }
     this.resetWatchdog(slot, generation, job.options.readDeadlineMs);
