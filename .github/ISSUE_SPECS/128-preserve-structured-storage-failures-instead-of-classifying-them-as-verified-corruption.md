@@ -61,9 +61,10 @@ browser capability limitations below.
 
 ## Implementation evidence
 
-Source parent: `93cf2f790ea2ecba5428e8a32ac3bbc40c05b605`.
-Pending commit: this working-tree P2 recursive cause-summary reservation fix;
-the coordinator will attach the final reviewed commit SHA before synchronization.
+Reviewed implementation: `27795844c2ebaed2061eb0b6cdde0d15a2550973`
+(parent `93cf2f790ea2ecba5428e8a32ac3bbc40c05b605`).
+Fresh independent Astra medium review approved this exact clean candidate;
+this subsequent evidence-only commit changes no source or test code.
 
 Verification completed:
 
@@ -95,6 +96,15 @@ workflow; neither merge nor publication is authorized by this work.
 The committed public fixture `tests/fixtures/storage-error-contract.json`
 records `storage.io`, coarse phase `store`, details
 `{ operation: "open", resource: "sparse-root", phase: "root-open", failureKind: "io" }`,
-and the retained `UnknownError` cause. Independent review of this exact
-candidate is pending; coordinator will attach the reviewed commit SHA and
-synchronize the evidence to the matching issue before PR creation.
+and the retained `UnknownError` cause. Independent review of this exact candidate approved the recursive global
+reservation invariant and retained all prior taxonomy, cancellation, physical
+settlement, and integrity-proof closures. The reviewer independently ran
+104 focused tests, the full 396-test check, and a fresh packed Chromium
+consumer (artifact `/tmp/engine-web-adapter-browser-MHXdK5`, 15 assets, no
+request failures or console errors). Generated verification covered 1,835
+cases / 14,680 serialization checks with a maximum of 16,337 UTF-8 bytes;
+full padding sweeps, deep/wide/mixed trees, Unicode, JSON escapes, six
+reserializations, and revival retained useful mandatory summaries.
+The coordinator synchronizes this evidence to the matching issue before PR
+creation. Browser CI will separately qualify the exact PR candidate; no
+unobserved WebKit or device result is claimed here.
