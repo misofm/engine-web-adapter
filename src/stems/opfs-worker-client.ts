@@ -334,8 +334,7 @@ function reviveWorkerError(error: Extract<OpfsWorkerResponse, { type: "opfs-erro
   const cause = error.causes === undefined
     ? error.cause === undefined ? undefined : reviveEngineWebAdapterCause(error.cause)
     : reviveEngineWebAdapterCause(causeValue);
-  if (error.code !== undefined && isEngineWebAdapterErrorCode(error.code) &&
-    (error.code !== "stem.corrupt" || isVerificationEvidence(error.details?.verification))) {
+  if (error.code !== undefined && isEngineWebAdapterErrorCode(error.code) && error.code !== "stem.corrupt") {
     return new EngineWebAdapterError(error.code, error.message, error.details ?? {}, cause);
   }
   if (error.code === "stem.corrupt") {
@@ -345,17 +344,4 @@ function reviveWorkerError(error: Extract<OpfsWorkerResponse, { type: "opfs-erro
     }, cause ?? reviveEngineWebAdapterCause(causeValue));
   }
   return reviveEngineWebAdapterCause(causeValue);
-}
-
-function isVerificationEvidence(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false;
-  try {
-    const record = value as { readonly kind?: unknown; readonly expected?: unknown; readonly observed?: unknown };
-    return (record.kind === "digest" || record.kind === "length") &&
-      (typeof record.expected === "string" || typeof record.expected === "number") &&
-      (typeof record.observed === "string" || typeof record.observed === "number") &&
-      record.expected !== record.observed;
-  } catch {
-    return false;
-  }
 }

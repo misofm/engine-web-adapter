@@ -61,4 +61,27 @@ browser capability limitations below.
 
 ## Implementation evidence
 
-Pending until the bounded implementation and verification are complete.
+Candidate source: parent `97318dd7552663368e509ef0fd3f2a300cb08540` plus the
+pending scoped repair commit.
+
+Verification completed:
+
+- `node scripts/clean-test-dist.mjs && ./node_modules/.bin/tsc -p tsconfig.test.json && node --test .test-dist/tests/error-contract.test.js .test-dist/tests/sparse-store.test.js` — 71/71 focused tests passed.
+- `npm run check` — passed, including format, wasm verification, lint, decoder checks, the full test suite, and package policy (`248 files, 498266 bytes`).
+- `npm run test:browser` — invoked the configured packed gate but could not start: no Chrome/Chromium executable or `CHROME_EXECUTABLE` is available in this environment. No packed fixture result is claimed.
+
+The real storage-root `installSource` boundary keeps foreign/nested
+`stem.corrupt` payloads and invalid proof shapes under primary `storage.io`
+evidence; only adapter-performed verification with a meaningful differing
+canonical digest/byte-length proof can promote integrity corruption. The
+public legacy constructor/API remains compatible. Native interruption,
+physical write/body settlement, and cleanup failures retain explicit
+`interruption`/`body`/`finalizer` roles; physical settlement and ownership stay
+authoritative, and cached-close policy is unchanged.
+
+Publication and app adoption remain outside this adapter change. Known
+candidate OPFS Chromium-pass/Linux-WebKit capability evidence is retained;
+the Linux WebKit `FileSystemFileHandle` capability failure was not rerun, and
+WebKit/iPhone qualification plus original-device diagnosis remain publication
+blockers. No physical worker code was changed to justify repeating that
+baseline capability run.

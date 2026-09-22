@@ -1,6 +1,6 @@
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Random, Ref, Schema, Scope, Stream } from "effect";
 
-import { EngineWebAdapterError } from "../errors.js";
+import { EngineWebAdapterError, isEngineWebAdapterVerification } from "../errors.js";
 import type { EngineWebAdapterErrorContext, EngineWebAdapterVerification } from "../errors.js";
 import { createIncrementalBlake3, type IncrementalBlake3 } from "./blake3.js";
 import { registerForcedProgressObserver, sparseProgressReporter, type ProgressObserver } from "./progress.js";
@@ -200,22 +200,39 @@ class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engi
             const physicalResult = results[0];
             const abortResult = results[1];
             if (physicalResult?.status === "rejected") {
-              const physicalFailure = fail(operation, physicalResult.reason, operationContext);
-              if (abortResult?.status === "rejected") {
-                finish(Effect.fail(new SparseIoError({
-                  message: `${operation} and its cancellation cleanup failed`,
-                  cause: new AggregateError([physicalFailure, fail("abort", abortResult.reason, storageContext("abort", operationContext.resource, "writer-abort"))], `${operation} and cancellation cleanup failed`),
-                  context: operationContext,
-                  failureKind: "io",
-                })));
-              } else {
-                finish(Effect.fail(physicalFailure));
-              }
+              const failures: Error[] = [
+                roleFailure("interruption", requestedSignal?.reason ?? new DOMException("Physical operation interrupted", "AbortError")),
+                roleFailure("body", physicalResult.reason),
+              ];
+              if (abortResult?.status === "rejected") failures.push(roleFailure("finalizer", abortResult.reason));
+              finish(Effect.fail(new SparseIoError({
+                message: abortResult?.status === "rejected"
+                  ? `${operation} and its cancellation cleanup failed`
+                  : `${operation} failed after cancellation`,
+                cause: new AggregateError(failures, `${operation} cancellation and physical settlement failed`),
+                context: operationContext,
+                failureKind: "io",
+              })));
               return;
             }
-            finish(abortResult?.status === "rejected"
-              ? Effect.fail(fail("abort", abortResult.reason, storageContext("abort", operationContext.resource, "writer-abort")))
-              : Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, context: operationContext, failureKind: "interruption" })));
+            if (abortResult?.status === "rejected") {
+              finish(Effect.fail(new SparseIoError({
+                message: `${operation} cancellation cleanup failed`,
+                cause: new AggregateError([
+                  roleFailure("interruption", requestedSignal?.reason ?? new DOMException("Physical operation interrupted", "AbortError")),
+                  roleFailure("finalizer", abortResult.reason),
+                ], `${operation} cancellation cleanup failed`),
+                context: operationContext,
+                failureKind: "io",
+              })));
+              return;
+            }
+            finish(Effect.fail(new SparseCancelledError({
+              message: `${operation} was cancelled`,
+              cause: requestedSignal?.reason,
+              context: operationContext,
+              failureKind: "interruption",
+            })));
           });
         };
         if (requestedSignal?.aborted) {
@@ -1706,7 +1723,7 @@ function mapWarmWorkerFailure(cause: unknown): SparseFailure {
     case "cancelled": return new SparseCancelledError({ message: cause.message, cause, failureKind: "interruption", context: storageContext("verify", "sparse-payload", "warm-worker") });
     case "deadline": return new SparseDeadlineError({ message: cause.message, cause, failureKind: "deadline", context: storageContext("verify", "sparse-payload", "warm-worker") });
     case "boundary": return new SparseBoundaryError({ message: cause.message, cause, failureKind: "adapter", context: storageContext("verify", "sparse-payload", "warm-worker") });
-    case "corrupt": return cause.verification === undefined
+    case "corrupt": return !isEngineWebAdapterVerification(cause.verification)
       ? new SparseIoError({ message: cause.message, cause, failureKind: "adapter", context: storageContext("verify", "sparse-payload", "warm-worker") })
       : new SparseIntegrityError({ message: cause.message, cause, verification: cause.verification, context: storageContext("verify", "sparse-payload", "warm-worker") });
     case "io": return new SparseIoError({ message: cause.message, cause, failureKind: "adapter", context: storageContext("verify", "sparse-payload", "warm-worker") });
@@ -1736,6 +1753,12 @@ function compareIndexShape(index: SparsePcmIndex, expected: SparsePcmExpectation
 function compareIndexes(a: SparsePcmIndex, b: SparsePcmIndex): void { if (a.activeBytes !== b.activeBytes || a.canonicalBytes !== b.canonicalBytes || a.intervals.length !== b.intervals.length || a.intervals.some((x, i) => x.startFrame !== b.intervals[i]!.startFrame || x.frames !== b.intervals[i]!.frames || x.byteOffset !== b.intervals[i]!.byteOffset)) throw new EngineWebAdapterError("stem.invalid_declaration", "Sparse resolver index disagrees with derived spans", { metadata: "index" }); }
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean { return a.byteLength === b.byteLength && a.every((value, index) => value === b[index]); }
 function quotaCheck(backend: BackendShape, additional: number): Effect.Effect<void, SparseFailure> { return Effect.gen(function*() { const estimate = yield* backend.estimate; if (estimate.quota !== undefined && estimate.usage !== undefined && (!Number.isSafeInteger(additional) || additional < 0 || estimate.usage + additional > estimate.quota)) return yield* new SparseQuotaError({ message: "Sparse storage quota is insufficient" }); }); }
+function roleFailure(role: "interruption" | "body" | "finalizer", error: unknown): Error {
+  const wrapped = new Error(error instanceof Error ? error.message : String(error), { cause: error });
+  wrapped.name = error instanceof Error ? error.name : "Error";
+  Object.defineProperty(wrapped, "role", { value: role, enumerable: true, configurable: true });
+  return wrapped;
+}
 function isAbort(error: unknown): boolean { return error instanceof DOMException && error.name === "AbortError" || error instanceof Error && error.name === "AbortError"; }
 function isTimeout(error: unknown): boolean { return error instanceof DOMException && error.name === "TimeoutError" || error instanceof Error && error.name === "TimeoutError"; }
 function mapPublicCause(cause: Cause.Cause<SparseFailure>): unknown {
@@ -1778,7 +1801,7 @@ function mapPublicError(error: unknown): unknown {
   }
   if (error instanceof SparseMetadataError) return new EngineWebAdapterError("stem.invalid_declaration", error.message, { ...inheritedDetails, failureKind: "invalid_metadata" }, error.cause);
   if (error instanceof SparseIntegrityError) {
-    return error.verification === undefined
+    return !isEngineWebAdapterVerification(error.verification)
       ? new EngineWebAdapterError("storage.io", error.message, { ...inheritedDetails, failureKind: "adapter" }, error.cause)
       : new EngineWebAdapterError("stem.corrupt", error.message, inheritedDetails, error.cause);
   }
@@ -1791,7 +1814,7 @@ function mapPublicError(error: unknown): unknown {
 }
 
 function mapTypedPublicError(error: EngineWebAdapterError, inheritedDetails: Readonly<Record<string, unknown>>): EngineWebAdapterError {
-  if (error.code === "stem.corrupt" && !isVerification(error.details.verification)) {
+  if (error.code === "stem.corrupt" && !isEngineWebAdapterVerification(error.details.verification)) {
     return new EngineWebAdapterError("storage.io", error.message, {
       ...error.details,
       ...inheritedDetails,
@@ -1815,7 +1838,7 @@ function sparseFailureDetails(error: unknown): Readonly<Record<string, unknown>>
     details.resource = value.context.resource;
     details.phase = value.context.phase;
   }
-  if (isVerification(value.verification)) details.verification = value.verification;
+  if (isEngineWebAdapterVerification(value.verification)) details.verification = value.verification;
   if (typeof value.failureKind === "string") details.failureKind = value.failureKind;
   return details;
 }
@@ -1827,22 +1850,10 @@ function isStorageContext(value: unknown): value is EngineWebAdapterErrorContext
     typeof (value as { readonly phase?: unknown }).phase === "string";
 }
 
-function isVerification(value: unknown): value is EngineWebAdapterVerification {
-  if (typeof value !== "object" || value === null) return false;
-  try {
-    const record = value as { readonly kind?: unknown; readonly expected?: unknown; readonly observed?: unknown };
-    return (record.kind === "digest" || record.kind === "length") &&
-      (typeof record.expected === "string" || typeof record.expected === "number") &&
-      (typeof record.observed === "string" || typeof record.observed === "number") &&
-      record.expected !== record.observed;
-  } catch {
-    return false;
-  }
-}
 function directNestedAdapterError(error: unknown): EngineWebAdapterError | undefined {
   if (!(error instanceof SparseIoError || error instanceof SparseBoundaryError)) return undefined;
   const cause = error.cause;
-  return cause instanceof EngineWebAdapterError ? cause : undefined;
+  return cause instanceof EngineWebAdapterError && cause.code !== "stem.corrupt" ? cause : undefined;
 }
 function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && (error as { readonly name?: unknown }).name === "NotFoundError";

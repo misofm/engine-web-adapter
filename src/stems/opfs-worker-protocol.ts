@@ -35,7 +35,7 @@ export type OpfsWorkerResponse =
       readonly error: {
         readonly name: string;
         readonly message: string;
-        readonly role?: "body" | "finalizer";
+        readonly role?: "interruption" | "body" | "finalizer";
         readonly truncated?: true;
         readonly code?: string;
         readonly details?: Readonly<Record<string, unknown>>;

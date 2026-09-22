@@ -1,7 +1,7 @@
 import { Cause, Effect, Exit, Queue } from "effect";
 import { beginIngestStage, ownRunnableWorker, configureProcessingDiagnostics, recordWorkerProcessing, deliveredRangeOwner, registerFlacResolver, releaseDecoded, retainDecoded, type IngestDiagnostics } from "./ingest-diagnostics.js";
 import { MAXIMUM_CANONICAL_OUTPUT_BYTES } from "./native-flac-decoder.js";
-import { EngineWebAdapterError, isEngineWebAdapterErrorCode, reviveEngineWebAdapterCause } from "../errors.js";
+import { EngineWebAdapterError, isEngineWebAdapterErrorCode, isEngineWebAdapterVerification, reviveEngineWebAdapterCause } from "../errors.js";
 import type { EngineWebAdapterVerification } from "../errors.js";
 import { ADAPTER_ASSETS, type AdapterAssetOverrides } from "../assets.js";
 import { BoundedStemAdmission, flacPipelineWidths, type FlacProcessingOptions } from "./flac-admission.js";
@@ -61,8 +61,15 @@ function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): E
       ...(message.error.cause === undefined ? {} : { cause: message.error.cause }),
       causes: message.error.causes,
     });
-  if (code !== undefined && isEngineWebAdapterErrorCode(code)) {
+  if (code !== undefined && isEngineWebAdapterErrorCode(code) &&
+    (code !== "stem.corrupt" || isEngineWebAdapterVerification(message.error.details?.verification))) {
     return new EngineWebAdapterError(code, message.error.message, message.error.details ?? {}, cause);
+  }
+  if (code === "stem.corrupt") {
+    return new EngineWebAdapterError("storage.io", message.error.message, {
+      ...(message.error.details ?? {}),
+      failureKind: "adapter",
+    }, cause);
   }
   return new EngineWebAdapterError("stem.decode.worker", message.error.message, {}, cause);
 }

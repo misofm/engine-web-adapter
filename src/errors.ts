@@ -83,7 +83,7 @@ export interface EngineWebAdapterVerification {
 export interface EngineWebAdapterErrorCause {
   readonly name: string;
   readonly message: string;
-  readonly role?: "body" | "finalizer";
+  readonly role?: "interruption" | "body" | "finalizer";
   readonly code?: string;
   readonly details?: Readonly<Record<string, unknown>>;
   readonly cause?: EngineWebAdapterErrorCause;
@@ -301,6 +301,8 @@ const MAX_SERIALIZED_STRING = 512;
 const MAX_SERIALIZED_DETAIL_KEYS = 24;
 const MAX_SERIALIZED_PAYLOAD = 16 * 1024;
 const SERIALIZED_TRUNCATION_RESERVE = 64;
+const SERIALIZED_CAUSE_SUMMARY_RESERVE = 512;
+const SERIALIZED_TRUNCATION_MARKER = "[truncated]";
 
 /** Runtime guard used by Worker clients before reviving a public code. */
 export function isEngineWebAdapterErrorCode(value: unknown): value is EngineWebAdapterErrorCode {
@@ -313,7 +315,7 @@ export function isEngineWebAdapterErrorCode(value: unknown): value is EngineWebA
  * decisions from their message text.
  */
 export function serializeEngineWebAdapterCause(value: unknown): EngineWebAdapterErrorCause {
-  const budget: SerializationBudget = { used: 0, truncated: false };
+  const budget: SerializationBudget = { used: 0, protected: 0, truncated: false };
   const serialized = serializeCause(value, 0, new Set<object>(), budget);
   const marked = budget.truncated ? { ...serialized, truncated: true as const } : serialized;
   return jsonLength(marked) <= MAX_SERIALIZED_PAYLOAD ? marked : compactCause(marked);
@@ -347,12 +349,12 @@ function reviveCause(value: EngineWebAdapterErrorCause, depth: number): Error {
   return revived;
 }
 
-interface SerializationBudget { used: number; truncated: boolean }
+interface SerializationBudget { used: number; protected: number; truncated: boolean }
 interface MutableSerializedCause {
   [key: string]: unknown;
   name: string;
   message: string;
-  role?: "body" | "finalizer";
+  role?: "interruption" | "body" | "finalizer";
   code?: string;
   details?: Readonly<Record<string, unknown>>;
   cause?: EngineWebAdapterErrorCause;
@@ -382,36 +384,51 @@ function serializeCause(value: unknown, depth: number, seen: Set<object>, budget
   }
   const nameRead = readProperty(value, "name");
   const messageRead = readProperty(value, "message");
-  addValue(output, state, "name", trimString(typeof nameRead.value === "string" ? nameRead.value : causeName(value)), budget);
-  addValue(output, state, "message", trimString(typeof messageRead.value === "string" ? messageRead.value : safeString(value)), budget);
+  addValue(output, state, "name", boundedText(typeof nameRead.value === "string" ? nameRead.value : causeName(value), budget), budget);
+  addValue(output, state, "message", boundedText(typeof messageRead.value === "string" ? messageRead.value : safeString(value), budget), budget);
 
   const roleRead = readProperty(value, "role");
-  if (roleRead.value === "body" || roleRead.value === "finalizer") {
+  if (roleRead.value === "interruption" || roleRead.value === "body" || roleRead.value === "finalizer") {
     if (addValue(output, state, "role", roleRead.value, budget)) output.role = roleRead.value;
   }
 
   const detailsRead = readProperty(value, "details");
   const codeRead = readProperty(value, "code");
-  const rawCode = typeof codeRead.value === "string" ? trimString(codeRead.value) : undefined;
+  const rawCode = typeof codeRead.value === "string" ? codeRead.value : undefined;
+  const boundedCode = rawCode === undefined ? undefined : boundedText(rawCode, budget);
   let serializedDetails: Readonly<Record<string, unknown>> | undefined;
+  let detailsIncluded = false;
+  let serializedDetailsSeen: Set<object> | undefined;
+  let serializedDetailsBudget: SerializationBudget | undefined;
   if (detailsRead.threw) {
     budget.truncated = true;
     serializedDetails = { serialization: "details-unreadable" };
   } else if (isPlainRecord(detailsRead.value)) {
-    serializedDetails = serializeDetails(detailsRead.value, depth + 1, seen, budget,
+    const detailsBudget: SerializationBudget = { used: 0, protected: 0, truncated: false };
+    const detailsSeen = new Set(seen);
+    serializedDetailsSeen = detailsSeen;
+    serializedDetailsBudget = detailsBudget;
+    serializedDetails = serializeDetails(detailsRead.value, depth + 1, detailsSeen, detailsBudget,
       rawCode === "stem.corrupt" && !serializedVerification(readProperty(detailsRead.value, "verification").value)
         ? "integrity-evidence-insufficient" : undefined);
   }
   if (serializedDetails !== undefined) {
-    if (reserveChildField(output, state, "details", budget)) output.details = serializedDetails;
+    const detailAmount = jsonLength("details") + 1 + (state.count === 0 ? 0 : 1) + jsonLength(serializedDetails);
+    if (reserve(budget, detailAmount)) {
+      state.count += 1;
+      output.details = serializedDetails;
+      detailsIncluded = true;
+      if (serializedDetailsSeen !== undefined) for (const entry of serializedDetailsSeen) seen.add(entry);
+      if (serializedDetailsBudget?.truncated === true) budget.truncated = true;
+    }
   }
-  const verified = serializedVerification(serializedDetails?.verification);
+  const verified = detailsIncluded ? serializedVerification(output.details?.verification) : undefined;
   if (rawCode !== undefined && (rawCode !== "stem.corrupt" || verified !== undefined)) {
-    addValue(output, state, "code", rawCode, budget);
+    addValue(output, state, "code", boundedCode ?? rawCode, budget);
   } else if (rawCode === "stem.corrupt") {
     budget.truncated = true;
     if (output.details === undefined) {
-      output.details = { serialization: "integrity-evidence-insufficient" };
+      addValue(output, state, "details", { serialization: "integrity-evidence-insufficient" }, budget);
     } else if (isPlainRecord(output.details) && output.details.serialization === undefined) {
       (output.details as Record<string, unknown>).serialization = "integrity-evidence-insufficient";
     }
@@ -442,21 +459,41 @@ function readCause(value: unknown): PropertyRead {
 }
 
 function aggregateValues(value: unknown): { readonly values?: readonly unknown[]; readonly threw?: boolean; readonly truncated?: boolean } {
-  const aggregate = isAggregate(value);
-  const read = readProperty(value, aggregate ? "errors" : "causes");
-  if (read.threw) return { threw: true };
-  if (!isArray(read.value)) return {};
-  const values = boundedArrayValues(read.value);
-  return { values, ...(safeArrayLength(read.value) > MAX_SERIALIZED_CAUSES ? { truncated: true } : {}) };
+  const errors = readProperty(value, "errors");
+  const causes = readProperty(value, "causes");
+  if (errors.threw || causes.threw) return { threw: true };
+  const arrays: unknown[][] = [];
+  let truncated = false;
+  if (isAggregate(value) || isArray(errors.value)) {
+    if (isArray(errors.value)) {
+      arrays.push([...boundedArrayValues(errors.value)]);
+      truncated ||= safeArrayLength(errors.value) > MAX_SERIALIZED_CAUSES;
+    }
+  }
+  if (isArray(causes.value)) {
+    arrays.push([...boundedArrayValues(causes.value)]);
+    truncated ||= safeArrayLength(causes.value) > MAX_SERIALIZED_CAUSES;
+  }
+  if (arrays.length === 0) return {};
+  const combined = arrays.flat();
+  const values = combined.slice(0, MAX_SERIALIZED_CAUSES);
+  return { values, ...(truncated || combined.length > MAX_SERIALIZED_CAUSES ? { truncated: true } : {}) };
 }
 
 function serializeCauseArray(values: readonly unknown[], depth: number, seen: Set<object>, budget: SerializationBudget): readonly EngineWebAdapterErrorCause[] {
   const state = beginArray(budget);
   if (state === undefined) return [];
   const output: EngineWebAdapterErrorCause[] = [];
-  for (let index = 0; index < Math.min(values.length, MAX_SERIALIZED_CAUSES); index += 1) {
-    if (!reserveArrayItem(state, budget)) break;
-    output.push(serializeCause(values[index], depth, seen, budget));
+  const count = Math.min(values.length, MAX_SERIALIZED_CAUSES);
+  for (let index = 0; index < count; index += 1) {
+    const remaining = count - index - 1;
+    budget.protected += remaining * SERIALIZED_CAUSE_SUMMARY_RESERVE;
+    try {
+      if (!reserveArrayItem(state, budget)) break;
+      output.push(serializeCause(values[index], depth, seen, budget));
+    } finally {
+      budget.protected -= remaining * SERIALIZED_CAUSE_SUMMARY_RESERVE;
+    }
   }
   return output;
 }
@@ -492,13 +529,17 @@ function serializeDetails(
   } else {
     const proof = serializedVerification(verification.value);
     if (proof !== undefined) addValue(result, state, "verification", proof, budget);
+    else if (verification.found) {
+      budget.truncated = true;
+      addValue(result, state, "serialization", "integrity-evidence-insufficient", budget);
+    }
   }
   try {
     const keys = enumerableKeys(value);
     for (const key of keys.values) {
       if (key === "verification") continue;
       const property = readProperty(value, key);
-      const outputKey = trimString(key);
+      const outputKey = boundedText(key, budget);
       if (property.threw) {
         addValue(result, state, outputKey, "Unable to serialize detail", budget);
         continue;
@@ -527,16 +568,28 @@ function addBoundedValue(
     return;
   }
   if (isArray(value)) {
-    if (!reserveFieldPrefix(state, key, budget)) return;
-    target[key] = boundedArray(value, depth + 1, seen, budget);
+    const childBudget: SerializationBudget = { used: 0, protected: 0, truncated: false };
+    const childSeen = new Set(seen);
+    const bounded = boundedArray(value, depth + 1, childSeen, childBudget);
+    if (!reserve(budget, jsonLength(key) + 1 + (state.count === 0 ? 0 : 1) + jsonLength(bounded))) return;
+    state.count += 1;
+    target[key] = bounded;
+    if (childBudget.truncated) budget.truncated = true;
+    for (const entry of childSeen) seen.add(entry);
     return;
   }
   if (isPlainRecord(value)) {
-    if (!reserveFieldPrefix(state, key, budget)) return;
-    target[key] = serializeDetails(value, depth + 1, seen, budget);
+    const childBudget: SerializationBudget = { used: 0, protected: 0, truncated: false };
+    const childSeen = new Set(seen);
+    const serialized = serializeDetails(value, depth + 1, childSeen, childBudget);
+    if (!reserve(budget, jsonLength(key) + 1 + (state.count === 0 ? 0 : 1) + jsonLength(serialized))) return;
+    state.count += 1;
+    target[key] = serialized;
+    if (childBudget.truncated) budget.truncated = true;
+    for (const entry of childSeen) seen.add(entry);
     return;
   }
-  addValue(target, state, key, boundedScalar(value), budget);
+  addValue(target, state, key, boundedScalar(value, budget), budget);
 }
 
 function boundedArray(value: unknown[], depth: number, seen: Set<object>, budget: SerializationBudget): readonly unknown[] {
@@ -558,45 +611,79 @@ function boundedArray(value: unknown[], depth: number, seen: Set<object>, budget
     try { item = value[index]; }
     catch { item = "Unable to serialize detail"; budget.truncated = true; }
     if (isArray(item)) {
-      if (!reserveArrayItem(state, budget)) break;
-      output.push(boundedArray(item, depth + 1, seen, budget));
+      const childBudget: SerializationBudget = { used: 0, protected: 0, truncated: false };
+      const childSeen = new Set(seen);
+      const bounded = boundedArray(item, depth + 1, childSeen, childBudget);
+      if (!reserve(budget, jsonLength(bounded) + (state.count === 0 ? 0 : 1))) break;
+      state.count += 1;
+      output.push(bounded);
+      if (childBudget.truncated) budget.truncated = true;
+      for (const entry of childSeen) seen.add(entry);
     } else if (isPlainRecord(item)) {
-      if (!reserveArrayItem(state, budget)) break;
-      output.push(serializeDetails(item, depth + 1, seen, budget));
+      const childBudget: SerializationBudget = { used: 0, protected: 0, truncated: false };
+      const childSeen = new Set(seen);
+      const serialized = serializeDetails(item, depth + 1, childSeen, childBudget);
+      if (!reserve(budget, jsonLength(serialized) + (state.count === 0 ? 0 : 1))) break;
+      state.count += 1;
+      output.push(serialized);
+      if (childBudget.truncated) budget.truncated = true;
+      for (const entry of childSeen) seen.add(entry);
     } else {
-      if (!reserveArrayValue(state, boundedScalar(item), budget)) break;
-      output.push(boundedScalar(item));
+      const scalar = boundedScalar(item, budget);
+      if (!reserveArrayValue(state, scalar, budget)) break;
+      output.push(scalar);
     }
   }
   if (length > MAX_SERIALIZED_CAUSES) budget.truncated = true;
   return output;
 }
 
-function boundedScalar(value: unknown): unknown {
+function boundedScalar(value: unknown, budget: SerializationBudget): unknown {
   if (value === null || typeof value === "number" || typeof value === "boolean") return value;
-  if (typeof value === "string") return trimString(value);
+  if (typeof value === "string") return boundedText(value, budget);
   if (value === undefined) return "undefined";
-  if (typeof value === "bigint") return trimString(`${value}n`);
-  return trimString(safeString(value));
+  if (typeof value === "bigint") return boundedText(`${value}n`, budget);
+  return boundedText(safeString(value), budget);
 }
 
 function serializedVerification(value: unknown): EngineWebAdapterVerification | undefined {
-  if (!isObjectLike(value)) return undefined;
-  const kind = readProperty(value, "kind").value;
-  const expected = readProperty(value, "expected").value;
-  const observed = readProperty(value, "observed").value;
-  const algorithm = readProperty(value, "algorithm").value;
-  if ((kind !== "digest" && kind !== "length") ||
-    (typeof expected !== "string" && typeof expected !== "number") ||
-    (typeof observed !== "string" && typeof observed !== "number") ||
-    expected === observed ||
-    (algorithm !== undefined && typeof algorithm !== "string")) return undefined;
+  if (!isEngineWebAdapterVerification(value)) return undefined;
+  const kind = readProperty(value, "kind").value as EngineWebAdapterVerification["kind"];
+  const expected = readProperty(value, "expected").value as string | number;
+  const observed = readProperty(value, "observed").value as string | number;
+  const algorithm = readProperty(value, "algorithm").value as string | undefined;
   return {
     kind,
-    expected: typeof expected === "string" ? trimString(expected) : expected,
-    observed: typeof observed === "string" ? trimString(observed) : observed,
-    ...(algorithm === undefined ? {} : { algorithm: trimString(algorithm) }),
+    expected,
+    observed,
+    ...(algorithm === undefined ? {} : { algorithm }),
   };
+}
+
+/**
+ * Integrity evidence is meaningful only when it could have come from one of
+ * the adapter's canonical verification boundaries. This is also the guard
+ * used when reviving evidence from a Worker or a storage exception.
+ */
+export function isEngineWebAdapterVerification(value: unknown): value is EngineWebAdapterVerification {
+  if (!isObjectLike(value)) return false;
+  const kind = readProperty(value, "kind");
+  const expected = readProperty(value, "expected");
+  const observed = readProperty(value, "observed");
+  const algorithm = readProperty(value, "algorithm");
+  const truncated = readProperty(value, "truncated");
+  if (kind.threw || expected.threw || observed.threw || algorithm.threw || truncated.threw || truncated.value === true) return false;
+  if (kind.value === "length") {
+    return algorithm.value === undefined &&
+      typeof expected.value === "number" && Number.isSafeInteger(expected.value) && expected.value >= 0 &&
+      typeof observed.value === "number" && Number.isSafeInteger(observed.value) && observed.value >= 0 &&
+      expected.value !== observed.value;
+  }
+  if (kind.value !== "digest" ||
+    typeof expected.value !== "string" || !/^[0-9a-f]{64}$/u.test(expected.value) ||
+    typeof observed.value !== "string" || !/^[0-9a-f]{64}$/u.test(observed.value) ||
+    expected.value === observed.value) return false;
+  return algorithm.value === undefined || algorithm.value === "blake3-256" || algorithm.value === "sha256";
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -687,7 +774,9 @@ function reserveFieldPrefix(state: ContainerState, key: string, budget: Serializ
 }
 
 function addValue(target: Record<string, unknown>, state: ContainerState, key: string, value: unknown, budget: SerializationBudget): boolean {
-  if (!reserveFieldPrefix(state, key, budget) || !reserve(budget, jsonLength(value))) return false;
+  const amount = jsonLength(key) + 1 + (state.count === 0 ? 0 : 1) + jsonLength(value);
+  if (!reserve(budget, amount)) return false;
+  state.count += 1;
   target[key] = value;
   return true;
 }
@@ -699,11 +788,14 @@ function reserveArrayItem(state: ContainerState, budget: SerializationBudget): b
 }
 
 function reserveArrayValue(state: ContainerState, value: unknown, budget: SerializationBudget): boolean {
-  return reserveArrayItem(state, budget) && reserve(budget, jsonLength(value));
+  const amount = jsonLength(value) + (state.count === 0 ? 0 : 1);
+  if (!reserve(budget, amount)) return false;
+  state.count += 1;
+  return true;
 }
 
 function reserve(budget: SerializationBudget, amount: number): boolean {
-  if (!Number.isSafeInteger(amount) || amount < 0 || budget.used + amount > MAX_SERIALIZED_PAYLOAD - SERIALIZED_TRUNCATION_RESERVE) {
+  if (!Number.isSafeInteger(amount) || amount < 0 || amount > MAX_SERIALIZED_PAYLOAD - SERIALIZED_TRUNCATION_RESERVE - budget.protected - budget.used) {
     budget.truncated = true;
     return false;
   }
@@ -714,7 +806,7 @@ function reserve(budget: SerializationBudget, amount: number): boolean {
 function jsonLength(value: unknown): number {
   try {
     const encoded = JSON.stringify(value);
-    return encoded === undefined ? 0 : encoded.length;
+    return encoded === undefined ? 0 : new TextEncoder().encode(encoded).byteLength;
   } catch {
     return MAX_SERIALIZED_PAYLOAD;
   }
@@ -728,10 +820,41 @@ function compactCause(value: EngineWebAdapterErrorCause): EngineWebAdapterErrorC
   };
   if (value.role !== undefined) output.role = value.role;
   const verification = serializedVerification(value.details?.verification);
-  if (value.code !== undefined && (value.code !== "stem.corrupt" || verification !== undefined)) output.code = value.code;
+  if (value.code !== undefined && (value.code !== "stem.corrupt" || verification !== undefined)) output.code = trimString(value.code);
   if (verification !== undefined) output.details = { verification };
   else if (value.code === "stem.corrupt") output.details = { serialization: "integrity-evidence-insufficient" };
+  if (value.causes !== undefined) output.causes = value.causes.slice(0, MAX_SERIALIZED_CAUSES).map(compactCause);
+  if (value.cause !== undefined) output.cause = compactCause(value.cause);
+  if (jsonLength(output) > MAX_SERIALIZED_PAYLOAD) {
+    delete output.cause;
+    if (output.causes !== undefined) {
+      output.causes = output.causes.map((cause) => ({
+        name: compactSummary(cause.name),
+        message: compactSummary(cause.message),
+        ...(cause.role === undefined ? {} : { role: cause.role }),
+        truncated: true as const,
+      }));
+    }
+  }
+  while (jsonLength(output) > MAX_SERIALIZED_PAYLOAD && output.causes !== undefined && output.causes.length > 0) {
+    output.causes = output.causes.slice(0, -1);
+  }
+  if (jsonLength(output) > MAX_SERIALIZED_PAYLOAD) {
+    delete output.causes;
+    delete output.cause;
+    delete output.details;
+    delete output.code;
+    output.name = compactSummary(output.name);
+    output.message = compactSummary(output.message);
+  }
   return output;
+}
+
+function compactSummary(value: string): string {
+  const limit = 128;
+  return value.length > limit
+    ? `${value.slice(0, limit - SERIALIZED_TRUNCATION_MARKER.length)}${SERIALIZED_TRUNCATION_MARKER}`
+    : value;
 }
 
 function causeName(value: unknown): string {
@@ -740,7 +863,16 @@ function causeName(value: unknown): string {
   return typeof value;
 }
 
-function trimString(value: string): string { return value.length > MAX_SERIALIZED_STRING ? value.slice(0, MAX_SERIALIZED_STRING) : value; }
+function boundedText(value: string, budget: SerializationBudget): string {
+  const bounded = trimString(value);
+  if (bounded !== value) budget.truncated = true;
+  return bounded;
+}
+function trimString(value: string): string {
+  return value.length > MAX_SERIALIZED_STRING
+    ? `${value.slice(0, MAX_SERIALIZED_STRING - SERIALIZED_TRUNCATION_MARKER.length)}${SERIALIZED_TRUNCATION_MARKER}`
+    : value;
+}
 function safeString(value: unknown): string { try { return String(value); } catch { return "[unprintable cause]"; } }
 
 /**

@@ -67,6 +67,43 @@ test("cause transport bounds strings, keys, total payload, and serialized aggreg
   assert.equal(revived.errors.length, 3);
 });
 
+test("cause transport uses UTF-8 byte bounds and keeps bounded sibling summaries", () => {
+  const details = Object.fromEntries(Array.from({ length: 24 }, (_, index) => [`detail-${index}`, "漢".repeat(512)]));
+  const bounded = serializeEngineWebAdapterCause(new EngineWebAdapterError("storage.io", "wide details", details));
+  assert.ok(new TextEncoder().encode(JSON.stringify(bounded)).byteLength <= 16 * 1024);
+  assert.equal(bounded.truncated, true);
+
+  const siblings = Array.from({ length: 8 }, (_, index) => new EngineWebAdapterError("storage.io", `sibling-${index}`, Object.fromEntries(
+    Array.from({ length: 6 }, (_, detail) => [`detail-${detail}`, "x".repeat(483)]),
+  )));
+  const first = serializeEngineWebAdapterCause(new AggregateError(siblings, "many siblings"));
+  const second = serializeEngineWebAdapterCause(first);
+  assert.deepEqual(first.causes?.map((cause) => cause.message), siblings.map((error) => error.message));
+  assert.deepEqual(second.causes?.map((cause) => cause.message), siblings.map((error) => error.message));
+  assert.ok(new TextEncoder().encode(JSON.stringify(second)).byteLength <= 16 * 1024);
+
+  const plainErrors = serializeEngineWebAdapterCause({
+    name: "AggregateError",
+    message: "plain errors",
+    errors: [{ name: "BODY", message: "body" }, { name: "FINALIZER", message: "cleanup" }],
+  });
+  assert.deepEqual(plainErrors.causes?.map((cause) => cause.name), ["BODY", "FINALIZER"]);
+
+  const clipped = serializeEngineWebAdapterCause(new Error("m".repeat(2_000), {
+    cause: new EngineWebAdapterError("storage.io", "key clipping", { ["k".repeat(2_000)]: "v".repeat(2_000) }),
+  }));
+  assert.equal(clipped.truncated, true);
+  assert.match(clipped.message, /\[truncated\]$/u);
+  const clippedDetails = Object.entries(clipped.cause?.details ?? {});
+  assert.ok(clippedDetails.some(([key, value]) => key.endsWith("[truncated]") && value === "v".repeat(501) + "[truncated]"));
+
+  const clippedProof = serializeEngineWebAdapterCause(new EngineWebAdapterError("stem.corrupt", "clipped proof", {
+    verification: { kind: "digest", expected: "漢".repeat(512), observed: "異".repeat(512), algorithm: "blake3-256" },
+  }));
+  assert.equal(clippedProof.code, undefined);
+  assert.equal(clippedProof.details?.serialization, "integrity-evidence-insufficient");
+});
+
 test("cause transport marks depth/claim truncation and survives throwing exotic access", () => {
   const leaf = new EngineWebAdapterError("stem.corrupt", "verified mismatch", {
     verification: { kind: "length", expected: 4, observed: 3 },

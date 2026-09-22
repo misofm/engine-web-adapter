@@ -1,3 +1,4 @@
+import { isEngineWebAdapterVerification } from "../errors.js";
 import type { EngineWebAdapterErrorCause, EngineWebAdapterVerification } from "../errors.js";
 import type { SparsePcmIndex } from "./sparse-pcm.js";
 import type { StemIdentity } from "./types.js";
@@ -212,10 +213,7 @@ export function sparseVerifyWorkerResponse(value: unknown): SparseVerifyWorkerRe
 }
 
 function validateVerification(value: unknown): asserts value is EngineWebAdapterVerification {
-  if (!record(value) || (value.kind !== "digest" && value.kind !== "length") ||
-    (typeof value.expected !== "string" && typeof value.expected !== "number") ||
-    (typeof value.observed !== "string" && typeof value.observed !== "number") ||
-    (value.algorithm !== undefined && typeof value.algorithm !== "string")) {
+  if (!isEngineWebAdapterVerification(value)) {
     throw new Error("Sparse verification evidence is invalid");
   }
 }
