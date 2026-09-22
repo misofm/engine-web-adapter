@@ -205,3 +205,112 @@ test("cause transport reserves every retained sibling summary before detail pres
     assertRoundTrips(serialized, expected);
   }
 });
+
+const serializedCauseBytes = (cause: EngineWebAdapterErrorCause): number =>
+  new TextEncoder().encode(JSON.stringify(cause)).byteLength;
+
+function assertUsefulCauseSummaries(cause: EngineWebAdapterErrorCause, path = "root"): void {
+  assert.equal(typeof cause.name, "string", `${path} name must be present`);
+  assert.equal(typeof cause.message, "string", `${path} message must be present`);
+  assert.ok(cause.name.length > 0, `${path} name must be useful`);
+  assert.ok(cause.message.length > 0, `${path} message must be useful`);
+  for (const [index, child] of (cause.causes ?? []).entries()) {
+    assertUsefulCauseSummaries(child, `${path}.causes[${index}]`);
+  }
+  if (cause.cause !== undefined) assertUsefulCauseSummaries(cause.cause, `${path}.cause`);
+}
+
+function causeIdentity(cause: EngineWebAdapterErrorCause): unknown {
+  return {
+    name: cause.name,
+    message: cause.message,
+    causes: cause.causes?.map(causeIdentity),
+    cause: cause.cause === undefined ? undefined : causeIdentity(cause.cause),
+  };
+}
+
+test("cause transport globally reserves nested direct and aggregate identities across the pad boundary", () => {
+  const detailPressure = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`d${index}`, "漢".repeat(512)]));
+  const build = (edge: "cause" | "causes", pad: number): Record<string, unknown> => {
+    const child = { name: "Child", message: "child" };
+    const parent: Record<string, unknown> = {
+      name: `N${"漢".repeat(512)}`,
+      message: `S${"漢".repeat(512)}`,
+      details: { ...detailPressure, pad: "x".repeat(pad) },
+    };
+    if (edge === "cause") parent.cause = child;
+    else parent.causes = [child];
+    return { name: "AggregateError", message: "root", errors: [parent] };
+  };
+
+  for (const edge of ["cause", "causes"] as const) {
+    for (let pad = 0; pad <= 512; pad += 1) {
+      const first = serializeEngineWebAdapterCause(build(edge, pad));
+      assert.ok(serializedCauseBytes(first) <= 16 * 1024, `${edge} pad ${pad} exceeded the byte bound`);
+      assertUsefulCauseSummaries(first);
+      const parent = first.causes?.[0];
+      assert.ok(parent, `${edge} pad ${pad} lost its retained parent`);
+      const retainedChild = edge === "cause" ? parent.cause : parent.causes?.[0];
+      assert.deepEqual(retainedChild && { name: retainedChild.name, message: retainedChild.message }, {
+        name: "Child",
+        message: "child",
+      }, `${edge} pad ${pad} lost its child identity`);
+
+      const repeated = serializeEngineWebAdapterCause(first);
+      assertUsefulCauseSummaries(repeated);
+      assert.deepEqual(causeIdentity(repeated), causeIdentity(first), `${edge} pad ${pad} changed on repeat`);
+      const revived = serializeEngineWebAdapterCause(reviveEngineWebAdapterCause(repeated));
+      assertUsefulCauseSummaries(revived);
+      assert.deepEqual(causeIdentity(revived), causeIdentity(first), `${edge} pad ${pad} changed after revival`);
+      if (pad === 252 || pad === 270) {
+        assert.equal(retainedChild?.name, "Child");
+        assert.equal(retainedChild?.message, "child");
+      }
+    }
+  }
+});
+
+test("cause transport keeps a bounded generated tree valid for depth, width, Unicode, and JSON escapes", () => {
+  const tokens = ["plain", "漢", "𐍈", "\"\\\n\t\u0000"];
+  const detailFor = (token: string, depth: number): Readonly<Record<string, unknown>> => Object.fromEntries(
+    Array.from({ length: 10 }, (_, index) => [
+      `k${index}-${token}`,
+      `${token}${"漢".repeat(256)}-${depth}-${"\\\"\n".repeat(12)}`,
+    ]),
+  );
+  const build = (depth: number, width: number, token: string, edge: "cause" | "causes"): Record<string, unknown> => {
+    const node: Record<string, unknown> = {
+      name: `N${depth}-${token}`,
+      message: `M${depth}-${token}`,
+      details: { ...detailFor(token, depth), pad: "x".repeat(512) },
+    };
+    if (depth > 0) {
+      const children = Array.from({ length: width }, () => build(depth - 1, width, token, edge));
+      if (edge === "cause") node.cause = children[0];
+      else node.causes = children;
+    }
+    return node;
+  };
+
+  const cases = tokens.flatMap((token, index) => [
+    { depth: index + 3, width: 1, edge: index % 2 === 0 ? ("cause" as const) : ("causes" as const) },
+    { depth: 2, width: 8, edge: "causes" as const },
+  ]);
+  for (const { depth, width, edge } of cases) {
+    const first = serializeEngineWebAdapterCause({
+      name: "AggregateError",
+      message: `root-${tokens[depth % tokens.length]}`,
+      errors: [build(depth, width, tokens[depth % tokens.length]!, edge)],
+    });
+    assert.ok(serializedCauseBytes(first) <= 16 * 1024, `generated depth ${depth} width ${width} exceeded the byte bound`);
+    assertUsefulCauseSummaries(first);
+    const repeated = serializeEngineWebAdapterCause(first);
+    assert.ok(serializedCauseBytes(repeated) <= 16 * 1024);
+    assertUsefulCauseSummaries(repeated);
+    assert.deepEqual(causeIdentity(repeated), causeIdentity(first));
+    const revived = serializeEngineWebAdapterCause(reviveEngineWebAdapterCause(repeated));
+    assert.ok(serializedCauseBytes(revived) <= 16 * 1024);
+    assertUsefulCauseSummaries(revived);
+    assert.deepEqual(causeIdentity(revived), causeIdentity(first));
+  }
+});

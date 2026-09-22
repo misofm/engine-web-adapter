@@ -61,16 +61,17 @@ browser capability limitations below.
 
 ## Implementation evidence
 
-Source parent: `ba9edba93e929fde3f2cda55c8c31fe348a2e696`.
-Pending commit: the P2 cause-summary reservation fix in this working tree;
-the final commit SHA is recorded in the handoff below.
+Source parent: `93cf2f790ea2ecba5428e8a32ac3bbc40c05b605`.
+Pending commit: this working-tree P2 recursive cause-summary reservation fix;
+the coordinator will attach the final reviewed commit SHA before synchronization.
 
 Verification completed:
 
 - `npm exec -- tsc -p tsconfig.test.json` — test compilation passed.
-- `node --test .test-dist/tests/error-contract.test.js .test-dist/tests/sparse-store.test.js .test-dist/tests/opfs-storage.test.js` — 102/102 focused tests passed.
-- `npm run check` — passed, including format, wasm verification, lint, decoder checks, the full 394/394 test suite, and package policy (`248 files, 500552 bytes`).
-- `CHROME_EXECUTABLE=/home/bl/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome npm run test:browser` — passed against the fresh packed consumer on Chromium 151.0.7922.34, 15 assets, no request failures or console errors. Artifact: `/tmp/engine-web-adapter-browser-Ha7nH2`.
+- `node --test .test-dist/tests/error-contract.test.js .test-dist/tests/sparse-store.test.js .test-dist/tests/opfs-storage.test.js` — 104/104 focused tests passed.
+- Recursive reservation coverage — 1,026 nested pad cases (cause and causes, every pad length 0..512) plus the bounded Unicode/escape depth-width table passed serialization, repeat serialization, and revival; every serialized result stayed at or below 16,384 UTF-8 bytes and retained cause summaries were nonempty and valid.
+- `npm run check` — passed, including format, wasm verification, lint, decoder checks, the full 396/396 test suite, and package policy (`248 files, 507013 bytes`).
+- `CHROME_EXECUTABLE=/home/bl/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome npm run test:browser` — passed against the fresh packed consumer on Chromium 151.0.7922.34, 15 assets, no request failures or console errors. Artifact: `/tmp/engine-web-adapter-browser-TvwzzD`.
 
 The real storage-root `installSource` boundary keeps foreign/nested
 `stem.corrupt` payloads and invalid proof shapes under primary `storage.io`
@@ -95,5 +96,5 @@ The committed public fixture `tests/fixtures/storage-error-contract.json`
 records `storage.io`, coarse phase `store`, details
 `{ operation: "open", resource: "sparse-root", phase: "root-open", failureKind: "io" }`,
 and the retained `UnknownError` cause. Independent review of this exact
-candidate is pending; coordinator will synchronize the reviewed evidence to
-the matching issue before PR creation.
+candidate is pending; coordinator will attach the reviewed commit SHA and
+synchronize the evidence to the matching issue before PR creation.

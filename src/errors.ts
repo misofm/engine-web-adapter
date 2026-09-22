@@ -316,7 +316,9 @@ export function isEngineWebAdapterErrorCode(value: unknown): value is EngineWebA
  */
 export function serializeEngineWebAdapterCause(value: unknown): EngineWebAdapterErrorCause {
   const budget: SerializationBudget = { used: 0, protected: 0, truncated: false };
-  const serialized = serializeCause(value, 0, new Set<object>(), budget);
+  const planned = planCause(value, 0, new Set<object>());
+  const admitted = admitCauseTree(planned, budget);
+  const serialized = serializeCause(admitted, new Set<object>(), budget);
   const marked = budget.truncated ? { ...serialized, truncated: true as const } : serialized;
   return jsonLength(marked) <= MAX_SERIALIZED_PAYLOAD ? marked : compactCause(marked);
 }
@@ -364,43 +366,155 @@ interface MutableSerializedCause {
 interface ContainerState { count: number }
 interface PropertyRead { found: boolean; value?: unknown; threw?: boolean }
 interface CauseSummary { readonly name: string; readonly message: string }
+interface CausePlan {
+  readonly value: unknown;
+  readonly depth: number;
+  readonly summary: CauseSummary;
+  readonly synthetic: boolean;
+  readonly summaryTruncated: boolean;
+  readonly aggregatePresent: boolean;
+  readonly aggregateTruncated: boolean;
+  readonly aggregateCandidates: readonly CausePlan[];
+  readonly causePresent: boolean;
+  readonly causeCandidate?: CausePlan;
+  readonly inputTruncated: boolean;
+  causesIncluded: boolean;
+  admittedCauses: readonly CausePlan[];
+  causeIncluded: boolean;
+  admittedCause?: CausePlan;
+}
 
-function serializeCause(
-  value: unknown,
-  depth: number,
-  seen: Set<object>,
-  budget: SerializationBudget,
-  summaryLimit?: number,
-): EngineWebAdapterErrorCause {
+function planCause(value: unknown, depth: number, seen: Set<object>): CausePlan {
   if (depth >= MAX_SERIALIZED_CAUSE_DEPTH) {
-    budget.truncated = true;
-    return { name: "CauseDepthLimit", message: "Nested cause depth exceeded the adapter bound" };
+    return syntheticCausePlan(depth, "CauseDepthLimit", "Nested cause depth exceeded the adapter bound");
   }
   if (isObjectLike(value)) {
-    if (seen.has(value)) {
-      budget.truncated = true;
-      return { name: "CircularCause", message: "Circular cause was omitted at the adapter boundary" };
-    }
+    if (seen.has(value)) return syntheticCausePlan(depth, "CircularCause", "Circular cause was omitted at the adapter boundary");
     seen.add(value);
-  }
-  const output = {} as MutableSerializedCause;
-  const state = beginContainer(budget);
-  if (state === undefined) {
-    budget.truncated = true;
-    return { name: "CausePayloadLimit", message: "Cause payload exceeded the adapter bound" };
   }
   const nameRead = readProperty(value, "name");
   const messageRead = readProperty(value, "message");
   const name = typeof nameRead.value === "string" ? nameRead.value : causeName(value);
   const message = typeof messageRead.value === "string" ? messageRead.value : safeString(value);
-  if (summaryLimit === undefined) {
-    addValue(output, state, "name", boundedText(name, budget), budget);
-    addValue(output, state, "message", boundedText(message, budget), budget);
-  } else {
-    const summary = boundedSummary(name, message, Math.min(summaryLimit, availableSummaryBytes(budget)), budget);
-    if (!addSummary(output, state, summary, budget)) budget.truncated = true;
-  }
+  const summaryBudget: SerializationBudget = { used: 0, protected: 0, truncated: false };
+  const summary = boundedSummary(name, message, SERIALIZED_CAUSE_SUMMARY_RESERVE, summaryBudget);
+  const aggregate = aggregateValues(value);
+  const aggregateCandidates = aggregate.values === undefined
+    ? []
+    : aggregate.values.map((child) => planCause(child, depth + 1, seen));
+  const nested = readCause(value);
+  const causeCandidate = nested.found
+    ? planCause(nested.threw
+      ? { name: "CauseAccessError", message: "Cause getter threw while crossing the adapter boundary" }
+      : nested.value, depth + 1, seen)
+    : undefined;
+  return {
+    value,
+    depth,
+    summary,
+    synthetic: false,
+    summaryTruncated: summaryBudget.truncated,
+    aggregatePresent: aggregate.values !== undefined,
+    aggregateTruncated: aggregate.threw === true || aggregate.truncated === true,
+    aggregateCandidates,
+    causePresent: nested.found,
+    ...(causeCandidate === undefined ? {} : { causeCandidate }),
+    inputTruncated: readProperty(value, "truncated").value === true,
+    causesIncluded: false,
+    admittedCauses: [],
+    causeIncluded: false,
+  };
+}
 
+function syntheticCausePlan(depth: number, name: string, message: string): CausePlan {
+  return {
+    value: undefined,
+    depth,
+    summary: { name, message },
+    synthetic: true,
+    summaryTruncated: false,
+    aggregatePresent: false,
+    aggregateTruncated: false,
+    aggregateCandidates: [],
+    causePresent: false,
+    inputTruncated: true,
+    causesIncluded: false,
+    admittedCauses: [],
+    causeIncluded: false,
+  };
+}
+
+function admitCauseTree(root: CausePlan, budget: SerializationBudget): CausePlan {
+  if (!reserve(budget, summaryLength(root.summary.name, root.summary.message))) {
+    budget.truncated = true;
+    return root;
+  }
+  const queue: CausePlan[] = [root];
+  for (let index = 0; index < queue.length; index += 1) {
+    const plan = queue[index]!;
+    if (plan.summaryTruncated || plan.aggregateTruncated || plan.inputTruncated || plan.synthetic) budget.truncated = true;
+
+    if (plan.aggregatePresent) {
+      const admitted: CausePlan[] = [];
+      for (const candidate of plan.aggregateCandidates) {
+        const amount = (admitted.length === 0
+          ? fieldPrefixLength("causes") + jsonLength([])
+          : 1) + summaryLength(candidate.summary.name, candidate.summary.message);
+        if (!reserve(budget, amount)) {
+          budget.truncated = true;
+          break;
+        }
+        admitted.push(candidate);
+        queue.push(candidate);
+      }
+      if (admitted.length > 0) {
+        plan.causesIncluded = true;
+        plan.admittedCauses = admitted;
+      } else if (plan.aggregateCandidates.length === 0) {
+        if (reserve(budget, fieldPrefixLength("causes") + jsonLength([]))) {
+          plan.causesIncluded = true;
+          plan.admittedCauses = [];
+        }
+      } else {
+        budget.truncated = true;
+      }
+      if (plan.aggregateCandidates.length > admitted.length) budget.truncated = true;
+    }
+
+    if (plan.causePresent && plan.causeCandidate !== undefined) {
+      const amount = fieldPrefixLength("cause") + summaryLength(
+        plan.causeCandidate.summary.name,
+        plan.causeCandidate.summary.message,
+      );
+      if (reserve(budget, amount)) {
+        plan.causeIncluded = true;
+        plan.admittedCause = plan.causeCandidate;
+        queue.push(plan.causeCandidate);
+      } else {
+        budget.truncated = true;
+      }
+    }
+  }
+  return root;
+}
+
+function serializeCause(
+  plan: CausePlan,
+  seen: Set<object>,
+  budget: SerializationBudget,
+): EngineWebAdapterErrorCause {
+  const output = {} as MutableSerializedCause;
+  const state: ContainerState = { count: 0 };
+  const summaryBudget: SerializationBudget = { used: 2, protected: 0, truncated: false };
+  if (!addSummary(output, state, plan.summary, summaryBudget)) {
+    budget.truncated = true;
+    return { name: "CausePayloadLimit", message: "Cause payload exceeded the adapter bound" };
+  }
+  if (plan.summaryTruncated || plan.aggregateTruncated || plan.inputTruncated || plan.synthetic) budget.truncated = true;
+  if (plan.synthetic) return output;
+
+  if (isObjectLike(plan.value)) seen.add(plan.value);
+  const value = plan.value;
   const roleRead = readProperty(value, "role");
   if (roleRead.value === "interruption" || roleRead.value === "body" || roleRead.value === "finalizer") {
     if (addValue(output, state, "role", roleRead.value, budget)) output.role = roleRead.value;
@@ -422,14 +536,12 @@ function serializeCause(
     const detailsSeen = new Set(seen);
     serializedDetailsSeen = detailsSeen;
     serializedDetailsBudget = detailsBudget;
-    serializedDetails = serializeDetails(detailsRead.value, depth + 1, detailsSeen, detailsBudget,
+    serializedDetails = serializeDetails(detailsRead.value, plan.depth + 1, detailsSeen, detailsBudget,
       rawCode === "stem.corrupt" && !serializedVerification(readProperty(detailsRead.value, "verification").value)
         ? "integrity-evidence-insufficient" : undefined);
   }
   if (serializedDetails !== undefined) {
-    const detailAmount = jsonLength("details") + 1 + (state.count === 0 ? 0 : 1) + jsonLength(serializedDetails);
-    if (reserve(budget, detailAmount)) {
-      state.count += 1;
+    if (addValue(output, state, "details", serializedDetails, budget)) {
       output.details = serializedDetails;
       detailsIncluded = true;
       if (serializedDetailsSeen !== undefined) for (const entry of serializedDetailsSeen) seen.add(entry);
@@ -444,27 +556,18 @@ function serializeCause(
     if (output.details === undefined) {
       addValue(output, state, "details", { serialization: "integrity-evidence-insufficient" }, budget);
     } else if (isPlainRecord(output.details) && output.details.serialization === undefined) {
-      (output.details as Record<string, unknown>).serialization = "integrity-evidence-insufficient";
+      budget.truncated = true;
     }
   }
 
-  const aggregate = aggregateValues(value);
-  if (aggregate.threw || aggregate.truncated) budget.truncated = true;
-  if (aggregate.values !== undefined) {
-    if (aggregate.values.length > MAX_SERIALIZED_CAUSES) budget.truncated = true;
-    if (reserveChildField(output, state, "causes", budget)) {
-      const causes = serializeCauseArray(aggregate.values, depth + 1, seen, budget);
-      output.causes = causes;
-    }
+  if (plan.causesIncluded) {
+    state.count += 1;
+    output.causes = serializeCauseArray(plan.admittedCauses, seen, budget);
   }
-  const nested = readCause(value);
-  if (nested.found) {
-    const nestedValue = nested.threw
-      ? { name: "CauseAccessError", message: "Cause getter threw while crossing the adapter boundary" }
-      : nested.value;
-    if (reserveChildField(output, state, "cause", budget)) output.cause = serializeCause(nestedValue, depth + 1, seen, budget);
+  if (plan.causeIncluded && plan.admittedCause !== undefined) {
+    state.count += 1;
+    output.cause = serializeCause(plan.admittedCause, seen, budget);
   }
-  if (readProperty(value, "truncated").value === true) budget.truncated = true;
   return output;
 }
 
@@ -494,22 +597,8 @@ function aggregateValues(value: unknown): { readonly values?: readonly unknown[]
   return { values, ...(truncated || combined.length > MAX_SERIALIZED_CAUSES ? { truncated: true } : {}) };
 }
 
-function serializeCauseArray(values: readonly unknown[], depth: number, seen: Set<object>, budget: SerializationBudget): readonly EngineWebAdapterErrorCause[] {
-  const state = beginArray(budget);
-  if (state === undefined) return [];
-  const output: EngineWebAdapterErrorCause[] = [];
-  const count = Math.min(values.length, MAX_SERIALIZED_CAUSES);
-  for (let index = 0; index < count; index += 1) {
-    const remaining = count - index - 1;
-    budget.protected += remaining * (SERIALIZED_CAUSE_SUMMARY_RESERVE + 1);
-    try {
-      if (!reserveArrayItem(state, budget)) break;
-      output.push(serializeCause(values[index], depth, seen, budget, SERIALIZED_CAUSE_SUMMARY_RESERVE));
-    } finally {
-      budget.protected -= remaining * (SERIALIZED_CAUSE_SUMMARY_RESERVE + 1);
-    }
-  }
-  return output;
+function serializeCauseArray(plans: readonly CausePlan[], seen: Set<object>, budget: SerializationBudget): readonly EngineWebAdapterErrorCause[] {
+  return plans.map((plan) => serializeCause(plan, seen, budget));
 }
 
 function boundedSummary(name: string, message: string, limit: number, budget: SerializationBudget): CauseSummary {
@@ -824,24 +913,13 @@ function beginArray(budget: SerializationBudget): ContainerState | undefined {
   return beginContainer(budget);
 }
 
-function reserveChildField(target: Record<string, unknown>, state: ContainerState, key: string, budget: SerializationBudget): boolean {
-  void target;
-  return reserveFieldPrefix(state, key, budget);
-}
-
-function reserveFieldPrefix(state: ContainerState, key: string, budget: SerializationBudget): boolean {
-  if (!reserve(budget, jsonLength(key) + 1 + (state.count === 0 ? 0 : 1))) return false;
-  state.count += 1;
-  return true;
-}
-
-function availableSummaryBytes(budget: SerializationBudget): number {
-  return Math.max(0, MAX_SERIALIZED_PAYLOAD - SERIALIZED_TRUNCATION_RESERVE - budget.protected - budget.used + 2);
+function fieldPrefixLength(key: string): number {
+  return jsonLength(key) + 2;
 }
 
 function addSummary(target: MutableSerializedCause, state: ContainerState, summary: CauseSummary, budget: SerializationBudget): boolean {
   const amount = jsonLength("name") + 1 + jsonLength(summary.name) +
-    (state.count === 0 ? 0 : 1) +
+    1 +
     jsonLength("message") + 1 + jsonLength(summary.message);
   if (!reserve(budget, amount)) return false;
   state.count += 2;
@@ -855,12 +933,6 @@ function addValue(target: Record<string, unknown>, state: ContainerState, key: s
   if (!reserve(budget, amount)) return false;
   state.count += 1;
   target[key] = value;
-  return true;
-}
-
-function reserveArrayItem(state: ContainerState, budget: SerializationBudget): boolean {
-  if (!reserve(budget, state.count === 0 ? 0 : 1)) return false;
-  state.count += 1;
   return true;
 }
 
