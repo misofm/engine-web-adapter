@@ -83,15 +83,24 @@ physical write/body settlement, and cleanup failures retain explicit
 `interruption`/`body`/`finalizer` roles; physical settlement and ownership stay
 authoritative, and cached-close policy is unchanged.
 
-Publication and app adoption remain outside this adapter change. Known
-candidate OPFS Chromium-pass/Linux-WebKit capability evidence is retained;
-the Linux WebKit `FileSystemFileHandle` capability failure was not rerun, and
-WebKit OPFS and real iPhone qualification remain unconfirmed. The app release
-gate remains open until its final combined candidate is qualified; fault
-injection does not establish the original device trigger. No physical worker
-code was changed to justify repeating that baseline capability run. The
-fixed SDK is not published and app adoption awaits the normal reviewed release
-workflow; neither merge nor publication is authorized by this work.
+Publication and app adoption remain outside this adapter change. The local
+Linux WebKit runner lacks `FileSystemFileHandle`; that capability limitation
+was not misreported as an OPFS pass. Subsequent existing macOS CI on exact
+head `512029f387d3edb27608cdc9c57195219ba6889d` passed real OPFS and packed
+indexed-sparse qualification in both Chromium 151.0.7922.34 and WebKit 26.5.
+Runner provenance: macOS 15.7.9 arm64, Node 22.23.2, npm 10.9.8.
+Run: https://github.com/misofm/engine-web-adapter/actions/runs/35694712900
+Artifact: `opfs-35694712900-1`, including checkout/runner/tool provenance,
+actual OPFS cold/warm/marker-failure/late-cancellation evidence, and packed
+three-warm-worker qualification for both browsers. This following commit
+only records that evidence; it changes no implementation or tests.
+
+The upstream candidate's WebKit environment gap is closed by actual macOS
+results. The final combined app and real iPhone/deadline qualification remain
+open release gates; these upstream checks do not prove app recovery behavior
+or identify the original device trigger. The fixed SDK is not published and
+app adoption awaits the normal reviewed release workflow; neither merge nor
+publication is authorized by this work.
 
 The committed public fixture `tests/fixtures/storage-error-contract.json`
 records `storage.io`, coarse phase `store`, details
@@ -106,5 +115,5 @@ cases / 14,680 serialization checks with a maximum of 16,337 UTF-8 bytes;
 full padding sweeps, deep/wide/mixed trees, Unicode, JSON escapes, six
 reserializations, and revival retained useful mandatory summaries.
 The coordinator synchronizes this evidence to the matching issue before PR
-creation. Browser CI will separately qualify the exact PR candidate; no
-unobserved WebKit or device result is claimed here.
+creation. The macOS CI qualification above records only observed results;
+no real-device or final combined app result is claimed here.
