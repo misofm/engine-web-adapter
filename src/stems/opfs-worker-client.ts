@@ -323,21 +323,39 @@ export class OpfsWriteWorkerClient {
 }
 
 function reviveWorkerError(error: Extract<OpfsWorkerResponse, { type: "opfs-error" }>["error"]): unknown {
-  if (error.code !== undefined && isEngineWebAdapterErrorCode(error.code)) {
-    const cause = error.causes === undefined
-      ? error.cause === undefined ? undefined : reviveEngineWebAdapterCause(error.cause)
-      : reviveEngineWebAdapterCause({
-        name: error.name,
-        message: error.message,
-        ...(error.cause === undefined ? {} : { cause: error.cause }),
-        causes: error.causes,
-      });
-    return new EngineWebAdapterError(error.code, error.message, error.details ?? {}, cause);
-  }
-  return reviveEngineWebAdapterCause({
+  const causeValue = {
     name: error.name,
     message: error.message,
+    ...(error.role === undefined ? {} : { role: error.role }),
+    ...(error.truncated === undefined ? {} : { truncated: error.truncated }),
     ...(error.cause === undefined ? {} : { cause: error.cause }),
     ...(error.causes === undefined ? {} : { causes: error.causes }),
-  });
+  };
+  const cause = error.causes === undefined
+    ? error.cause === undefined ? undefined : reviveEngineWebAdapterCause(error.cause)
+    : reviveEngineWebAdapterCause(causeValue);
+  if (error.code !== undefined && isEngineWebAdapterErrorCode(error.code) &&
+    (error.code !== "stem.corrupt" || isVerificationEvidence(error.details?.verification))) {
+    return new EngineWebAdapterError(error.code, error.message, error.details ?? {}, cause);
+  }
+  if (error.code === "stem.corrupt") {
+    return new EngineWebAdapterError("storage.io", error.message, {
+      ...(error.details ?? {}),
+      failureKind: "adapter",
+    }, cause ?? reviveEngineWebAdapterCause(causeValue));
+  }
+  return reviveEngineWebAdapterCause(causeValue);
+}
+
+function isVerificationEvidence(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  try {
+    const record = value as { readonly kind?: unknown; readonly expected?: unknown; readonly observed?: unknown };
+    return (record.kind === "digest" || record.kind === "length") &&
+      (typeof record.expected === "string" || typeof record.expected === "number") &&
+      (typeof record.observed === "string" || typeof record.observed === "number") &&
+      record.expected !== record.observed;
+  } catch {
+    return false;
+  }
 }

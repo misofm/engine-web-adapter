@@ -197,9 +197,24 @@ class SparseBackend extends Context.Service<SparseBackend, BackendShape>()("engi
           }
           void Promise.allSettled([pending, abortPromise]).then((results) => {
             if (settled) return;
+            const physicalResult = results[0];
             const abortResult = results[1];
+            if (physicalResult?.status === "rejected") {
+              const physicalFailure = fail(operation, physicalResult.reason, operationContext);
+              if (abortResult?.status === "rejected") {
+                finish(Effect.fail(new SparseIoError({
+                  message: `${operation} and its cancellation cleanup failed`,
+                  cause: new AggregateError([physicalFailure, fail("abort", abortResult.reason, storageContext("abort", operationContext.resource, "writer-abort"))], `${operation} and cancellation cleanup failed`),
+                  context: operationContext,
+                  failureKind: "io",
+                })));
+              } else {
+                finish(Effect.fail(physicalFailure));
+              }
+              return;
+            }
             finish(abortResult?.status === "rejected"
-              ? Effect.fail(fail(operation, abortResult.reason, operationContext))
+              ? Effect.fail(fail("abort", abortResult.reason, storageContext("abort", operationContext.resource, "writer-abort")))
               : Effect.fail(new SparseCancelledError({ message: `${operation} was cancelled`, context: operationContext, failureKind: "interruption" })));
           });
         };
@@ -1750,9 +1765,9 @@ function causeValue(reason: Cause.Reason<SparseFailure>): unknown {
 }
 function mapPublicError(error: unknown): unknown {
   const inheritedDetails = sparseFailureDetails(error);
-  if (error instanceof EngineWebAdapterError) return mergePublicError(error, inheritedDetails);
-  const preserved = nestedAdapterError(error);
-  if (preserved !== undefined) return mergePublicError(preserved, inheritedDetails);
+  if (error instanceof EngineWebAdapterError) return mapTypedPublicError(error, inheritedDetails);
+  const preserved = directNestedAdapterError(error);
+  if (preserved !== undefined) return mapTypedPublicError(preserved, inheritedDetails);
   if (error instanceof SparseCancelledError) return new EngineWebAdapterError("stem.cancelled", error.message, { ...inheritedDetails, failureKind: "interruption" }, error.cause);
   if (error instanceof SparseDeadlineError) return new EngineWebAdapterError("stem.read_deadline", error.message, { ...inheritedDetails, failureKind: "deadline" }, error.cause);
   if (error instanceof SparseQuotaError) return new EngineWebAdapterError("stem.quota", error.message, { ...inheritedDetails, failureKind: "quota" }, error.cause);
@@ -1773,6 +1788,17 @@ function mapPublicError(error: unknown): unknown {
   return isAbort(error)
     ? new EngineWebAdapterError("stem.cancelled", "Sparse operation was cancelled", { failureKind: "interruption" }, error)
     : new EngineWebAdapterError("storage.io", "Sparse operation failed", { failureKind: "defect" }, error);
+}
+
+function mapTypedPublicError(error: EngineWebAdapterError, inheritedDetails: Readonly<Record<string, unknown>>): EngineWebAdapterError {
+  if (error.code === "stem.corrupt" && !isVerification(error.details.verification)) {
+    return new EngineWebAdapterError("storage.io", error.message, {
+      ...error.details,
+      ...inheritedDetails,
+      failureKind: "adapter",
+    }, error);
+  }
+  return mergePublicError(error, inheritedDetails);
 }
 
 function mergePublicError(error: EngineWebAdapterError, details: Readonly<Record<string, unknown>>): EngineWebAdapterError {
@@ -1802,27 +1828,21 @@ function isStorageContext(value: unknown): value is EngineWebAdapterErrorContext
 }
 
 function isVerification(value: unknown): value is EngineWebAdapterVerification {
-  return typeof value === "object" && value !== null &&
-    ((value as { readonly kind?: unknown }).kind === "digest" || (value as { readonly kind?: unknown }).kind === "length") &&
-    (typeof (value as { readonly expected?: unknown }).expected === "string" || typeof (value as { readonly expected?: unknown }).expected === "number") &&
-    (typeof (value as { readonly observed?: unknown }).observed === "string" || typeof (value as { readonly observed?: unknown }).observed === "number");
+  if (typeof value !== "object" || value === null) return false;
+  try {
+    const record = value as { readonly kind?: unknown; readonly expected?: unknown; readonly observed?: unknown };
+    return (record.kind === "digest" || record.kind === "length") &&
+      (typeof record.expected === "string" || typeof record.expected === "number") &&
+      (typeof record.observed === "string" || typeof record.observed === "number") &&
+      record.expected !== record.observed;
+  } catch {
+    return false;
+  }
 }
-function nestedAdapterError(error: unknown): EngineWebAdapterError | undefined {
-  const seen = new Set<object>();
-  const visit = (current: unknown, depth: number): EngineWebAdapterError | undefined => {
-    if (current instanceof EngineWebAdapterError) return current;
-    if (depth >= 4 || typeof current !== "object" || current === null || seen.has(current)) return undefined;
-    seen.add(current);
-    if (current instanceof AggregateError) {
-      for (const item of current.errors) {
-        const found = visit(item, depth + 1);
-        if (found !== undefined) return found;
-      }
-    }
-    if ("cause" in current) return visit((current as { readonly cause?: unknown }).cause, depth + 1);
-    return undefined;
-  };
-  return visit(error, 0);
+function directNestedAdapterError(error: unknown): EngineWebAdapterError | undefined {
+  if (!(error instanceof SparseIoError || error instanceof SparseBoundaryError)) return undefined;
+  const cause = error.cause;
+  return cause instanceof EngineWebAdapterError ? cause : undefined;
 }
 function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && (error as { readonly name?: unknown }).name === "NotFoundError";

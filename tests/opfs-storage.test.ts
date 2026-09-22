@@ -24,8 +24,11 @@ interface FakeEntry { bytes: Uint8Array }
 interface FakeFaults {
   directoryOpen?: Error;
   writerOpen?: Error;
+  truncate?: Error;
   read?: Error;
   write?: Error;
+  shortWrite?: number;
+  flush?: Error;
   close?: Error;
 }
 
@@ -113,17 +116,22 @@ class FakeFileHandle {
         grown.set(entry.bytes, 0);
         grown.set(data, at);
         entry.bytes = grown;
-        return data.byteLength;
+        return directory.faults.shortWrite ?? data.byteLength;
       },
       truncate: (size) => {
+        if (directory.faults.truncate !== undefined) throw directory.faults.truncate;
         if (closed) throw named("handle is closed", "InvalidStateError");
         entry.bytes = entry.bytes.slice(0, size);
       },
       flush: () => {
-        if (directory.faults.close !== undefined) throw directory.faults.close;
+        if (directory.faults.flush !== undefined) throw directory.faults.flush;
         if (closed) throw named("handle is closed", "InvalidStateError");
       },
-      close: () => { closed = true; directory.locked.delete(name); },
+      close: () => {
+        if (directory.faults.close !== undefined) throw directory.faults.close;
+        closed = true;
+        directory.locked.delete(name);
+      },
     };
   }
 
@@ -839,7 +847,7 @@ test("OPFS storage exceptions stay structured I/O failures across root, open, re
     {
       label: "close", name: "UnknownError", operation: "close", resource: "sparse-payload", phase: "writer-close",
       make: () => {
-        const root = new FakeDirectory({ close: named("flush failed", "UnknownError") });
+        const root = new FakeDirectory({ flush: named("flush failed", "UnknownError") });
         const backend = backendFor(root, "opfs-fault-close-v1");
         return { backend, store: new VerifiedSparsePcmStore({ backend, instanceId: "fault-close" }) };
       },
@@ -873,6 +881,68 @@ test("OPFS storage exceptions stay structured I/O failures across root, open, re
       backend.close();
     }
   }
+});
+
+test("a real OPFS Worker short write is storage I/O with operational byte evidence", async () => {
+  const root = new FakeDirectory({ shortWrite: 3 });
+  const backend = backendFor(root, "opfs-short-write-v1");
+  await backend.open();
+  const writer = await backend.createWriter("short-write");
+  await assert.rejects(writer.write(new Uint8Array([1, 2, 3, 4])), (error: unknown) =>
+    error instanceof EngineWebAdapterError &&
+    error.code === "storage.io" &&
+    error.details.expectedBytes === 4 &&
+    error.details.writtenBytes === 3 &&
+    error.details.verification === undefined);
+  await writer.abort(new Error("short write cleanup"));
+  backend.close();
+});
+
+test("a real OPFS Worker preserves truncate/cleanup-close and flush/close compounds", async () => {
+  const truncateRoot = new FakeDirectory({
+    truncate: named("truncate failed", "InvalidStateError"),
+    close: named("cleanup close failed", "NoModificationAllowedError"),
+  });
+  const truncateBackend = backendFor(truncateRoot, "opfs-truncate-close-v1");
+  await truncateBackend.open();
+  await assert.rejects(truncateBackend.createWriter("truncate-close"), (error: unknown) => {
+    if (!(error instanceof AggregateError)) return false;
+    return error.errors.map((item) => (item as Error & { readonly role?: unknown }).role).join(",") === "body,finalizer" &&
+      (error.errors[0] as Error).name === "InvalidStateError" &&
+      (error.errors[1] as Error).name === "NoModificationAllowedError";
+  });
+  truncateBackend.close();
+
+  for (const [label, faults, expectedName] of [
+    ["truncate-body", { truncate: named("truncate failed", "InvalidStateError") }, "InvalidStateError"],
+  ] as const) {
+    const root = new FakeDirectory(faults);
+    const backend = backendFor(root, `opfs-${label}-v1`);
+    await backend.open();
+    await assert.rejects(backend.createWriter(label), (error: unknown) => error instanceof Error && !(error instanceof AggregateError) && error.name === expectedName);
+    backend.close();
+  }
+
+  const flushRoot = new FakeDirectory();
+  const flushBackend = backendFor(flushRoot, "opfs-flush-close-v1");
+  await flushBackend.open();
+  const writer = await flushBackend.createWriter("flush-close");
+  flushRoot.faults.flush = named("flush failed", "UnknownError");
+  flushRoot.faults.close = named("close failed", "NoModificationAllowedError");
+  await assert.rejects(writer.close(), (error: unknown) => {
+    if (!(error instanceof AggregateError)) return false;
+    return error.errors.map((item) => (item as Error & { readonly role?: unknown }).role).join(",") === "body,finalizer" &&
+      (error.errors[0] as Error).name === "UnknownError" &&
+      (error.errors[1] as Error).name === "NoModificationAllowedError";
+  });
+  flushBackend.close();
+
+  const finalizerRoot = new FakeDirectory({ close: named("close failed", "NoModificationAllowedError") });
+  const finalizerBackend = backendFor(finalizerRoot, "opfs-flush-finalizer-v1");
+  await finalizerBackend.open();
+  const finalizerWriter = await finalizerBackend.createWriter("flush-finalizer");
+  await assert.rejects(finalizerWriter.close(), (error: unknown) => error instanceof Error && !(error instanceof AggregateError) && error.name === "NoModificationAllowedError");
+  finalizerBackend.close();
 });
 
 test("the verified store ingests, promotes, and rereads canonical PCM on the OPFS backend", async () => {

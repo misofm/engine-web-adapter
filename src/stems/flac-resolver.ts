@@ -56,6 +56,8 @@ function workerError(message: Extract<FlacWorkerResponse, { type: "error" }>): E
     : reviveEngineWebAdapterCause({
       name: message.error.name,
       message: message.error.message,
+      ...(message.error.role === undefined ? {} : { role: message.error.role }),
+      ...(message.error.truncated === undefined ? {} : { truncated: message.error.truncated }),
       ...(message.error.cause === undefined ? {} : { cause: message.error.cause }),
       causes: message.error.causes,
     });

@@ -71,6 +71,8 @@ function serialize(error: unknown): Extract<FlacWorkerResponse, { type: "error" 
   return {
     name: serialized.name,
     message: serialized.message,
+    ...(serialized.role === undefined ? {} : { role: serialized.role }),
+    ...(serialized.truncated === undefined ? {} : { truncated: serialized.truncated }),
     ...(serialized.code === undefined ? {} : { code: serialized.code }),
     ...(serialized.details === undefined ? {} : { details: serialized.details }),
     ...(serialized.cause === undefined ? {} : { cause: serialized.cause }),

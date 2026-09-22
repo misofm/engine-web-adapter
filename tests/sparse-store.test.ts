@@ -829,6 +829,42 @@ describe("VerifiedSparsePcmStore", () => {
     await store.close();
   });
 
+  it("keeps an outer open I/O aggregate authoritative over nested declaration evidence", async () => {
+    const declaration = new EngineWebAdapterError("stem.invalid_declaration", "nested declaration");
+    class AggregateOpenBackend extends MemoryStemStorageBackend {
+      override async open(): Promise<void> {
+        throw new AggregateError([
+          new Error("BODY_IO"),
+          new Error("wrapped declaration", { cause: declaration }),
+        ], "open body and declaration failed");
+      }
+    }
+    const bytes = new Uint8Array([1, 2]);
+    const store = new VerifiedSparsePcmStore({ backend: new AggregateOpenBackend(), instanceId: "aggregate-open" });
+    await assert.rejects(store.installSource(expectation(bytes, 1), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }), (error: unknown) => {
+      if (!(error instanceof EngineWebAdapterError) || error.code !== "storage.io") return false;
+      if (!(error.cause instanceof AggregateError)) return false;
+      const nested = error.cause.errors[1] as Error & { readonly cause?: unknown };
+      return error.details.operation === "open" &&
+        error.cause.errors[0] instanceof Error &&
+        nested.cause === declaration;
+    });
+    await store.close();
+  });
+
+  it("does not trust a code-only nested corruption claim", async () => {
+    const corrupt = new EngineWebAdapterError("stem.corrupt", "code without proof");
+    class CodeOnlyBackend extends MemoryStemStorageBackend {
+      override async open(): Promise<void> { throw corrupt; }
+    }
+    const bytes = new Uint8Array([1, 2]);
+    const store = new VerifiedSparsePcmStore({ backend: new CodeOnlyBackend(), instanceId: "code-only-corrupt" });
+    await assert.rejects(store.installSource(expectation(bytes, 1), { resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) }), (error: unknown) =>
+      error instanceof EngineWebAdapterError && error.code === "storage.io" && error.details.verification === undefined &&
+      error.cause === corrupt);
+    await store.close();
+  });
+
   it("cancels a resolver before publication and waits for its physical release", async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const backend = new MemoryStemStorageBackend();
@@ -998,6 +1034,39 @@ describe("VerifiedSparsePcmStore", () => {
     assert.ok(firstRemove > events.indexOf("write-settled"), events.join(","));
   });
 
+  it("preserves a late physical write rejection observed after cancellation", async () => {
+    const bytes = new Uint8Array([1, 2]);
+    const controller = new AbortController();
+    const started = deferred();
+    const settled = deferred();
+    const physicalFailure = new Error("LATE_PHYSICAL_WRITE_FAILURE");
+    class LateRejectBackend extends MemoryStemStorageBackend {
+      override async createWriter(name: string, signal?: AbortSignal) {
+        const writer = await super.createWriter(name, signal);
+        if (!name.startsWith("sparse-pcm-v1-data-")) return writer;
+        return {
+          write: async () => { started.resolve(); await settled.promise; throw physicalFailure; },
+          close: () => writer.close(),
+          abort: async () => {},
+        };
+      }
+    }
+    const backend = new LateRejectBackend();
+    const store = new VerifiedSparsePcmStore({ backend, instanceId: "late-write-rejection" });
+    const installing = store.installSource(expectation(bytes, 1), {
+      signal: controller.signal,
+      resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }),
+    });
+    await started.promise;
+    controller.abort(new DOMException("cancelled", "AbortError"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    settled.resolve();
+    await assert.rejects(installing, (error: unknown) =>
+      error instanceof EngineWebAdapterError && error.code === "storage.io" &&
+      error.details.operation === "write" && error.cause === physicalFailure);
+    await store.close();
+  });
+
   it("preserves async and sync iterator cleanup failures beside public primary errors", async () => {
     const bytes = new Uint8Array([1, 2]);
     for (const phase of ["span", "write", "early"] as const) {
@@ -1104,7 +1173,9 @@ describe("VerifiedSparsePcmStore", () => {
     const installing = store.installSource(expectation(bytes, 1), { signal: controller.signal, resolve: async () => ({ spans: spans({ startFrame: 0, bytes }) }) });
     await writeStarted.promise;
     gate.resolve();
-    await assert.rejects(installing, (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.cancelled");
+    await assert.rejects(installing, (error: unknown) =>
+      error instanceof EngineWebAdapterError && error.code === "storage.io" &&
+      error.details.operation === "write" && (error.cause as Error | undefined)?.message === "writer is closed");
     assert.equal(events[0], "write-start");
     assert.ok(events.includes("abort"), "physical abort runs after synchronous cancellation");
     assert.ok(events.indexOf("write-settled") > events.indexOf("abort"), "physical abort precedes write settlement");
