@@ -10,7 +10,7 @@ assert.equal(packageJson.version, "0.6.0");
 // TEMPORARY: the pre-release codec 0.2.0 comes from a git ref until it is published.
 // The final adapter release must pin the published "@misofm/codec": "0.2.0".
 assert.deepEqual(packageJson.dependencies, {
-  "@misofm/codec": "git+https://github.com/misofm/codec.git#cb26dcf2ec4f05a728ca9d785508b0dcf772abd3",
+  "@misofm/codec": "git+https://github.com/misofm/codec.git#d6d8ae8e190dcdc918edfe1e4f713244046e1605",
   "@misofm/engine": "0.4.3",
   "hash-wasm": "4.12.0",
 });

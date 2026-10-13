@@ -182,6 +182,8 @@ export const openSparseResponse = Effect.fn("SparseResponse.open")(function*(opt
     const response = yield* HttpClient.withScope(http).execute(normalized.request).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, normalized.fetchInit),
       Effect.provideService(FetchHttpClient.Fetch, physicalFetch),
+      // Like the FLAC range lane: never add b3/traceparent headers, which would force a CORS preflight.
+      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
       Effect.timeoutOrElse({ duration: options.readDeadlineMs, orElse: () => Effect.fail(failure("stem.delivery.stall", "Sparse full response headers exceeded their deadline", { identity: options.identity })) }),
       Effect.raceFirst(abortEffect(options.signal, options.identity)),
       Effect.mapError((cause) => preserveEffectFailure(options.identity, "response", cause)),

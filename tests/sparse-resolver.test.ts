@@ -480,6 +480,28 @@ test("full-response admission rejects malformed sections, headers, status and tr
   for (const item of cases) await expectFullResponseFailure(packed, item.response, item.code);
 });
 
+test("the sparse full GET never carries trace-propagation headers that would force a CORS preflight", async () => {
+  const packed = emptySilentPackage();
+  const sent: Array<readonly [string, string]> = [];
+  let fetches = 0;
+  const resolver = createSparseStemResolver({
+    locate: () => "https://fixture.invalid/indexed",
+    fetch: async (input, init) => {
+      fetches += 1;
+      const headers = new Headers(input instanceof Request ? input.headers : undefined);
+      new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
+      headers.forEach((value, name) => sent.push([name, value]));
+      return new Response(responseBytes(new Uint8Array([...packed.body, 0])), { status: 200 });
+    },
+    createWorker: () => { throw new Error("malformed all-silent source must not create a decoder worker"); },
+  });
+  const resolved = await resolver(packed.expected, new AbortController().signal);
+  await resolved.spans[Symbol.asyncIterator]().next().catch(() => undefined);
+  assert.equal(fetches, 1);
+  const propagation = sent.filter(([name]) => /^(traceparent|tracestate|b3|x-b3-.*)$/iu.test(name));
+  assert.deepEqual(propagation, []);
+});
+
 test("factory validates locator and decoder deadlines before the first request", () => {
   const options = { locate: () => "https://fixture.invalid/indexed" };
   assert.throws(() => createSparseStemResolver({ ...options, locate: null as never }), TypeError);

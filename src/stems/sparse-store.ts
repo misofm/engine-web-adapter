@@ -679,8 +679,12 @@ function decodeExpected(input: unknown): Effect.Effect<SparsePcmExpectation, Spa
 
 function preflightExpected(input: unknown): Effect.Effect<void, SparseBoundaryError> {
   return Effect.try({ try: () => {
-    if (!isRecord(input) || Object.getOwnPropertySymbols(input).length !== 0) throw new Error("expectation must be a plain object");
-    const keys = Object.keys(input).sort();
+    if (!isRecord(input)) throw new Error("expectation must be a plain object");
+    // Effect 4.0.x strips non-enumerable extras instead of rejecting them under
+    // `onExcessProperty: "error"` (rc.112 rejected them), so check every own key here.
+    const ownKeys = Reflect.ownKeys(input);
+    if (ownKeys.some((key) => typeof key !== "string")) throw new Error("expectation must be a plain object");
+    const keys = (ownKeys as string[]).sort();
     const expected = ["bitDepth", "canonicalBytes", "channels", "frames", "identity", "sampleRateHz"];
     if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) throw new Error("expectation keys are not exact");
     const candidate = input as Record<string, unknown>;
@@ -1124,6 +1128,9 @@ function ingestAndCommit(
 function preflightSpan(value: unknown): Effect.Effect<void, SparseBoundaryError> {
   if (!isRecord(value) || !(value.bytes instanceof Uint8Array)) return Effect.fail(new SparseBoundaryError({ message: "Sparse span must contain a Uint8Array" }));
   if (value.bytes.byteLength > MAX_SPAN_BYTES || value.bytes.byteLength === 0) return Effect.fail(new SparseBoundaryError({ message: "Sparse span byte length is outside its bound" }));
+  // Effect 4.0.x strips non-enumerable extras instead of rejecting them under
+  // `onExcessProperty: "error"` (rc.112 rejected them), so check every own key here.
+  if (Reflect.ownKeys(value).some((key) => key !== "startFrame" && key !== "bytes")) return Effect.fail(new SparseBoundaryError({ message: "Sparse span has unknown properties" }));
   return Effect.void;
 }
 function decodeSpan(value: unknown): Effect.Effect<{ readonly startFrame: number; readonly bytes: Uint8Array }, SparseBoundaryError> {
