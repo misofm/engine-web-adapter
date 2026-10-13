@@ -27,4 +27,14 @@ Base: origin/main `602b7c7` (adapter 0.5.13). Branch `effect-4.0.4`, draft PR ht
 
 ## Release contract and blockers
 
-Run `.github/workflows/npm-publish.yml` on `main` (`mode=publish`, the exact 40-character merge SHA); the workflow publishes through OIDC only, refuses an existing version, and verifies the registry artifact. Record the run URL, registry integrity, and archive hashes here. Blockers: PR #130 awaits review and merge. Publication has not been performed.
+Run `.github/workflows/npm-publish.yml` on `main` (`mode=publish`, the exact 40-character merge SHA); the workflow publishes through OIDC only, refuses an existing version, and verifies the registry artifact. Record the run URL, registry integrity, and archive hashes here. Publication is complete; see Public delivery evidence below.
+
+## Public delivery evidence
+
+PR #130 passed required Packed OPFS qualification run 38431747425 on macOS for Chromium and WebKit at head `d7b7e2dc6b6c91cc9fd607442b15e56f95e01a59`, then merged as exact `main` SHA `5a2fa1953558fbe572ab5bd5433061769b4862ce`. The single publish dispatch, run 38432201391, checked out that SHA, passed the release-identity guard, qualification, and the immutable-version refusal, published through OIDC once, and passed the public registry artifact verification step.
+
+The registry artifact for `@misofm/engine-web-adapter@0.6.0` has `gitHead` `5a2fa1953558fbe572ab5bd5433061769b4862ce`, 248 files, 482,652 packed bytes, SHA-1 `c9c5201da831ed11d751cde115720767c081b149`, SHA-256 `5aae26f66695f4e7998a38203fac094fe2435648c4de1b313bfc751140353cde`, and integrity `sha512-WUFAl4xzabJ0+IOmxVvsUd6Y7WDPCV2f2WyfoM1IIPa/SxSzX8sFLBqAkIAgyiUcnmLfjIA0P/1Pr9Om6vw/ww==`, with two registry signatures and a SLSA provenance attestation. Registry `latest` is `0.6.0`; its dependencies are `@misofm/codec` `0.2.0`, `@misofm/engine` `0.4.3`, and `hash-wasm` `4.12.0`; its peer is `effect` `>=4.0.3 <4.1` (dev dependency `4.0.4`). Identity is retained in `.github/RELEASE_EVIDENCE/131/registry-release.json`.
+
+An independent application consumer (`misofm/app` PR #304) resolves exactly one `effect@4.0.4`, `@misofm/codec@0.2.0` and this adapter with no nested Effect copy. The adapter's own decoder loader compiles the packaged FLAC decoder there, whereas the same application with adapter 0.5.13 and codec 0.1.1 fails with `TypeError: Cannot read properties of undefined (reading 'scheduler')`. In headless Chromium the application's mixer opens, decodes eight FLAC stems through this adapter, and plays with an audible master meter.
+
+The adapter release contract is complete. Application adoption is tracked in `misofm/app` PR #304.
