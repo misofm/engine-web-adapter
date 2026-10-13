@@ -24,9 +24,6 @@ await cp(join(process.cwd(), "node_modules", "@misofm", "engine"), join(consumer
 await cp(join(process.cwd(), "node_modules", "@misofm", "codec"), join(consumer, "node_modules", "@misofm", "codec"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "effect"), join(consumer, "node_modules", "effect"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "hash-wasm"), join(consumer, "node_modules", "hash-wasm"), { recursive: true });
-for (const dependency of ["fast-check", "pure-rand", "msgpackr", "msgpackr-extract"]) {
-  await cp(join(process.cwd(), "node_modules", dependency), join(consumer, "node_modules", dependency), { recursive: true });
-}
 await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
 await writeFile(join(consumer, "index.html"), '<div id="status">loading</div><script type="module" src="/src/main.ts"></script>\n');
 await mkdir(join(consumer, "src"));

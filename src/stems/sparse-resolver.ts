@@ -1,5 +1,5 @@
 import { Cause, Channel, Context, Effect, Exit, Fiber, Pull, Schema, Scope, Stream } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { EngineWebAdapterError } from "../errors.js";
 import { BoundedStemAdmission, defaultFlacMemoryBudgetBytes, flacPipelineWidths, FLAC_WORKER_RESERVATION_BYTES } from "./flac-admission.js";

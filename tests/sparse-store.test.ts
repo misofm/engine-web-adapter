@@ -817,6 +817,53 @@ describe("VerifiedSparsePcmStore", () => {
     await store.close();
   });
 
+  it("rejects non-enumerable and symbol extras on expectations, as Effect rc.112 did", async () => {
+    for (const kind of ["enumerable", "non-enumerable", "symbol", "non-enumerable symbol"] as const) {
+      const backend = new MemoryStemStorageBackend();
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: `excess-${kind}` });
+      const bytes = new Uint8Array([1, 2]);
+      const expected: Record<PropertyKey, unknown> = { ...expectation(bytes, 1) };
+      if (kind === "enumerable") expected.extra = 1;
+      else if (kind === "non-enumerable") Object.defineProperty(expected, "extra", { value: 1, enumerable: false });
+      else if (kind === "symbol") expected[Symbol("extra")] = 1;
+      else Object.defineProperty(expected, Symbol("extra"), { value: 1, enumerable: false });
+      let resolves = 0;
+      await assert.rejects(
+        store.installSource(expected as never, { resolve: async () => { resolves += 1; return { spans: spans({ startFrame: 0, bytes }) }; } }),
+        (error: unknown) => error instanceof EngineWebAdapterError && error.code === "stem.invalid_declaration",
+        kind,
+      );
+      assert.equal(resolves, 0, kind);
+      assert.deepEqual(await backend.list(), [], kind);
+      await store.close();
+    }
+  });
+
+  it("rejects non-enumerable and symbol extras on resolver spans, as Effect rc.112 did", async () => {
+    const outcomes = new Map<string, string>();
+    for (const kind of ["none", "enumerable", "non-enumerable", "symbol", "non-enumerable symbol"] as const) {
+      const backend = new MemoryStemStorageBackend();
+      const store = new VerifiedSparsePcmStore({ backend, instanceId: `span-excess-${kind.replace(" ", "-")}` });
+      const bytes = new Uint8Array([1, 2]);
+      const span: Record<PropertyKey, unknown> = { startFrame: 0, bytes };
+      if (kind === "enumerable") span.extra = 1;
+      else if (kind === "non-enumerable") Object.defineProperty(span, "extra", { value: 1, enumerable: false });
+      else if (kind === "symbol") span[Symbol("extra")] = 1;
+      else if (kind === "non-enumerable symbol") Object.defineProperty(span, Symbol("extra"), { value: 1, enumerable: false });
+      let outcome = "installed";
+      await store.installSource(expectation(bytes, 1), { resolve: async () => ({ spans: spans(span as never) }) }).catch((error: unknown) => {
+        outcome = error instanceof EngineWebAdapterError ? error.code : "unexpected";
+      });
+      outcomes.set(kind, outcome);
+      await store.close();
+    }
+    assert.equal(outcomes.get("none"), "installed");
+    const rejected = outcomes.get("enumerable");
+    assert.notEqual(rejected, "installed");
+    assert.notEqual(rejected, "unexpected");
+    for (const kind of ["non-enumerable", "symbol", "non-enumerable symbol"]) assert.equal(outcomes.get(kind), rejected, kind);
+  });
+
   it("preserves an existing capability error from the backend boundary", async () => {
     class CapabilityBackend extends MemoryStemStorageBackend {
       override async open(): Promise<void> { throw new EngineWebAdapterError("capability.opfs", "OPFS unavailable"); }

@@ -1,8 +1,8 @@
 # @misofm/engine-web-adapter
 
 Headless, framework-neutral browser session hosting for
-`@misofm/engine@0.4.3`. Version 0.5 identifies canonical PCM with BLAKE3-256 and streams standards-compliant native FLAC
-through bounded HTTP ranges and a one-stem universal `@misofm/codec@0.1.1`
+`@misofm/engine@0.4.3`. Canonical PCM is identified with BLAKE3-256, and standards-compliant native FLAC streams
+through bounded HTTP ranges and a one-stem universal `@misofm/codec@0.2.0`
 Wasm Worker, verifies
 canonical PCM into OPFS, then feeds the Engine through bounded shared-memory
 rings. URL, authentication, and request mapping remain caller-owned.
@@ -10,11 +10,16 @@ rings. URL, authentication, and request mapping remain caller-owned.
 ## Install
 
 ```sh
-npm install @misofm/engine-web-adapter@0.5.13 @misofm/engine@0.4.3
+npm install @misofm/engine-web-adapter@0.6.0 @misofm/engine@0.4.3 effect@4.0.4
 ```
 
+Effect is a peer dependency (`effect >=4.0.3 <4.1`): the adapter, the codec, and
+your application must share one Effect copy, so pin the whole Effect release train
+you use to one exact `4.0.x` version. See the [changelog](CHANGELOG.md) for the
+migration from 0.5.x (Effect `4.0.0-rc.112`).
+
 The package is ESM-only and remains pinned to exactly Engine `0.4.3` and
-`@misofm/codec` `0.1.1`. The codec currently supports Node `>=22.23.2 <23`
+`@misofm/codec` `0.2.0`. The codec currently supports Node `>=22.23.2 <23`
 and Bun `>=1.4.2 <1.5`; browser consumers use the bundled public codec asset.
 The integration uses the published Engine 0.4.3 archive
 from commit `a3d71148e4144a396aa1ceb7fb83b6e671a0eced`, SHA256
