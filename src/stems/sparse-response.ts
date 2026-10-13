@@ -1,5 +1,5 @@
 import { Cause, Effect, Exit } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { EngineWebAdapterError } from "../errors.js";
 import type { StemIdentity } from "./types.js";

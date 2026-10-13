@@ -1,5 +1,5 @@
 import { Cause, Effect, Exit, Stream } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 
 import { EngineWebAdapterError } from "../errors.js";
 import type { BoundedStemAdmission } from "./flac-admission.js";

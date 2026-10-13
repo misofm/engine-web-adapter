@@ -51,9 +51,6 @@ await cp(join(process.cwd(), "node_modules", "@misofm", "engine"), join(consumer
 await cp(join(process.cwd(), "node_modules", "@misofm", "codec"), join(consumer, "node_modules", "@misofm", "codec"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "effect"), join(consumer, "node_modules", "effect"), { recursive: true });
 await cp(join(process.cwd(), "node_modules", "hash-wasm"), join(consumer, "node_modules", "hash-wasm"), { recursive: true });
-for (const dependency of ["fast-check", "pure-rand", "msgpackr", "msgpackr-extract"]) {
-  await cp(join(process.cwd(), "node_modules", dependency), join(consumer, "node_modules", dependency), { recursive: true });
-}
 await mkdir(join(consumer, "public"));
 await cp(join(process.cwd(), "tests", "fixtures", "native-silence.flac"), join(consumer, "public", "native-silence.flac"));
 // Existing SDK457 first-output recorder, scoped to this packed consumer fixture.

@@ -6,13 +6,17 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
-assert.equal(packageJson.version, "0.5.13");
+assert.equal(packageJson.version, "0.6.0");
+// TEMPORARY: the pre-release codec 0.2.0 comes from a git ref until it is published.
+// The final adapter release must pin the published "@misofm/codec": "0.2.0".
 assert.deepEqual(packageJson.dependencies, {
-  "@misofm/codec": "0.1.1",
+  "@misofm/codec": "git+https://github.com/misofm/codec.git#cb26dcf2ec4f05a728ca9d785508b0dcf772abd3",
   "@misofm/engine": "0.4.3",
-  effect: "4.0.0-rc.112",
   "hash-wasm": "4.12.0",
 });
+// Effect is a peer so an app's single Effect copy runs every Layer the adapter and codec build.
+assert.deepEqual(packageJson.peerDependencies, { effect: ">=4.0.3 <4.1" });
+assert.equal(packageJson.devDependencies.effect, "4.0.4");
 assert.equal(packageJson.type, "module");
 const blake3Manifest = JSON.parse(await readFile("src/stems/blake3-wasm.manifest.json", "utf8"));
 const blake3Wasm = await import("../dist/stems/blake3-wasm.js");
@@ -55,7 +59,7 @@ for (const required of [
   "dist/codec-licenses/vendor/licenses/emscripten.txt",
   "dist/codec-licenses/vendor/licenses/libFLAC.txt",
   "dist/codec-licenses/vendor/licenses/musl.txt",
-  "README.md", "NOTICE", "LICENSE",
+  "README.md", "CHANGELOG.md", "NOTICE", "LICENSE",
 ]) assert.ok(names.has(required), `packed artifact missing ${required}`);
 for (const [packedPath, sourcePath] of [
   ["dist/codec-licenses/codec-LICENSE", "node_modules/@misofm/codec/LICENSE"],
