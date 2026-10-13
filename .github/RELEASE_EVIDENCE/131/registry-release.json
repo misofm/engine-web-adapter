@@ -1,0 +1,14 @@
+{
+  "version": "0.6.0",
+  "dist.integrity": "sha512-WUFAl4xzabJ0+IOmxVvsUd6Y7WDPCV2f2WyfoM1IIPa/SxSzX8sFLBqAkIAgyiUcnmLfjIA0P/1Pr9Om6vw/ww==",
+  "dist.shasum": "c9c5201da831ed11d751cde115720767c081b149",
+  "archiveSha256": "5aae26f66695f4e7998a38203fac094fe2435648c4de1b313bfc751140353cde",
+  "packedBytes": 482652,
+  "fileCount": 248,
+  "gitHead": "5a2fa1953558fbe572ab5bd5433061769b4862ce",
+  "workflow": "https://github.com/misofm/engine-web-adapter/actions/runs/38432201391",
+  "opfsWorkflow": "https://github.com/misofm/engine-web-adapter/actions/runs/38431747425",
+  "codec": "0.2.0",
+  "engine": "0.4.3",
+  "effectPeer": ">=4.0.3 <4.1"
+}
