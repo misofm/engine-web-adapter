@@ -62,7 +62,7 @@
     "check": "npm run format:check && npm run build:sha256:wasm && npm run build:blake3:wasm && npm run lint && npm run check:decoder && npm test && npm run check:package"
   },
   "dependencies": {
-    "@misofm/codec": "git+https://github.com/misofm/codec.git#d6d8ae8e190dcdc918edfe1e4f713244046e1605",
+    "@misofm/codec": "0.2.0",
     "@misofm/engine": "0.4.3",
     "hash-wasm": "4.12.0"
   },
